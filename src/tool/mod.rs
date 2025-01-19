@@ -12,18 +12,22 @@ pub struct BackendTool {
     ver_key: Option<VersionKey>,
 }
 
-fn parse_tool(s: &str) -> Result<BackendTool> {
-    let mut s = s.trim_end().split(':');
+impl TryFrom<&str> for BackendTool {
+    type Error = anyhow::Error;
 
-    let bk = s.next().map(BackendType::from_str);
-    let name = s.next().with_context(|| "missing tool name")?;
-    let ver_key = s.next().map(VersionKey::try_from).transpose()?;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        let mut s = s.trim_end().split(':');
 
-    Ok({
-        BackendTool {
-            bk,
-            name: name.to_string(),
-            ver_key,
-        }
-    })
+        let bk = s.next().map(BackendType::from_str);
+        let name = s.next().with_context(|| "missing tool name")?;
+        let ver_key = s.next().map(VersionKey::try_from).transpose()?;
+
+        Ok({
+            BackendTool {
+                bk,
+                name: name.to_string(),
+                ver_key,
+            }
+        })
+    }
 }
