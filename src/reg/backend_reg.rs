@@ -1,5 +1,6 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
+use crate::reg::Reg;
 
 static BackendReg: Cache = Lazy::new(|| BackendRegAPI::get_or_init()?);
 
@@ -9,6 +10,7 @@ pub struct BackendRegConfig {}
 pub struct BackendRegAPI;
 
 impl BackendRegAPI {
-    type ctx = Cache;
-    pub fn get_or_init() -> Result {}
+    type ctx 
 }
+
+impl Reg<> for BackendRegAPI {}
