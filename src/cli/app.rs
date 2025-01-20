@@ -12,6 +12,8 @@ pub enum Commands {
     Upgrade(Upgrade),
     #[command(alias = "cfg", name = "config")]
     Config(Config),
+    #[command(alias = "s", name = "setup")]
+    SetUp(SetUp),
 
     // Backend
     #[command(alias = "i", name = "info")]
