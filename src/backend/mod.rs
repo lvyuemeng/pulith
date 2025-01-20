@@ -1,5 +1,3 @@
-pub mod backend_type;
-
 use clap::Command;
 use std::path::PathBuf;
 

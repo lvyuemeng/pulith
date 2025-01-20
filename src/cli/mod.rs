@@ -6,3 +6,4 @@ mod rm;
 mod tool;
 mod update;
 mod upgrade;
+mod setup;
