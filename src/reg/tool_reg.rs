@@ -1,3 +1,4 @@
+use crate::reg::{Cache, Reg};
 use anyhow::Result;
 use once_cell::sync::Lazy;
 
@@ -8,6 +9,11 @@ pub struct ToolRegConfig {}
 
 pub struct ToolRegAPI;
 
-impl ToolRegAPI {
-    type ctx = Cache;
+impl Reg for ToolRegAPI {
+    type Key = ();
+    type Val = ();
+
+    fn load() -> Result<Cache<Self::Key, Self::Val>> {
+        todo!()
+    }
 }

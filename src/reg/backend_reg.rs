@@ -1,16 +1,22 @@
+use crate::{
+    backend::BackendType,
+    reg::{Cache, Reg},
+};
 use anyhow::Result;
 use once_cell::sync::Lazy;
-use crate::reg::Reg;
 
-static BackendReg: Cache = Lazy::new(|| BackendRegAPI::get_or_init()?);
+static BackendReg: Cache = Lazy::new(|| BackendRegAPI::load()?);
 
 #[derive(Default, Debug)]
 pub struct BackendRegConfig {}
 
 pub struct BackendRegAPI;
 
-impl BackendRegAPI {
-    type ctx 
-}
+impl Reg for BackendRegAPI {
+    type Key = BackendType;
+    type Val = ();
 
-impl Reg<> for BackendRegAPI {}
+    fn load() -> Result<Cache<Self::Key, Self::Val>> {
+        todo!()
+    }
+}
