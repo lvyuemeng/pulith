@@ -4,12 +4,12 @@ use clap::{Args, CommandFactory};
 use clap_complete::{Shell, generate};
 
 #[derive(Args, Clone, Debug)]
-pub struct Setup {
+pub struct SetupArg {
     #[arg(long, help = "Shell to setup")]
     shell: Option<query_shell::Shell>,
 }
 
-pub fn setup(arg: Setup) -> Result<()> {
+pub fn setup(arg: SetupArg) -> Result<()> {
     // path logic
 
     let shell = match arg.shell {
@@ -29,6 +29,7 @@ pub fn setup(arg: Setup) -> Result<()> {
         query_shell::Shell::Zsh => Shell::Zsh,
         _ => {
             // TODO
+            return Ok(());
         }
     };
 

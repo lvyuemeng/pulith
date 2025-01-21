@@ -1,20 +1,17 @@
+use anyhow::Result;
 use clap::Command;
 use std::path::PathBuf;
 
 trait Backend {
-    fn metadata(&self) -> Metadata;
     fn runtime_data(&self) -> RuntimeData;
-    fn cmd() -> Option<impl Iterator<Item = Command>> {
-        None::<std::iter::Empty<Command>>
-    }
 
     // Tool ops
-    fn add();
-    fn use_ver();
-    fn remove();
-    fn list();
-    fn update();
-    fn search();
+    fn add(arg: AddArg) -> Result<()>;
+    fn use_ver(arg: UseArg) -> Result<()>;
+    fn remove(arg: RmArg) -> Result<()>;
+    fn list(arg: ListArg) -> Result<()>;
+    fn update(arg: UpdateArg) -> Result<()>;
+    fn search(arg: SearchArg) -> Result<()>;
 }
 
 pub struct CheckReg;
@@ -30,6 +27,14 @@ impl BackendType {
     pub fn from_str(s: &str) -> Self {
         match s {
             _ => BackendType::Unknown,
+        }
+    }
+
+    fn metadata(self) -> Metadata {}
+
+    fn cmd(self) -> Option<impl Iterator<Item = Command>> {
+        match self {
+            _ => None::<std::iter::Empty<Command>>,
         }
     }
 
