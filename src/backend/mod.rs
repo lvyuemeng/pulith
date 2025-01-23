@@ -1,9 +1,13 @@
+use crate::tool::ver::VersionKey;
 use anyhow::Result;
 use clap::Command;
 use std::path::PathBuf;
 
 trait Backend {
-    fn runtime_data(&self) -> RuntimeData;
+    fn runtime_snap() -> Snap;
+    fn metadata() -> Metadata;
+    fn env_vars() -> impl Iterator<Item = String>;
+    fn cmd() -> Option<impl Iterator<Item = Command>>;
 
     // Tool ops
     fn add(arg: AddArg) -> Result<()>;
@@ -29,19 +33,11 @@ impl BackendType {
             _ => BackendType::Unknown,
         }
     }
+}
 
-    fn metadata(self) -> Metadata {}
-
-    fn cmd(self) -> Option<impl Iterator<Item = Command>> {
-        match self {
-            _ => None::<std::iter::Empty<Command>>,
-        }
-    }
-
-    fn is(name: BackendType) -> Option<Box<dyn Backend>> {
-        match name {
-            _ => None,
-        }
+impl Backend for BackendType {
+    fn cmd() -> Option<impl Iterator<Item = Command>> {
+        None
     }
 }
 
@@ -52,6 +48,7 @@ pub struct Metadata {
     notes: String,
 }
 
-pub struct RuntimeData {
+pub struct Snap {
     installed_path: PathBuf,
+    version: VersionKey,
 }
