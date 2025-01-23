@@ -1,6 +1,6 @@
 use crate::utils::{
     task_pool::POOL,
-    ui::tracker::{ProgressTracker, Tracker},
+    ui::tracker::{ProgressTracker, ProgressTrackerConfig, Tracker},
 };
 use anyhow::{Result, bail};
 use reqwest::{Client, Proxy, Response, Url};
@@ -14,8 +14,11 @@ impl FileDownload {
         POOL.block_on(async move {
             let mut res = Download::fetch(url).await?;
             let mut file = File::create(&path_name).await?;
-            let len = res.content_length().unwrap_or(0);
-            let t = ProgressTracker::new(len)?;
+
+            let len = res.content_length();
+            let config = ProgressTrackerConfig { len };
+            let t = ProgressTracker::new(config);
+
             while let Some(chunk) = res.chunk().await? {
                 file.write_all(&chunk).await?;
                 t.pb.inc(chunk.len() as u64);

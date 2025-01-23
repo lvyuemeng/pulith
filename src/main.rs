@@ -1,9 +1,8 @@
 mod backend;
 mod cli;
+mod env;
 mod reg;
 mod tool;
-mod env;
 mod utils;
-fn main() {
-    println!("Hello, world!");
-}
+
+fn main() {}
