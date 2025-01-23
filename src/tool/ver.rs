@@ -1,28 +1,37 @@
-use anyhow::{Context, Result, anyhow, bail};
-use regex::Regex;
+use std::fmt;
+use std::ops::Deref;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct VersionKey {
-    ver: Version,
-    key: String,
+use anyhow::{Context, Result, bail};
+use regex::Regex;
+use semver::Version;
+
+pub enum VersionKind {
+    SemVer(SemVer),
+    CalVer(CalVer),
+    Raw(PartRaw),
 }
 
-impl TryFrom<&str> for VersionKey {
-    type Error = anyhow::Error;
+struct SemVer(Version);
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let (ver, key) = value
-            .split_once('-')
-            .ok_or_else(|| anyhow!("invalid version key: {}", value))?;
-        Ok(VersionKey {
-            ver: Version::try_from(ver).with_context(|| format!("invalid version: {}", ver))?,
-            key: key.to_string(),
-        })
+impl Deref for SemVer {
+    type Target = Version;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
+impl fmt::Display for SemVer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f,"{}",self.0)
+    }
+}
+
+struct 
+
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Version {
+struct PartRaw {
     major: u8,
     minor: u8,
     patch: u8,
@@ -31,7 +40,7 @@ struct Version {
     lts: bool,
 }
 
-impl TryFrom<&str> for Version {
+impl TryFrom<&str> for PartRaw {
     type Error = anyhow::Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -40,14 +49,14 @@ impl TryFrom<&str> for Version {
         let value = value.trim_end_matches("lts");
 
         let mut parts = value.split(&['.', '-', '+'][..]);
-        let major = parse_ver(parts.next(), "major")?;
-        let minor = parse_ver(parts.next(), "minor")?;
-        let patch = parse_ver(parts.next(), "patch")?;
+        let major = parse_ver(parts.next(), "major").unwrap_or(0);
+        let minor = parse_ver(parts.next(), "minor").unwrap_or(0);
+        let patch = parse_ver(parts.next(), "patch").unwrap_or(0);
 
         let pre = parse_pre(parts.next())?;
         let build = parse_build(parts.next())?;
 
-        Ok(Version {
+        Ok(PartRaw {
             major,
             minor,
             patch,

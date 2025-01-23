@@ -16,7 +16,7 @@ impl FileDownload {
             let mut file = File::create(&path_name).await?;
 
             let len = res.content_length();
-            let config = ProgressTrackerConfig { len };
+            let config = ProgressTrackerConfig { len, msg: None };
             let t = ProgressTracker::new(config);
 
             while let Some(chunk) = res.chunk().await? {

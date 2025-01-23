@@ -1,4 +1,3 @@
-use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
 
@@ -8,7 +7,7 @@ pub trait Tracker {
     fn finish(&self, msg: Option<String>);
 }
 
-const PB_STYLE: &str = "{spinner:.blue} [{elapsed_precise}] {wide_bar:.cyan/blue} {bytes}/{total_bytes} ({bytes_per_sec}, {eta})";
+const PB_STYLE: &str = "{spinner:.blue} {msg:.cyan} [{elapsed_precise}] {wide_bar:.cyan/blue} {bytes}/{total_bytes} ({bytes_per_sec}, {eta})";
 
 const TICK: &str = "⠁⠂⠄⡀⢀⠠⠐⠈ ";
 
@@ -30,6 +29,7 @@ pub struct ProgressTracker {
 #[derive(Debug, Clone)]
 pub struct ProgressTrackerConfig {
     pub len: Option<u64>,
+    pub msg: Option<String>,
 }
 
 impl Tracker for ProgressTracker {
@@ -42,8 +42,14 @@ impl Tracker for ProgressTracker {
             ProgressBar::no_length()
         };
 
-        let pb_style = PB_TEMPLATE.as_ref().unwrap().clone();
-        pb.set_style(pb_style);
+        let pb = if let Some(style) = PB_TEMPLATE.as_ref() {
+            pb.with_style(style.clone())
+        } else {
+            pb
+        };
+
+        let pb = pb.with_message(ctx.msg.unwrap_or_default());
+
         ProgressTracker { pb }
     }
 
