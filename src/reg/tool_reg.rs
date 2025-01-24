@@ -2,7 +2,7 @@ use crate::reg::{Cache, Reg};
 use anyhow::Result;
 use once_cell::sync::Lazy;
 
-static ToolReg: Cache<> = Lazy::new(|| ToolRegAPI::get_or_init()?);
+static ToolReg: Cache<> = Lazy::new(|| ToolRegAPI::load()?);
 
 #[derive(Default, Debug)]
 pub struct ToolRegConfig {}
