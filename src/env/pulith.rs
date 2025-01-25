@@ -26,6 +26,18 @@ impl PulithEnv {
             store: Store::from(&root),
         })
     }
+
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+    
+    pub fn pwd(&self) -> &Path {
+        &self.pwd
+    }
+    
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -45,4 +57,9 @@ impl Store {
             temp: root.join("temp"),
         }
     }
+    
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    
 }

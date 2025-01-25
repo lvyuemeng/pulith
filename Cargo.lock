@@ -939,6 +939,7 @@ dependencies = [
  "regex",
  "reqwest",
  "semver",
+ "serde",
  "sysinfo 0.33.1",
  "tokio",
 ]
