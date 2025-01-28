@@ -21,7 +21,7 @@ impl FileDownload {
 
             while let Some(chunk) = res.chunk().await? {
                 file.write_all(&chunk).await?;
-                t.pb.inc(chunk.len() as u64);
+                t.inc(chunk.len() as u64);
             }
             t.finish(Some("Download completed".to_string()));
             Ok(())

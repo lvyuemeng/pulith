@@ -1,7 +1,8 @@
-use crate::tool::ver::VersionKey;
 use anyhow::Result;
 use clap::Command;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::SystemTime};
+
+use crate::tool::ver::VersionKind;
 
 trait Backend {
     fn runtime_snap() -> Snap;
@@ -49,6 +50,7 @@ pub struct Metadata {
 }
 
 pub struct Snap {
-    installed_path: PathBuf,
-    version: VersionKey,
+    install_path: PathBuf,
+    before: SystemTime,
+    version: VersionKind,
 }

@@ -32,6 +32,13 @@ pub struct ProgressTrackerConfig {
     pub msg: Option<String>,
 }
 
+impl ProgressTracker {
+    pub fn inc(&self, len: u64) -> &Self {
+        self.pb.inc(len);
+        self
+    }
+}
+
 impl Tracker for ProgressTracker {
     type Ctx = ProgressTrackerConfig;
 

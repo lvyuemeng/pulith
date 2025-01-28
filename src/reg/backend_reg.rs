@@ -5,19 +5,19 @@ use crate::{
 use anyhow::Result;
 use once_cell::sync::Lazy;
 
-static BACKEND_REG: Cache<BackendType, Snap> = Lazy::new(|| BackendRegAPI::load()?);
-
-#[derive(Default, Debug)]
-pub struct BackendRegConfig {}
+pub static BACKEND_REG: Lazy<BackendReg> = Lazy::new(|| BackendReg::load()?);
 
 pub struct BackendRegAPI;
 
-impl Reg for BackendRegAPI {
-    type Key = BackendType;
-    type Val = Snap;
+impl BackendRegAPI {}
 
-    fn load() -> Result<Cache<Self::Key, Self::Val>> {
-        
+type BackendReg = Reg<HashMap<BackendType, Snap>>;
+
+impl Cache for BackendReg {
+    fn locate() -> Result<PathBuf> {
+        Ok(PulithEnv::new()?.store().root().join("backend.reg.lock"))
     }
-}
 
+    fn load() -> Result<Self>;
+    fn save(&self) -> Result<()>;
+}

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
+use serde::{Deserialize, Serialize};
 
 fn parse_num(part: Option<&str>) -> u32 {
     part.unwrap_or("0").parse().unwrap_or(0)

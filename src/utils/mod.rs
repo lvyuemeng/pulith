@@ -1,3 +1,3 @@
-mod client;
-mod task_pool;
-mod ui;
+pub mod client;
+pub mod task_pool;
+pub mod ui;

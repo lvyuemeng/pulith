@@ -1,85 +1,68 @@
+use crate::{
+    backend::BackendType, env::pulith::PulithEnv, reg::Reg, tool::ver::VersionKind,
+    utils::task_pool::POOL,
+};
+
+use anyhow::{Result, bail};
+use core::slice::SlicePattern;
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::{Deref, DerefMut},
+    path::PathBuf,
+};
+use tokio::{
+    fs::{File, OpenOptions, rename},
+    io::{AsyncWriteExt, BufReader},
 };
 
-use crate::{backend::BackendType, env::pulith::PulithEnv, reg::Reg, tool::ver::VersionKind};
-use anyhow::Result;
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
+use super::Cache;
 
-static TOOL_REG: Lazy<ToolReg> = Lazy::new(|| ToolRegAPI::load()?);
+pub static TOOL_REG: Lazy<ToolReg> = Lazy::new(|| ToolReg::load()?);
 
 pub struct ToolRegAPI;
 
-impl Reg<ToolReg> for ToolRegAPI {
-    fn load() -> Result<ToolReg> {
-        // improve...
-        let cur_env = PulithEnv::new()?.store().root().join("reg.toml");
+impl ToolRegAPI {}
 
-        let data = std::fs::read_to_string(&cur_env)?;
-        let reg: ToolReg = serde::Deserialize::deserialize(&data)?;
+type ToolReg = Reg<HashMap<BackendType, ToolInfo>>;
+type ToolInfo = BTreeMap<String, ToolStatus>;
 
-        Ok(reg)
+impl Cache for ToolReg {
+    fn locate() -> Result<PathBuf> {
+        Ok(PulithEnv::new()?.store().root().join("tool.reg.lock"))
+    }
+
+    fn load() -> Result<Self>;
+
+    fn save(&self) -> Result<()>;
+}
+
+impl Default for ToolReg {
+    fn default() -> Self {
+        Self::default()
     }
 }
 
-impl ToolRegAPI {
-    fn get(&self, tool: &str) -> Option<ToolStatus> {
-        TOOL_REG.deref().get(tool).cloned()
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ToolReg(HashMap<BackendType, ToolInfo>);
-
-impl ToolReg {
-    pub fn get(&self, tool: &str) -> Option<&ToolStatus> {
-        self.deref().values().find_map(|v| v.get(tool))
-    }
-}
-
-impl Deref for ToolReg {
-    type Target = HashMap<BackendType, ToolInfo>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ToolReg {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ToolInfo(BTreeMap<String, ToolStatus>);
-
-impl Deref for ToolInfo {
-    type Target = BTreeMap<String, ToolStatus>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ToolInfo {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ToolStatus {
     install_path: PathBuf,
     version: VersionKind,
     scope: Scope,
+    checksum: Option<Vec<u8>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "kebab-case")]
 enum Scope {
     Global,
     Local(Vec<PathBuf>),
     Hidden,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::Global
+    }
 }
