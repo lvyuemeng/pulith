@@ -2,10 +2,9 @@ use anyhow::Result;
 use clap::Command;
 use std::{path::PathBuf, time::SystemTime};
 
-use crate::tool::ver::VersionKind;
-
-trait Backend {
-    fn runtime_snap() -> Snap;
+pub trait Backend {
+    fn snap() -> Snap;
+    fn exist() -> bool;
     fn metadata() -> Metadata;
     fn env_vars() -> impl Iterator<Item = String>;
     fn cmd() -> Option<impl Iterator<Item = Command>>;
@@ -17,6 +16,19 @@ trait Backend {
     fn list(arg: ListArg) -> Result<()>;
     fn update(arg: UpdateArg) -> Result<()>;
     fn search(arg: SearchArg) -> Result<()>;
+}
+
+pub struct Metadata {
+    name: String,
+    homepage: String,
+    description: String,
+    notes: String,
+}
+
+pub struct Snap {
+    install_path: PathBuf,
+    before: SystemTime,
+    version: VersionKind,
 }
 
 pub struct CheckReg;
@@ -40,17 +52,4 @@ impl Backend for BackendType {
     fn cmd() -> Option<impl Iterator<Item = Command>> {
         None
     }
-}
-
-pub struct Metadata {
-    name: String,
-    homepage: String,
-    description: String,
-    notes: String,
-}
-
-pub struct Snap {
-    install_path: PathBuf,
-    before: SystemTime,
-    version: VersionKind,
 }

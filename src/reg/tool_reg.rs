@@ -1,6 +1,6 @@
 use crate::{
-    backend::BackendType, env::pulith::PulithEnv, reg::Reg, tool::ver::VersionKind,
-    utils::task_pool::POOL,
+    backend::BackendType, env::pulith::PulithEnv, reg::Reg, utils::task_pool::POOL,
+    utils::ver::VersionKind,
 };
 
 use anyhow::{Result, bail};

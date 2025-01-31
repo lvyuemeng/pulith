@@ -54,7 +54,7 @@ impl fmt::Display for SemVer {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct CalVer(pub Version);
+struct CalVer(pub Version);
 
 impl FromStr for CalVer {
     type Err = anyhow::Error;
