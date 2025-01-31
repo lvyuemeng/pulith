@@ -1,8 +1,4 @@
-use crate::cli::setup::SetupArg;
-use crate::cli::tool::{add,rm,search,up,use_ver};
 use clap::{Parser, Subcommand};
-
-use super::tool::ls;
 
 #[derive(Clone, Debug, Parser)]
 #[command(name="Pulith",version=env!("CARGO_PKG_VERSION"),about,long_about=None,propagate_version=true)]
@@ -30,24 +26,8 @@ pub enum Commands {
     Remove(Remove),
     #[command(alias = "a", name = "add")]
     Add(Add),
-
-    //Tool
-    #[command(alias = "t", name = "tool")]
-    Tool(ToolCommands),
-}
-
-#[derive(Clone, Debug, Subcommand)]
-pub enum ToolCommands {
     #[command(alias = "s", name = "search")]
-    Search(search::SearchArg),
-    #[command(alias = "a", name = "add")]
-    Add(add::AddArg),
+    Search(SearchArg),
     #[command(alias = "u", name = "use")]
-    Use(use_ver::UseArg),
-    #[command(alias = "rm", name = "remove")]
-    Remove(rm::RmArg),
-    #[command(alias = "ls", name = "list")]
-    List(ls::ListArg),
-    #[command(alias = "u", name = "update")]
-    Update(up::UpdateArg),
+    Use(UseArg),
 }
