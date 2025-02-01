@@ -9,7 +9,8 @@ pub static BACKEND_REG: Lazy<BackendReg> = Lazy::new(|| BackendReg::load()?);
 
 pub struct BackendRegAPI;
 
-impl BackendRegAPI {}
+impl BackendRegAPI {
+}
 
 type BackendReg = Reg<HashMap<BackendType, Snap>>;
 

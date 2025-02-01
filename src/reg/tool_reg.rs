@@ -24,7 +24,15 @@ pub static TOOL_REG: Lazy<ToolReg> = Lazy::new(|| ToolReg::load()?);
 
 pub struct ToolRegAPI;
 
-impl ToolRegAPI {}
+impl ToolRegAPI {
+    pub fn get_names(bk: BackendType) -> Option<impl Iterator<Item = String>> {
+        TOOL_REG
+            .reg
+            .iter()
+            .find_map(&bk)
+            .map(|info| info.keys().cloned())
+    }
+}
 
 type ToolReg = Reg<HashMap<BackendType, ToolInfo>>;
 type ToolInfo = BTreeMap<String, ToolStatus>;
