@@ -1,7 +1,5 @@
 use statum::{machine, state};
 
-pub mod bk;
-
 #[state]
 enum InstallState {
     Init,
@@ -35,7 +33,7 @@ impl Installer<Init> {
 
 impl Installer<NativeInstall> {
     pub fn install(self) -> Result<()> {
-        todo!()       
+        todo!()
     }
 }
 
@@ -59,9 +57,7 @@ impl Installer<Install> {
 
 impl Installer<Complete> {
     pub fn complete() -> Result<()> {
-        // clean temp, 
+        // clean temp,
         todo!()
     }
 }
-
-
