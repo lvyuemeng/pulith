@@ -1045,6 +1045,7 @@ dependencies = [
  "semver",
  "serde",
  "sha2",
+ "statum",
  "sysinfo 0.33.1",
  "tokio",
 ]
@@ -1381,6 +1382,33 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "statum"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88085b76fb2f147dbce11e5a604e2e6ad01edd0e99fd6e899ae13fad05cd1e28"
+dependencies = [
+ "statum-core",
+ "statum-macros",
+]
+
+[[package]]
+name = "statum-core"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8659d382d70439e78a882e3519f67dc2e1558dfcbeab0e9ca2749ed908c2aa47"
+
+[[package]]
+name = "statum-macros"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c04b5f8d476febdb35e8a51a85f26a94387aa65e453ebddcfd591130fa75794"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.96",
+]
 
 [[package]]
 name = "strsim"

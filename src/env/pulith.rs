@@ -43,9 +43,9 @@ impl PulithEnv {
 #[derive(Debug, Clone, Default)]
 struct Store {
     root: PathBuf,
-    bin: PathBuf,
-    cache: PathBuf,
-    temp: PathBuf,
+    pub bin: PathBuf,
+    pub cache: PathBuf,
+    pub temp: PathBuf,
 }
 
 impl Store {
@@ -61,5 +61,4 @@ impl Store {
     pub fn root(&self) -> &Path {
         &self.root
     }
-    
 }

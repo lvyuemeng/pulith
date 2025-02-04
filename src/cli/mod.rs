@@ -1,4 +1,5 @@
 pub mod app;
+mod install;
 mod cfg;
 mod info;
 mod ls;
