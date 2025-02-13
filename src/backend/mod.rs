@@ -3,19 +3,27 @@ use clap::Command;
 use std::{fmt, path::PathBuf, time::SystemTime};
 
 pub trait Backend {
-    fn snap(self) -> Option<Snap>;
-    fn metadata(self) -> Metadata;
-    fn env_vars(self) -> impl Iterator<Item = String>;
-    fn cmd(self) -> Option<impl Iterator<Item = Command>>;
-    fn tools(self) -> impl Iterator<Item = String>;
+    fn snap(&self) -> Option<Snap> {
+        None
+    }
+    fn metadata(&self) -> Metadata;
+    fn env_vars(&self) -> Option<impl Iterator<Item = String>> {
+        None
+    }
+    fn cmd(&self) -> Option<impl Iterator<Item = Command>> {
+        None
+    }
+    fn tools(&self) -> Option<impl Iterator<Item = String>> {
+        None
+    }
 
     // Tool ops
-    fn add(self, arg: AddArg) -> Result<()>;
-    fn use_ver(self, arg: UseArg) -> Result<()>;
-    fn remove(self, arg: RmArg) -> Result<()>;
-    fn list(self, arg: ListArg) -> Result<()>;
-    fn update(self, arg: UpdateArg) -> Result<()>;
-    fn search(self, arg: SearchArg) -> Result<()>;
+    fn add(&self, arg: AddArg) -> Result<()>;
+    fn use_ver(&self, arg: UseArg) -> Result<()>;
+    fn remove(&self, arg: RmArg) -> Result<()>;
+    fn list(&self, arg: ListArg) -> Result<()>;
+    fn update(&self, arg: UpdateArg) -> Result<()>;
+    fn search(&self, arg: SearchArg) -> Result<()>;
 }
 
 pub struct Metadata {
@@ -27,8 +35,9 @@ pub struct Metadata {
 
 pub struct Snap {
     install_path: PathBuf,
-    before: SystemTime,
+    env_var: (String, PathBuf),
     version: VersionKind,
+    before: SystemTime,
 }
 
 pub struct CheckReg;
@@ -38,11 +47,32 @@ pub struct UpdateReg;
 #[derive(Debug, Clone, Copy)]
 pub enum BackendType {
     Unknown,
+    // Linux Native
+    Apt,
+    Dnf,
+    Pacman,
+    Zypper,
+    Apk,
+    // Macos
+    Brew,
+    // Windows Native
+    Winget,
+    Scoop,
+    Choco,
 }
 
 impl BackendType {
     pub fn from_str(s: &str) -> Self {
         match s {
+            "apt" => BackendType::Apt,
+            "dnf" => BackendType::Dnf,
+            "pacman" => BackendType::Pacman,
+            "zypper" => BackendType::Zypper,
+            "apk" => BackendType::Apk,
+            "brew" => BackendType::Brew,
+            "winget" => BackendType::Winget,
+            "scoop" => BackendType::Scoop,
+            "choco" => BackendType::Choco,
             _ => BackendType::Unknown,
         }
     }
@@ -94,8 +124,8 @@ impl Backend for BackendType {
         todo!()
     }
 
-    fn tools(self) -> Option<impl Iterator<Item = String>> {
-        match self {
+    fn tools(&self) -> Option<impl Iterator<Item = String>> {
+        match &self {
             BackendType::Unknown => todo!(),
         }
     }

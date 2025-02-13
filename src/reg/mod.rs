@@ -6,7 +6,7 @@ use backend_reg::BACKEND_REG;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, time::SystemTime};
-use tokio::fs::rename;
+use tokio::{fs::{rename, File, OpenOptions}, io::AsyncWriteExt};
 use tool_reg::TOOL_REG;
 
 use crate::utils::task_pool::POOL;
@@ -91,7 +91,7 @@ impl<T> Cache for Reg<T> {
                     .write(true)
                     .create(true)
                     .open(&tmp_path)?;
-                file.set_len(0)?;
+                file.set_len(0);
 
                 let data = bincode::serialize(self)?;
                 file.write_all(&data)?;

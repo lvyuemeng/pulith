@@ -9,10 +9,7 @@ use crate::{
 
 #[derive(Debug, clap::Args)]
 #[clap(visible_alias = "list")]
-pub struct Ls {
-    #[clap(short, long)]
-    installed: bool,
-}
+pub struct Ls {}
 
 impl Ls {
     pub fn run(self) {
@@ -21,14 +18,14 @@ impl Ls {
                 .filter_map(|bk| {
                     let bk = BackendStatus::from(bk);
 
-                    if self.installed && !bk.installed {
-                        return None;
+                    if bk.installed && bk.bk.tools().is_some() {
+                        return Some(Node {
+                            bk,
+                            tools: bk.bk.tools().unwrap().collect(),
+                        });
                     }
 
-                    Some(Node {
-                        bk,
-                        tools: bk.bk.tools().collect(),
-                    })
+                    None
                 })
                 .collect(),
         };

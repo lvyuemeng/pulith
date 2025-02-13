@@ -25,12 +25,12 @@ pub static TOOL_REG: Lazy<ToolReg> = Lazy::new(|| ToolReg::load()?);
 pub struct ToolRegAPI;
 
 impl ToolRegAPI {
-    pub fn get_names(bk: BackendType) -> Option<impl Iterator<Item = String>> {
+    pub fn get_names(bk: &BackendType) -> Option<impl Iterator<Item = String>> {
         TOOL_REG
             .reg
             .iter()
-            .find_map(&bk)
-            .map(|info| info.keys().cloned())
+            .find(bk)
+            .map(|(_, info)| info.keys().cloned()) // TODO: more info
     }
 }
 

@@ -6,6 +6,8 @@ use once_cell::sync::Lazy;
 use query_shell::Shell;
 use sysinfo::System;
 
+use crate::backend::BackendType;
+
 #[derive(Debug, Clone, Copy)]
 enum OS {
     Windows,
@@ -103,20 +105,41 @@ impl SystemInfo {
         Self { os, arch }
     }
 
-    pub fn shell_exec() -> Result<&'static str> {
+    pub fn which_pm() -> Option<BackendType> {
+        match SYSTEM_INFO.os {
+            OS::Macos => Some(BackendType::Brew),
+            OS::Windows => Some(BackendType::Winget),
+            OS::Linux(distro) => match distro {
+                Linux::Debian => Some(BackendType::Apt),
+                Linux::Ubuntu => Some(BackendType::Apt),
+                Linux::LinuxMint => Some(BackendType::Apt),
+                Linux::KaliLinux => Some(BackendType::Apt),
+                Linux::Fedora => Some(BackendType::Dnf),
+                Linux::RedHatEnterpriseLinux => Some(BackendType::Dnf),
+                Linux::ArchLinux => Some(BackendType::Pacman),
+                Linux::Manjaro => Some(BackendType::Pacman),
+                Linux::OpenSUSE => Some(BackendType::Zypper),
+                Linux::AlpineLinux => Some(BackendType::Apk),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn which_shell() -> Option<&'static str> {
         match query_shell::get_shell() {
             Ok(s) => match s {
-                Shell::Bash => Ok("bash"),
-                Shell::Elvish => Ok("elvish"),
-                Shell::Fish => Ok("fish"),
-                Shell::Ion => Ok("ion"),
-                Shell::Nushell => Ok("nu"),
-                Shell::Powershell => Ok("pwsh"),
-                Shell::Xonsh => Ok("xonsh"),
-                Shell::Zsh => Ok("zsh"),
-                _ => bail!("unsupported shell"),
+                Shell::Bash => Some("bash"),
+                Shell::Elvish => Some("elvish"),
+                Shell::Fish => Some("fish"),
+                Shell::Ion => Some("ion"),
+                Shell::Nushell => Some("nu"),
+                Shell::Powershell => Some("pwsh"),
+                Shell::Xonsh => Some("xonsh"),
+                Shell::Zsh => Some("zsh"),
+                _ => None,
             },
-            Err(_) => bail!("failed to get shell"),
+            Err(_) => None,
         }
     }
 }

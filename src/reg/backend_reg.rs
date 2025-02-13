@@ -1,6 +1,7 @@
 use crate::{
     backend::{BackendType, Snap},
     reg::{Cache, Reg},
+    env::pulith::PulithEnv,
 };
 use anyhow::Result;
 use once_cell::sync::Lazy;
