@@ -1,0 +1,11 @@
+pub mod app;
+mod install;
+mod cfg;
+mod info;
+mod ls;
+mod parse;
+mod rm;
+mod search;
+mod setup;
+mod update;
+mod upgrade;
