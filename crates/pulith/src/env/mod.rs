@@ -1,3 +1,4 @@
+use crate::env::PulithEnv;
 use anyhow::{Context, Result};
 use home::home_dir;
 use std::{
@@ -30,11 +31,11 @@ impl PulithEnv {
     pub fn home(&self) -> &Path {
         &self.home
     }
-    
+
     pub fn pwd(&self) -> &Path {
         &self.pwd
     }
-    
+
     pub fn store(&self) -> &Store {
         &self.store
     }
@@ -57,7 +58,7 @@ impl Store {
             temp: root.join("temp"),
         }
     }
-    
+
     pub fn root(&self) -> &Path {
         &self.root
     }

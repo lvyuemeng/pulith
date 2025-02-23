@@ -1,10 +1,7 @@
-use crate::{
-    env::pulith::PulithEnv,
-    utils::{
+use crate::utils::{
         task_pool::POOL,
         ui::tracker::{ProgressTracker, ProgressTrackerConfig, Tracker},
-    },
-};
+    };
 use anyhow::{Result, bail};
 use reqwest::{Client, Proxy, Response, Url};
 use std::path::Path;
@@ -29,12 +26,6 @@ impl FileDownload {
             t.finish(Some("Download completed".to_string()));
             Ok(())
         })
-    }
-
-    pub fn fetch(url: impl Into<Url>, name: &str) -> Result<()> {
-        let path = PulithEnv::new()?.store().temp.join(name);
-
-        Self::fetch_raw(url, path)
     }
 }
 

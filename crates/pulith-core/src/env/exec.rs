@@ -22,7 +22,7 @@ impl EnvExec {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let shell = SystemInfo::which_shell()?;
+        let shell = SystemInfo::which_shell().unwrap();
         let mut cmd = Command::new(shell).envs(exports).spawn()?;
 
         cmd.wait()?;

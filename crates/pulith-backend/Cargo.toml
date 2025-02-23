@@ -1,0 +1,11 @@
+[package]
+name = "pulith-backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pulith-core = { path = "../pulith-core" }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+statum = { workspace = true }

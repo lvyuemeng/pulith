@@ -1,5 +1,7 @@
+use crate::backend::Backend;
+use reqwest::Url;
 use statum::{machine, state};
-use std::marker::PhantomData;
+use std::{marker::PhantomData, path::PathBuf};
 
 #[state]
 enum InstallState {

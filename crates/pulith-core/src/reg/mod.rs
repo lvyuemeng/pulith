@@ -1,25 +1,21 @@
-pub mod backend_reg;
-pub mod tool_reg;
-
 use anyhow::{Result, bail};
-use backend_reg::BACKEND_REG;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, time::SystemTime};
-use tokio::{fs::{rename, File, OpenOptions}, io::AsyncWriteExt};
-use tool_reg::TOOL_REG;
+use sha2::{Digest, Sha256};
+use std::{path::PathBuf, time::SystemTime};
+use tokio::fs::{rename, File, OpenOptions};
+use tokio::io::{self, AsyncWriteExt, BufReader};
 
 use crate::utils::task_pool::POOL;
 
 pub trait Cache {
-    fn load() -> Result<Self>;
+    fn load() -> Result<Self> where Self: Sized;
     fn save(&self) -> Result<()>;
     fn locate() -> Result<PathBuf> {
         Ok(PathBuf::new())
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Reg<T: Serialize + Default> {
     #[serde(skip)]
     dirty: bool,
@@ -38,9 +34,9 @@ impl<T: Serialize + Default> Default for Reg<T> {
     }
 }
 
-impl<T> Cache for Reg<T> {
+impl<T: Serialize + Default> Cache for Reg<T> {
     fn load() -> Result<Self> {
-        let path: PathBuf = Cache::<Self>::locate()?;
+        let path: PathBuf = Reg::<T>::locate()?;
         if !path.exists() {
             return Ok(Reg::default());
         }
@@ -52,7 +48,7 @@ impl<T> Cache for Reg<T> {
             let mut reader = BufReader::new(file);
             let mut content = Vec::new();
 
-            io::copy(&mut reader, &mut content)?;
+            io::copy(&mut reader, &mut content).await?;
             hasher.update(&content);
 
             let reg = bincode::deserialize_from(&reader)?;
@@ -65,7 +61,7 @@ impl<T> Cache for Reg<T> {
             return Ok(());
         }
 
-        let path: PathBuf = Cache::<Self>::locate()?;
+        let path: PathBuf = Cache::locate()?;
         let tmp_path = path.with_extension("tmp");
 
         if let Some(cur_hash) = self.last_hash {
@@ -74,12 +70,12 @@ impl<T> Cache for Reg<T> {
                 let mut reader = BufReader::new(file);
                 let mut hasher = Sha256::new();
                 let mut content = Vec::new();
-                io::copy(&mut reader, &mut content)?;
+                io::copy(&mut reader, &mut content).await?;
 
                 hasher.update(&content);
 
-                hasher.finalize().as_slice()
-            });
+                Ok::<_, anyhow::Error>(hasher.finalize().to_vec())
+            })?;
             if hash != cur_hash {
                 bail!("file changed externally")
             }
@@ -90,18 +86,19 @@ impl<T> Cache for Reg<T> {
                 let mut file: File = OpenOptions::new()
                     .write(true)
                     .create(true)
-                    .open(&tmp_path)?;
+                    .open(&tmp_path).await?;
                 file.set_len(0);
 
                 let data = bincode::serialize(self)?;
-                file.write_all(&data)?;
-                file.sync_all()?;
-                rename(&tmp_path, &path)?;
+                file.write_all(&data).await?;
+                file.sync_all().await?;
+                rename(&tmp_path, &path).await?;
                 self.dirty = false;
 
                 let mut hasher = Sha256::new();
                 hasher.update(&data);
                 self.last_hash = Some(hasher.finalize().to_vec());
+                Ok::<_, anyhow::Error>(())
             });
         }
 

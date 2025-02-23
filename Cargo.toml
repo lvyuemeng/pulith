@@ -1,25 +1,26 @@
-[package]
-name = "pulith"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["crates/*"]
+default-members = ["crates/pulith"]
+resolver = "3"
 
-[dependencies]
-anyhow = "1.0.95"
+[workspace.dependencies]
+anyhow = "1.0.96"
 bincode = "1.3.3"
-clap = { version = "4.5.26", features = ["derive"] }
-clap_complete = "4.5.42"
+clap = { version = "4.5.30", features = ["derive"] }
+clap_complete = "4.5.45"
 console = "0.15.10"
 display_tree = "1.1.2"
 home = "0.5.11"
-indicatif = "0.17.9"
-once_cell = "1.20.2"
+indicatif = "0.17.11"
+once_cell = "1.20.3"
 query-shell = "0.3.0"
 regex = "1.11.1"
 reqwest = "0.12.12"
-semver = "1.0.25"
-serde = { version = "1.0.217", features = ["derive"] }
+semver = {version = "1.0.25", features = ["serde"]}
+serde = { version = "1.0.218", features = ["derive"] }
+serde_json = "*"
 sha2 = "0.10.8"
-statum = "0.1.47"
+statum = "0.1.48"
 sysinfo = "0.33.1"
-tabled = "0.17.0"
-tokio = { version = "1.43.0", features = ["rt-multi-thread","fs"] }
+tabled = "0.18.0"
+tokio = { version = "*", features = ["rt-multi-thread", "fs","io-util"] }

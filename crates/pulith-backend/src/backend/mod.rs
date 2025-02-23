@@ -1,3 +1,5 @@
+pub mod install;
+
 use anyhow::Result;
 use clap::Command;
 use std::{fmt, path::PathBuf, time::SystemTime};
@@ -130,3 +132,25 @@ impl Backend for BackendType {
         }
     }
 }
+
+    pub fn which_pm() -> Option<BackendType> {
+        match SYSTEM_INFO.os {
+            OS::Macos => Some(BackendType::Brew),
+            OS::Windows => Some(BackendType::Winget),
+            OS::Linux(distro) => match distro {
+                Linux::Debian => Some(BackendType::Apt),
+                Linux::Ubuntu => Some(BackendType::Apt),
+                Linux::LinuxMint => Some(BackendType::Apt),
+                Linux::KaliLinux => Some(BackendType::Apt),
+                Linux::Fedora => Some(BackendType::Dnf),
+                Linux::RedHatEnterpriseLinux => Some(BackendType::Dnf),
+                Linux::ArchLinux => Some(BackendType::Pacman),
+                Linux::Manjaro => Some(BackendType::Pacman),
+                Linux::OpenSUSE => Some(BackendType::Zypper),
+                Linux::AlpineLinux => Some(BackendType::Apk),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+

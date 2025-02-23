@@ -1,6 +1,7 @@
 use tabled::{
     Table,
     settings::{Panel, Remove, Style, object::Rows},
+    Tabled,
 };
 
 pub struct Formatter;
@@ -13,7 +14,7 @@ pub struct FormatConfig {
 }
 
 impl Formatter {
-    pub fn default(data: impl IntoIterator<impl Tabled>, config: FormatConfig) -> Table {
+    pub fn default<T: Tabled, I: IntoIterator<Item = T>>(data: I, config: FormatConfig) -> Table {
         let mut table = Table::new(data);
         if let Some(header) = config.header {
             table.with(Panel::header(header));

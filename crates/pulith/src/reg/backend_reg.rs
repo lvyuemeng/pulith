@@ -1,8 +1,6 @@
-use crate::{
-    backend::{BackendType, Snap},
-    reg::{Cache, Reg},
-    env::pulith::PulithEnv,
-};
+use crate::env::PulithEnv;
+
+use std::{collections::HashMap, path::PathBuf};
 use anyhow::Result;
 use once_cell::sync::Lazy;
 

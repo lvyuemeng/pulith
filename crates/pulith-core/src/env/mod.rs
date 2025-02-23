@@ -1,12 +1,8 @@
 pub mod exec;
-pub mod pulith;
 
-use anyhow::{Result, bail};
 use once_cell::sync::Lazy;
 use query_shell::Shell;
 use sysinfo::System;
-
-use crate::backend::BackendType;
 
 #[derive(Debug, Clone, Copy)]
 enum OS {
@@ -103,30 +99,8 @@ impl SystemInfo {
         };
 
         Self { os, arch }
-    }
-
-    pub fn which_pm() -> Option<BackendType> {
-        match SYSTEM_INFO.os {
-            OS::Macos => Some(BackendType::Brew),
-            OS::Windows => Some(BackendType::Winget),
-            OS::Linux(distro) => match distro {
-                Linux::Debian => Some(BackendType::Apt),
-                Linux::Ubuntu => Some(BackendType::Apt),
-                Linux::LinuxMint => Some(BackendType::Apt),
-                Linux::KaliLinux => Some(BackendType::Apt),
-                Linux::Fedora => Some(BackendType::Dnf),
-                Linux::RedHatEnterpriseLinux => Some(BackendType::Dnf),
-                Linux::ArchLinux => Some(BackendType::Pacman),
-                Linux::Manjaro => Some(BackendType::Pacman),
-                Linux::OpenSUSE => Some(BackendType::Zypper),
-                Linux::AlpineLinux => Some(BackendType::Apk),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    pub fn which_shell() -> Option<&'static str> {
+    }   
+     pub fn which_shell() -> Option<&'static str> {
         match query_shell::get_shell() {
             Ok(s) => match s {
                 Shell::Bash => Some("bash"),
