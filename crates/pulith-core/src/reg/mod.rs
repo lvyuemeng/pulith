@@ -1,30 +1,50 @@
 use anyhow::{Result, bail};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::SystemTime};
 use tokio::fs::{rename, File, OpenOptions};
-use tokio::io::{self, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use crate::utils::task_pool::POOL;
 
-pub trait Cache {
-    fn load() -> Result<Self> where Self: Sized;
-    fn save(&self) -> Result<()>;
-    fn locate() -> Result<PathBuf> {
-        Ok(PathBuf::new())
+pub trait Cache:Sized {
+    fn load() -> Result<Self>;
+    fn save(&mut self) -> Result<()>;
+    fn locate() ->Option<PathBuf>{
+        None
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Reg<T: Serialize + Default> {
+#[derive(Debug, Serialize)]
+pub struct Reg<T: Serialize + Default + for<'de> Deserialize<'de>> {
     #[serde(skip)]
     dirty: bool,
-    #[serde(skip)]
     last_hash: Option<Vec<u8>>,
     reg: T,
 }
 
-impl<T: Serialize + Default> Default for Reg<T> {
+// Q: due to drop impl, Reg<T> must impl Deserialize and collide with T trait bound of Deseralize.
+impl<'de,T:Serialize+Default+DeserializeOwned> Deserialize<'de> for Reg<T> {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        #[derive(Deserialize)]
+        struct Helper<T> {
+            last_hash: Option<Vec<u8>>,
+            reg: T,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        Ok(Reg {
+            dirty: false,
+            last_hash: helper.last_hash,
+            reg: helper.reg,
+        })
+    }
+}
+
+impl<T: Serialize + Default + for<'de> Deserialize<'de>> Default for Reg<T> {
     fn default() -> Self {
         Self {
             dirty: false,
@@ -34,93 +54,69 @@ impl<T: Serialize + Default> Default for Reg<T> {
     }
 }
 
-impl<T: Serialize + Default> Cache for Reg<T> {
+impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
     fn load() -> Result<Self> {
-        let path: PathBuf = Reg::<T>::locate()?;
-        if !path.exists() {
-            return Ok(Reg::default());
-        }
+        let path = match Self::locate() {
+            Some(path) => path,
+            None =>return  Ok(Reg::default()),
+        };
 
-        // async
         POOL.block_on(async move {
             let mut file = File::open(&path).await?;
-            let mut hasher = Sha256::new();
-            let mut reader = BufReader::new(file);
             let mut content = Vec::new();
+            file.read_to_end(&mut content).await?;
+            
+            let mut hasher = Sha256::new();
+            Digest::update(&mut hasher, &content);
+            let hash = hasher.finalize().to_vec();
 
-            io::copy(&mut reader, &mut content).await?;
-            hasher.update(&content);
-
-            let reg = bincode::deserialize_from(&reader)?;
+            let reg: Self = bincode::deserialize(&content)?;
+            
+            if let Some(ref last_hash) = reg.last_hash {
+                if *last_hash != hash {
+                    bail!("Cache changed externally")
+                }
+            }
+            
             Ok(reg)
         })
     }
 
-    fn save(&self) -> Result<()> {
+    fn save(&mut self) -> Result<()> {
         if !self.dirty {
             return Ok(());
         }
 
-        let path: PathBuf = Cache::locate()?;
+        let path = match Self::locate() {
+            Some(path) => path,None => bail!("cache file not found"),
+        };
         let tmp_path = path.with_extension("tmp");
 
-        if let Some(cur_hash) = self.last_hash {
-            let hash = POOL.block_on(async move {
-                let mut file = File::open(&path).await?;
-                let mut reader = BufReader::new(file);
-                let mut hasher = Sha256::new();
-                let mut content = Vec::new();
-                io::copy(&mut reader, &mut content).await?;
+        let data = bincode::serialize(&self)?;
 
-                hasher.update(&content);
+        let hash = POOL.block_on(async move {
+            let mut file: File = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(&tmp_path).await?;
 
-                Ok::<_, anyhow::Error>(hasher.finalize().to_vec())
-            })?;
-            if hash != cur_hash {
-                bail!("file changed externally")
-            }
-        }
+            file.write_all(&data).await?;
+            file.sync_all().await?;
 
-        {
-            POOL.block_on(async move {
-                let mut file: File = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(&tmp_path).await?;
-                file.set_len(0);
+            rename(&tmp_path, &path).await?;
+            Ok::<_,anyhow::Error>(Sha256::digest(&data).to_vec())
+        })?;
 
-                let data = bincode::serialize(self)?;
-                file.write_all(&data).await?;
-                file.sync_all().await?;
-                rename(&tmp_path, &path).await?;
-                self.dirty = false;
-
-                let mut hasher = Sha256::new();
-                hasher.update(&data);
-                self.last_hash = Some(hasher.finalize().to_vec());
-                Ok::<_, anyhow::Error>(())
-            });
-        }
-
+        self.last_hash = Some(hash);
+        self.dirty = false;
         Ok(())
     }
 }
 
-pub struct SaveGuard {
-    last_save: SystemTime,
-}
-
-impl SaveGuard {
-    pub fn new() -> Self {
-        Self {
-            last_save: SystemTime::now(),
-        }
-    }
-}
-
-impl Drop for SaveGuard {
+impl<T:Serialize+Default+for<'de> Deserialize<'de>> Drop for Reg<T> {
     fn drop(&mut self) {
-        let _ = TOOL_REG.save();
-        let _ = BACKEND_REG.save();
+        let _ = self.save();
     }
 }
+
