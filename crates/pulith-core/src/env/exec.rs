@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::env::{self, split_paths};
 use std::ffi::OsStr;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, CommandEnvs};
 pub struct EnvExec;
 
 impl EnvExec {

@@ -5,7 +5,7 @@ use query_shell::Shell;
 use sysinfo::System;
 
 #[derive(Debug, Clone, Copy)]
-enum OS {
+pub enum OS {
     Windows,
     Macos,
     Linux(Linux),
@@ -13,7 +13,7 @@ enum OS {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Linux {
+pub enum Linux {
     Debian,
     Ubuntu,
     LinuxMint,
@@ -30,7 +30,7 @@ enum Linux {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Arch {
+pub enum Arch {
     X86,
     X86_64,
     ARM,
@@ -80,7 +80,7 @@ impl From<&str> for Arch {
     }
 }
 
-static SYSTEM_INFO: Lazy<SystemInfo> = Lazy::new(|| SystemInfo::load());
+pub static SYSTEM_INFO: Lazy<SystemInfo> = Lazy::new(|| SystemInfo::load());
 
 #[derive(Debug)]
 pub struct SystemInfo {
@@ -99,8 +99,16 @@ impl SystemInfo {
         };
 
         Self { os, arch }
-    }   
-     pub fn which_shell() -> Option<&'static str> {
+    }
+
+    pub fn os(&self) -> OS {
+        self.os
+    }
+    pub fn arch(&self) -> Arch {
+        self.arch
+    }
+
+    pub fn which_shell() -> Option<&'static str> {
         match query_shell::get_shell() {
             Ok(s) => match s {
                 Shell::Bash => Some("bash"),

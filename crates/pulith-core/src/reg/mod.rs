@@ -1,34 +1,45 @@
+use crate::utils::task_pool::POOL;
+
 use anyhow::{Result, bail};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, time::SystemTime};
-use tokio::fs::{rename, File, OpenOptions};
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufReader};
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
+use tokio::fs::{File, OpenOptions, rename};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::utils::task_pool::POOL;
+pub trait Cache: Sized {
+    fn load(root: &Path, id: &Path) -> Result<Self>;
+    fn save(&mut self, root: &Path, id: &Path) -> Result<()>;
+    fn locate(root: &Path, id: &Path) -> Option<PathBuf> {
+        let path = root.join(id);
 
-pub trait Cache:Sized {
-    fn load() -> Result<Self>;
-    fn save(&mut self) -> Result<()>;
-    fn locate() ->Option<PathBuf>{
-        None
+        if path.exists() { Some(path) } else { None }
     }
 }
 
 #[derive(Debug, Serialize)]
-pub struct Reg<T: Serialize + Default + for<'de> Deserialize<'de>> {
+struct Reg<T: Serialize + Default + for<'de> Deserialize<'de>> {
     #[serde(skip)]
     dirty: bool,
     last_hash: Option<Vec<u8>>,
-    reg: T,
+    storage: T,
+}
+
+#[derive(Debug)]
+pub struct RegLoader<T: Serialize + Default + for<'de> Deserialize<'de>> {
+    reg: Reg<T>,
+    root: PathBuf,
+    id: PathBuf,
 }
 
 // Q: due to drop impl, Reg<T> must impl Deserialize and collide with T trait bound of Deseralize.
-impl<'de,T:Serialize+Default+DeserializeOwned> Deserialize<'de> for Reg<T> {
+impl<'de, T: Serialize + Default + DeserializeOwned> Deserialize<'de> for Reg<T> {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de> {
+    where
+        D: serde::Deserializer<'de>,
+    {
         #[derive(Deserialize)]
         struct Helper<T> {
             last_hash: Option<Vec<u8>>,
@@ -39,7 +50,7 @@ impl<'de,T:Serialize+Default+DeserializeOwned> Deserialize<'de> for Reg<T> {
         Ok(Reg {
             dirty: false,
             last_hash: helper.last_hash,
-            reg: helper.reg,
+            storage: helper.reg,
         })
     }
 }
@@ -49,46 +60,46 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Default for Reg<T> {
         Self {
             dirty: false,
             last_hash: None,
-            reg: T::default(),
+            storage: T::default(),
         }
     }
 }
 
 impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
-    fn load() -> Result<Self> {
-        let path = match Self::locate() {
+    fn load(root: &Path, id: &Path) -> Result<Self> {
+        let path = match Self::locate(root, id) {
             Some(path) => path,
-            None =>return  Ok(Reg::default()),
+            None => return Ok(Reg::default()),
         };
 
         POOL.block_on(async move {
             let mut file = File::open(&path).await?;
             let mut content = Vec::new();
             file.read_to_end(&mut content).await?;
-            
+
             let mut hasher = Sha256::new();
             Digest::update(&mut hasher, &content);
             let hash = hasher.finalize().to_vec();
 
             let reg: Self = bincode::deserialize(&content)?;
-            
+
             if let Some(ref last_hash) = reg.last_hash {
                 if *last_hash != hash {
                     bail!("Cache changed externally")
                 }
             }
-            
+
             Ok(reg)
         })
     }
 
-    fn save(&mut self) -> Result<()> {
+    fn save(&mut self, root: &Path, id: &Path) -> Result<()> {
         if !self.dirty {
             return Ok(());
         }
-
-        let path = match Self::locate() {
-            Some(path) => path,None => bail!("cache file not found"),
+        let path = match Self::locate(root, id) {
+            Some(path) => path,
+            None => bail!("cache file not found"),
         };
         let tmp_path = path.with_extension("tmp");
 
@@ -99,13 +110,14 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
                 .write(true)
                 .truncate(true)
                 .create(true)
-                .open(&tmp_path).await?;
+                .open(&tmp_path)
+                .await?;
 
             file.write_all(&data).await?;
             file.sync_all().await?;
 
             rename(&tmp_path, &path).await?;
-            Ok::<_,anyhow::Error>(Sha256::digest(&data).to_vec())
+            Ok::<_, anyhow::Error>(Sha256::digest(&data).to_vec())
         })?;
 
         self.last_hash = Some(hash);
@@ -114,9 +126,38 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
     }
 }
 
-impl<T:Serialize+Default+for<'de> Deserialize<'de>> Drop for Reg<T> {
+impl<T: Serialize + Default + for<'de> Deserialize<'de>> RegLoader<T> {
+    pub fn load(root: &Path, id: &Path) -> Result<Self> {
+        Ok(Self {
+            reg: Reg::load(root, id)?,
+            root: root.to_path_buf(),
+            id: id.to_path_buf(),
+        })
+    }
+
+    pub fn save(&mut self) -> Result<()> {
+        let root = &self.root;
+        let id = &self.id;
+        self.reg.save(root, id)
+    }
+}
+
+impl<T: Serialize + Default + for<'de> Deserialize<'de>> Drop for RegLoader<T> {
     fn drop(&mut self) {
         let _ = self.save();
     }
 }
 
+impl<T: Serialize + Default + for<'de> Deserialize<'de>> Deref for RegLoader<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.reg.storage
+    }
+}
+
+impl<T: Serialize + Default + for<'de> Deserialize<'de>> DerefMut for RegLoader<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.reg.storage
+    }
+}

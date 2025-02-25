@@ -15,7 +15,7 @@ static CALVER_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(?<year>[0-9]{1,4})-(?<month>((0?[1-9]{1})|10|11|12))(-(?<day>(0?[1-9]{1}|[1-3]{1}[0-9]{1})))?((_|\.)(?<micro>[0-9]+))?(?<pre>-[a-zA-Z]{1}[-0-9a-zA-Z.]+)?$").unwrap()
 });
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord,Serialize,Deserialize)]
 pub enum VersionKind {
     SemVer(SemVer),
     CalVer(CalVer),
@@ -37,7 +37,7 @@ impl FromStr for VersionKind {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-struct SemVer(pub Version);
+pub struct SemVer(Version);
 
 impl Deref for SemVer {
     type Target = Version;
@@ -54,7 +54,7 @@ impl fmt::Display for SemVer {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-struct CalVer(pub Version);
+pub struct CalVer(Version);
 
 impl FromStr for CalVer {
     type Err = anyhow::Error;
@@ -111,7 +111,7 @@ impl fmt::Display for CalVer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ver = self.deref();
 
-        write!(f, "{:0>4}-{:0>2}", ver.major, ver.minor);
+        write!(f, "{:0>4}-{:0>2}", ver.major, ver.minor)?;
 
         if ver.patch > 0 {
             write!(f, "-{:0>2}", ver.patch)?;
@@ -129,8 +129,8 @@ impl fmt::Display for CalVer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Partial {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord,Serialize,Deserialize)]
+pub struct Partial {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,

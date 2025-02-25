@@ -3,7 +3,9 @@ use once_cell::sync::Lazy;
 
 pub trait Tracker {
     type Ctx: Clone;
+    type Inc: Clone;
     fn new(ctx: Self::Ctx) -> Self;
+    fn step(&self,step:Self::Inc) -> &Self;
     fn finish(&self, msg: Option<String>);
 }
 
@@ -32,15 +34,9 @@ pub struct ProgressTrackerConfig {
     pub msg: Option<String>,
 }
 
-impl ProgressTracker {
-    pub fn inc(&self, len: u64) -> &Self {
-        self.pb.inc(len);
-        self
-    }
-}
-
 impl Tracker for ProgressTracker {
     type Ctx = ProgressTrackerConfig;
+    type Inc = u64;
 
     fn new(ctx: Self::Ctx) -> Self {
         let pb = if let Some(len) = ctx.len {
@@ -58,6 +54,10 @@ impl Tracker for ProgressTracker {
         let pb = pb.with_message(ctx.msg.unwrap_or_default());
 
         ProgressTracker { pb }
+    }
+    fn step(&self, len: u64) -> &Self {
+        self.pb.inc(len);
+        self
     }
 
     fn finish(&self, msg: Option<String>) {

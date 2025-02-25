@@ -9,3 +9,6 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 statum = { workspace = true }
+serde = { workspace = true }
+once_cell = { workspace = true }
+which = {workspace = true}
