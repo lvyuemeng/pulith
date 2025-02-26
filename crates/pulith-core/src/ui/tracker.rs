@@ -45,7 +45,7 @@ impl Tracker<u64> for ProgressTracker {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,Default)]
 pub struct ProgressTrackerBuilder {
     len: Option<u64>,
     prefix: Option<String>,
@@ -53,13 +53,6 @@ pub struct ProgressTrackerBuilder {
 }
 
 impl ProgressTrackerBuilder {
-    pub fn new() -> Self {
-        Self {
-            len: None,
-            prefix: None,
-            finish: None,
-        }
-    }
     pub fn with_len(mut self, len: u64) -> Self {
         self.len = Some(len);
         self

@@ -1,4 +1,4 @@
-use crate::utils::task_pool::POOL;
+use crate::task_pool::POOL;
 
 use anyhow::{Result, bail};
 use serde::de::DeserializeOwned;

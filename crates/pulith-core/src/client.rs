@@ -1,4 +1,4 @@
-use crate::utils::{
+use crate::{
     task_pool::POOL,
     ui::tracker::{ProgressTrackerBuilder, Tracker, TrackerBuilder},
 };

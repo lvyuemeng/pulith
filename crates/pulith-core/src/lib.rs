@@ -1,3 +1,6 @@
+pub mod client;
 pub mod env;
-pub mod utils;
 pub mod reg;
+mod task_pool;
+pub mod ui;
+pub mod ver;
