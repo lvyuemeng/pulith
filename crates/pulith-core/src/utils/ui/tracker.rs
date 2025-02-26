@@ -1,15 +1,17 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use once_cell::sync::Lazy;
 
-pub trait Tracker {
-    type Ctx: Clone;
-    type Inc: Clone;
-    fn new(ctx: Self::Ctx) -> Self;
-    fn step(&self,step:Self::Inc) -> &Self;
-    fn finish(&self, msg: Option<String>);
+pub trait TrackerBuilder<T: Tracker<U>, U> {
+    fn build(self) -> T;
 }
 
-const PB_STYLE: &str = "{spinner:.blue} {msg:.cyan} [{elapsed_precise}] {wide_bar:.cyan/blue} {bytes}/{total_bytes} ({bytes_per_sec}, {eta})";
+pub trait Tracker<Inc> {
+    fn step(&self, step: Inc) -> &Self;
+    fn finish(self);
+}
+
+// TODO!: detect console width and ident to adjust.
+const PB_STYLE: &str = "{spinner:.blue} {prefix:>12.cyan.bold} [{elapsed_precise}] {wide_bar:.cyan/blue} {bytes}/{total_bytes} ({bytes_per_sec}, {eta}) {wide_msg}";
 
 const TICK: &str = "⠁⠂⠄⡀⢀⠠⠐⠈ ";
 
@@ -25,45 +27,74 @@ static PB_TEMPLATE: Lazy<Option<ProgressStyle>> = Lazy::new(|| {
 });
 
 pub struct ProgressTracker {
-    pub pb: ProgressBar,
+    pb: ProgressBar,
+    finish: Option<String>,
+}
+
+impl Tracker<u64> for ProgressTracker {
+
+    fn step(&self, len: u64) -> &Self {
+        self.pb.inc(len);
+        self
+    }
+    fn finish(self) {
+        if let Some(msg) = self.finish {
+            self.pb.finish_with_message(msg);
+        }
+        self.pb.finish();
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct ProgressTrackerConfig {
-    pub len: Option<u64>,
-    pub msg: Option<String>,
+pub struct ProgressTrackerBuilder {
+    len: Option<u64>,
+    prefix: Option<String>,
+    finish: Option<String>,
 }
 
-impl Tracker for ProgressTracker {
-    type Ctx = ProgressTrackerConfig;
-    type Inc = u64;
+impl ProgressTrackerBuilder {
+    pub fn new() -> Self {
+        Self {
+            len: None,
+            prefix: None,
+            finish: None,
+        }
+    }
+    pub fn with_len(mut self, len: u64) -> Self {
+        self.len = Some(len);
+        self
+    }
 
-    fn new(ctx: Self::Ctx) -> Self {
-        let pb = if let Some(len) = ctx.len {
+    pub fn with_prefix(mut self, prefix: &str) -> Self {
+        self.prefix = Some(prefix.to_string());
+        self
+    }
+
+    pub fn with_finish(mut self, finish: &str) -> Self {
+        self.finish = Some(finish.to_string());
+        self
+    }
+}
+
+impl TrackerBuilder<ProgressTracker,u64> for ProgressTrackerBuilder {
+    fn build(self) -> ProgressTracker {
+        let pb = if let Some(len) = self.len {
             ProgressBar::new(len)
         } else {
-            ProgressBar::no_length()
+            ProgressBar::new_spinner()
         };
-
         let pb = if let Some(style) = PB_TEMPLATE.as_ref() {
             pb.with_style(style.clone())
         } else {
             pb
         };
 
-        let pb = pb.with_message(ctx.msg.unwrap_or_default());
-
-        ProgressTracker { pb }
-    }
-    fn step(&self, len: u64) -> &Self {
-        self.pb.inc(len);
-        self
-    }
-
-    fn finish(&self, msg: Option<String>) {
-        if let Some(msg) = msg {
-            self.pb.finish_with_message(msg);
+        if let Some(prefix) = self.prefix {
+            pb.set_prefix(prefix);
         }
-        self.pb.finish();
+        ProgressTracker {
+            pb,
+            finish: self.finish,
+        }
     }
 }

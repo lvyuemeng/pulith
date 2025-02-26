@@ -1,29 +1,41 @@
 use crate::utils::{
-        task_pool::POOL,
-        ui::tracker::{ProgressTracker, ProgressTrackerConfig, Tracker},
-    };
+    task_pool::POOL,
+    ui::tracker::{ProgressTrackerBuilder, Tracker, TrackerBuilder},
+};
 use anyhow::{Result, bail};
 use reqwest::{Client, Proxy, Response, Url};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::{fs::File, io::AsyncWriteExt};
 
-struct FileDownload;
+struct FileDownload<U: Into<Url>> {
+    url: U,
+    path_name: PathBuf,
+}
 
-impl FileDownload {
-    pub fn fetch_raw(url: impl Into<Url>, path_name: impl AsRef<Path>) -> Result<()> {
+impl<U: Into<Url>> FileDownload<U> {
+    pub fn new(url: U, path_name: &Path) -> Self {
+        Self {
+            url,
+            path_name: path_name.to_path_buf(),
+        }
+    }
+
+    // TODO!: Add other kinds of tracker
+    pub fn fetch_raw(self, tb: Option<ProgressTrackerBuilder>) -> Result<()> {
         POOL.block_on(async move {
-            let mut res = Download::fetch(url).await?;
-            let mut file = File::create(&path_name).await?;
+            let mut res = Download::fetch(self.url).await?;
+            let mut file = File::create(&self.path_name).await?;
 
-            let len = res.content_length();
-            let config = ProgressTrackerConfig { len, msg: None };
-            let t = ProgressTracker::new(config);
+            let mut t = tb
+                .zip(res.content_length())
+                .map(|(tb_, len)| tb_.with_len(len).build());
 
             while let Some(chunk) = res.chunk().await? {
                 file.write_all(&chunk).await?;
-                t.step(chunk.len() as u64);
+                t.as_mut().map(|t| t.step(chunk.len() as u64));
             }
-            t.finish(Some("Download completed".to_string()));
+
+            t.map(|t| t.finish());
             Ok(())
         })
     }
