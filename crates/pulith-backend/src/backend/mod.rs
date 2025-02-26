@@ -2,33 +2,31 @@ mod install;
 mod reg;
 pub mod winget;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Command;
 use pulith_core::{
     env::{Linux, OS, SYSTEM_INFO},
-    utils::ver::VersionKind,
+    ver::VersionKind,
 };
-use reg::backend_reg::BackendRegLoader;
+use reg::backend_reg::BackendRegAPI;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, time::SystemTime};
+use std::{collections::HashMap, fmt, path::PathBuf, str::FromStr, time::SystemTime};
 
 pub trait Backend {
-    // impl new and record in snap for lazy call.
-    fn new(reg:&BackendRegLoader) -> Result<Self>
-    where
-        Self: Sized;
-    fn exec(&self, args: &[&str]) -> Result<String>;
     fn snap(&self) -> Option<Snap> {
         None
     }
     fn metadata(&self) -> Metadata;
-    fn env_vars(&self) -> Option<impl Iterator<Item = String>> {
+    fn env_vars<T>(&self) -> Option<T>
+    where
+        T: Iterator<Item = String>,
+    {
         None
     }
-    fn cmd(&self) -> Option<impl Iterator<Item = Command>> {
-        None
-    }
-    fn tools(&self) -> Option<impl Iterator<Item = String>> {
+    fn cmd<T>(&self) -> Option<T>
+    where
+        T: Iterator<Item = Command>,
+    {
         None
     }
 }
@@ -69,7 +67,25 @@ pub struct Metadata {
     id: String,
     homepage: String,
     description: String,
-    notes: String,
+    notes: Option<String>,
+}
+
+impl Metadata {
+    pub fn new(id: &str, homepage: &str, description: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            homepage: homepage.to_string(),
+            description: description.to_string(),
+            notes: None,
+        }
+    }
+
+    pub fn with_notes(self, notes: &str) -> Self {
+        Self {
+            notes: Some(notes.to_string()),
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -80,11 +96,7 @@ pub struct Snap {
     before: SystemTime,
 }
 
-pub struct CheckReg;
-pub struct Ops;
-pub struct UpdateReg;
-
-#[derive(Debug, Clone, Copy, Hash, Serialize, Deserialize,PartialEq,Eq)]
+#[derive(Debug, Clone, Copy, Hash, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BackendType {
     Unknown,
     // Linux Native
@@ -102,21 +114,6 @@ pub enum BackendType {
 }
 
 impl BackendType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "apt" => BackendType::Apt,
-            "dnf" => BackendType::Dnf,
-            "pacman" => BackendType::Pacman,
-            "zypper" => BackendType::Zypper,
-            "apk" => BackendType::Apk,
-            "brew" => BackendType::Brew,
-            "winget" => BackendType::Winget,
-            "scoop" => BackendType::Scoop,
-            "choco" => BackendType::Choco,
-            _ => BackendType::Unknown,
-        }
-    }
-
     pub fn which_pm() -> Option<BackendType> {
         match SYSTEM_INFO.os() {
             OS::Macos => Some(BackendType::Brew),
@@ -136,6 +133,50 @@ impl BackendType {
             },
             _ => None,
         }
+    }
+}
+
+impl FromStr for BackendType {
+    type Err = anyhow::Error;
+    fn from_str(value: &str) -> Result<BackendType> {
+        match value {
+            "apt" => Ok(BackendType::Apt),
+            "dnf" => Ok(BackendType::Dnf),
+            "pacman" => Ok(BackendType::Pacman),
+            "zypper" => Ok(BackendType::Zypper),
+            "apk" => Ok(BackendType::Apk),
+            "brew" => Ok(BackendType::Brew),
+            "winget" => Ok(BackendType::Winget),
+            "scoop" => Ok(BackendType::Scoop),
+            "choco" => Ok(BackendType::Choco),
+            "" => Ok(BackendType::Unknown),
+            _ => bail!("..."),
+        }
+    }
+}
+impl AsRef<str> for BackendType {
+    fn as_ref(&self) -> &str {
+        match self {
+            BackendType::Apk => "apt",
+            // TODO!
+            _ => "",
+        }
+    }
+}
+impl Into<&str> for BackendType {
+    fn into(self) -> &'static str {
+        match self {
+            BackendType::Apk => "apt",
+            // TODO!
+            _ => "",
+        }
+    }
+}
+
+impl fmt::Display for BackendType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bk_ = self.as_ref();
+        write!(f, "{bk_}")
     }
 }
 

@@ -1,38 +1,38 @@
-use crate::backend::{Add, Backend, Snap,Metadata,reg::backend_reg::{BackendRegAPI,BackendRegLoader},BackendType};
+use crate::backend::{
+    Add, Backend, BackendType, Metadata, Snap,
+    reg::backend_reg::{BackendRegAPI, BackendRegLoader},
+};
 
-use std::time::{SystemTime, UNIX_EPOCH};
-use anyhow::bail;
+use anyhow::Result;
+use std::{
+    path::PathBuf,
+};
 
-#[derive(Debug,Clone)]
-#[cfg_attr(target_os="windows",allow(dead_code))]
-pub struct Winget<'a>(&'a Snap);
+// Native Package Manager(with out Snap)
+#[derive(Debug, Clone)]
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+pub struct Winget(PathBuf);
 
-impl Backend for Winget<'_> {
-	pub fn new(reg:&BackendRegLoader) -> Result<Self> {
-		if !cfg!(target_os = "windows") {
-			bail!("Winget is only available on Windows");
-		}
+impl Winget {
+    pub fn new() -> Result<Self> {
+        let path = which::which("winget")?;
+        Ok(Winget(path))
+    }
+}
 
-		if let Some(snap) = BackendRegAPI::get_snap(reg, &BackendType::Winget)  {
-			return Ok(Winget(&snap));
-		} 
-		let path = which::which("winget")?;
-		let systime = SystemTime::now().duration_since(UNIX_EPOCH)?;
-		
+impl Backend for Winget {
+    fn metadata(&self) -> Metadata {
+		Metadata::new(
+			"winget",
+			"https://github.com/microsoft/winget-cli",
+			"Windows Native Package Manager",
+		)
 	}
-	
-	fn exec(&self, args: &[&str]) -> anyhow::Result<String> {
-			todo!()
-		}
-	
-	fn metadata(&self) -> Metadata {
-			todo!()
-		}
 }
 
 impl Add for Winget {
-	type Ctx = String;
-	fn add(&self, ctx: Self::Ctx) -> anyhow::Result<()> {
-
+    type Ctx = String;
+    fn add(&self, ctx: Self::Ctx) -> anyhow::Result<()> {
+		
 	}
 }
