@@ -1,17 +1,17 @@
 use crate::task_pool::POOL;
 
-use anyhow::{Result, bail};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use tokio::fs::{File, OpenOptions, rename};
+use thiserror::Error;
+use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub trait Cache: Sized {
-    fn load(root: &Path, id: &Path) -> Result<Self>;
-    fn save(&mut self, root: &Path, id: &Path) -> Result<()>;
+    fn load(root: &Path, id: &Path) -> Result<Self, RegError>;
+    fn save(&mut self, root: &Path, id: &Path) -> Result<(), RegError>;
     fn locate(root: &Path, id: &Path) -> Option<PathBuf> {
         let path = root.join(id);
 
@@ -32,6 +32,18 @@ pub struct RegLoader<T: Serialize + Default + for<'de> Deserialize<'de>> {
     reg: Reg<T>,
     root: PathBuf,
     id: PathBuf,
+}
+
+#[derive(Debug, Error)]
+pub enum RegError {
+    #[error("File {root}/{id} not found")]
+    NotFound { root: PathBuf, id: PathBuf },
+    #[error("Last Hash mismatch current hash, Cache changed externally")]
+    HashError,
+    #[error(transparent)]
+    IoError(#[from] tokio::io::Error),
+    #[error(transparent)]
+    SerdeError(#[from] bincode::Error),
 }
 
 // Q: due to drop impl, Reg<T> must impl Deserialize and collide with T trait bound of Deseralize.
@@ -66,7 +78,7 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Default for Reg<T> {
 }
 
 impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
-    fn load(root: &Path, id: &Path) -> Result<Self> {
+    fn load(root: &Path, id: &Path) -> Result<Self, RegError> {
         let path = match Self::locate(root, id) {
             Some(path) => path,
             None => return Ok(Reg::default()),
@@ -85,7 +97,7 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
 
             if let Some(ref last_hash) = reg.last_hash {
                 if *last_hash != hash {
-                    bail!("Cache changed externally")
+                    return Err(RegError::HashError);
                 }
             }
 
@@ -93,13 +105,16 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
         })
     }
 
-    fn save(&mut self, root: &Path, id: &Path) -> Result<()> {
+    fn save(&mut self, root: &Path, id: &Path) -> Result<(), RegError> {
         if !self.dirty {
             return Ok(());
         }
         let path = match Self::locate(root, id) {
             Some(path) => path,
-            None => bail!("cache file not found"),
+            None => Err(RegError::NotFound {
+                root: root.to_path_buf(),
+                id: id.to_path_buf(),
+            })?,
         };
         let tmp_path = path.with_extension("tmp");
 
@@ -116,8 +131,8 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
             file.write_all(&data).await?;
             file.sync_all().await?;
 
-            rename(&tmp_path, &path).await?;
-            Ok::<_, anyhow::Error>(Sha256::digest(&data).to_vec())
+            fs::rename(&tmp_path, &path).await?;
+            Ok::<_, RegError>(Sha256::digest(&data).to_vec())
         })?;
 
         self.last_hash = Some(hash);
@@ -127,7 +142,7 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> Cache for Reg<T> {
 }
 
 impl<T: Serialize + Default + for<'de> Deserialize<'de>> RegLoader<T> {
-    pub fn load(root: &Path, id: &Path) -> Result<Self> {
+    pub fn load(root: &Path, id: &Path) -> Result<Self, RegError> {
         Ok(Self {
             reg: Reg::load(root, id)?,
             root: root.to_path_buf(),
@@ -135,7 +150,7 @@ impl<T: Serialize + Default + for<'de> Deserialize<'de>> RegLoader<T> {
         })
     }
 
-    pub fn save(&mut self) -> Result<()> {
+    pub fn save(&mut self) -> Result<(), RegError> {
         let root = &self.root;
         let id = &self.id;
         self.reg.save(root, id)

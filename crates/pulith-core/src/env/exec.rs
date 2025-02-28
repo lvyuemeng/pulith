@@ -1,9 +1,11 @@
-use crate::env::SystemInfo;
-use anyhow::Result;
+use crate::env::SystemInfoAPI;
+
 use std::env::{self, split_paths};
 use std::ffi::OsStr;
+use std::io;
 use std::path::PathBuf;
-use std::process::{Command, CommandEnvs};
+use std::process::Command;
+
 pub struct EnvExec;
 
 impl EnvExec {
@@ -17,12 +19,12 @@ impl EnvExec {
         env::var_os(path_var).map(|paths| split_paths(&paths).collect())
     }
 
-    pub fn local_shell<K, V>(exports: impl IntoIterator<Item = (K, V)>) -> Result<()>
+    pub fn local_shell<K, V>(exports: impl IntoIterator<Item = (K, V)>) -> Result<(), io::Error>
     where
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let shell = SystemInfo::which_shell().unwrap();
+        let shell = SystemInfoAPI::which_shell().unwrap();
         let mut cmd = Command::new(shell).envs(exports).spawn()?;
 
         cmd.wait()?;

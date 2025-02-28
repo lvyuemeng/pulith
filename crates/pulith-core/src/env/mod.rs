@@ -80,13 +80,15 @@ impl From<&str> for Arch {
     }
 }
 
-pub static SYSTEM_INFO: Lazy<SystemInfo> = Lazy::new(|| SystemInfo::load());
+static SYSTEM_INFO: Lazy<SystemInfo> = Lazy::new(|| SystemInfo::load());
 
 #[derive(Debug)]
-pub struct SystemInfo {
+struct SystemInfo {
     os: OS,
     arch: Arch,
 }
+
+pub struct SystemInfoAPI;
 
 impl SystemInfo {
     fn load() -> Self {
@@ -100,12 +102,15 @@ impl SystemInfo {
 
         Self { os, arch }
     }
+}
 
-    pub fn os(&self) -> OS {
-        self.os
+impl SystemInfoAPI {
+    pub fn os() -> OS {
+        SYSTEM_INFO.os
     }
-    pub fn arch(&self) -> Arch {
-        self.arch
+    
+    pub fn arch() -> Arch {
+        SYSTEM_INFO.arch
     }
 
     pub fn which_shell() -> Option<&'static str> {

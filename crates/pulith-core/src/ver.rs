@@ -1,29 +1,37 @@
-use std::ops::Deref;
-use std::{fmt, str::FromStr};
-
-use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-
-fn parse_num(part: Option<&str>) -> u32 {
-    part.unwrap_or("0").parse().unwrap_or(0)
-}
+use std::ops::Deref;
+use std::{fmt, str::FromStr};
+use thiserror::Error;
 
 static CALVER_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(?<year>[0-9]{1,4})-(?<month>((0?[1-9]{1})|10|11|12))(-(?<day>(0?[1-9]{1}|[1-3]{1}[0-9]{1})))?((_|\.)(?<micro>[0-9]+))?(?<pre>-[a-zA-Z]{1}[-0-9a-zA-Z.]+)?$").unwrap()
 });
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord,Serialize,Deserialize)]
+static PARTIAL_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^([^.]*)(?:\.([^.]*))?(?:\.([^.]*))?(?:[+\./-](.*))?$").unwrap());
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum VersionKind {
     SemVer(SemVer),
     CalVer(CalVer),
     Partial(Partial),
 }
 
+#[derive(Error, Debug)]
+pub enum VersionKindError {
+    #[error(transparent)]
+    CalVer(#[from] CalVerError),
+    #[error(transparent)]
+    SemVer(#[from] semver::Error),
+    #[error(transparent)]
+    Partial(#[from] PartialError),
+}
+
 impl FromStr for VersionKind {
-    type Err = anyhow::Error;
+    type Err = VersionKindError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(v) = s.parse::<CalVer>() {
@@ -31,7 +39,9 @@ impl FromStr for VersionKind {
         } else if let Ok(v) = Version::parse(s) {
             Ok(VersionKind::SemVer(SemVer(v)))
         } else {
-            Ok(VersionKind::Partial(s.parse()?))
+            Ok(VersionKind::Partial(
+                s.parse::<Partial>()?,
+            ))
         }
     }
 }
@@ -56,13 +66,19 @@ impl fmt::Display for SemVer {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct CalVer(Version);
 
+#[derive(Error, Debug)]
+pub enum CalVerError {
+    #[error("Parse Calendar version error: {0:?}")]
+    InvalidFormat(String),
+}
+
 impl FromStr for CalVer {
-    type Err = anyhow::Error;
+    type Err = CalVerError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let caps = CALVER_REGEX
             .captures(s)
-            .with_context(|| format!("Invalid CalVer: {}", s))?;
+            .ok_or(CalVerError::InvalidFormat(s.to_string()))?;
 
         let year = caps
             .name("year")
@@ -95,7 +111,9 @@ impl FromStr for CalVer {
             version.push_str(micro.as_str());
         }
 
-        Ok(Self(Version::parse(&version)?))
+        Ok(Self(
+            Version::parse(&version).map_err(|_| CalVerError::InvalidFormat(s.to_string()))?,
+        ))
     }
 }
 
@@ -129,19 +147,25 @@ impl fmt::Display for CalVer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord,Serialize,Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Partial {
-    pub major: u32,
-    pub minor: u32,
-    pub patch: u32,
+    pub major: Option<String>,
+    pub minor: Option<String>,
+    pub patch: Option<String>,
+    pub other: Option<String>,
     pub pre_release: Option<String>,
     pub build_metadata: Option<String>,
-    pub other: Option<String>,
     pub lts: bool,
 }
 
+#[derive(Debug, Error)]
+#[error("Parse Partial version error: {msg}")]
+pub struct PartialError {
+    msg: String,
+}
+
 impl FromStr for Partial {
-    type Err = anyhow::Error;
+    type Err = PartialError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.trim_end();
@@ -160,24 +184,26 @@ impl FromStr for Partial {
             .map(|(core, pre)| (core, Some(pre)))
             .unwrap_or((parts, None));
 
-        let mut parts = parts.split(".");
-        let major = parse_num(parts.next());
-        let minor = parse_num(parts.next());
-        let patch = parse_num(parts.next());
+        let (major, minor, patch, other) = if let Some(caps) = PARTIAL_REGEX.captures(parts) {
+            let major = caps.get(1).map(|m| m.as_str().to_string());
+            let minor = caps.get(2).map(|m| m.as_str().to_string());
+            let patch = caps.get(3).map(|m| m.as_str().to_string());
+            let other = caps.get(4).map(|m| m.as_str().to_string());
 
-        let other = if parts.next().is_none() {
-            None
+            (major, minor, patch, other)
         } else {
-            Some(parts.collect())
+            Err(PartialError {
+                msg: format!("Invalid format: {value}"),
+            })?
         };
 
         Ok(Partial {
             major,
             minor,
             patch,
+            other,
             pre_release: pre.map(|s| s.to_string()),
             build_metadata: build.map(|s| s.to_string()),
-            other: other,
             lts,
         })
     }
@@ -185,7 +211,15 @@ impl FromStr for Partial {
 
 impl fmt::Display for Partial {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
+        if let Some(major) = &self.major {
+            write!(f, "{}.", major)?;
+        }
+        if let Some(minor) = &self.minor {
+            write!(f, "{}.", minor)?;
+        }
+        if let Some(patch) = &self.patch {
+            write!(f, "{}.", patch)?;
+        }
 
         if let Some(other) = &self.other {
             write!(f, "-{}", other)?;

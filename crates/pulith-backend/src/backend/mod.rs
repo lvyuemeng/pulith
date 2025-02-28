@@ -1,3 +1,4 @@
+mod format;
 mod install;
 mod reg;
 pub mod winget;
@@ -5,10 +6,9 @@ pub mod winget;
 use anyhow::{Result, bail};
 use clap::Command;
 use pulith_core::{
-    env::{Linux, OS, SYSTEM_INFO},
+    env::{Linux, SystemInfoAPI, OS},
     ver::VersionKind,
 };
-use reg::backend_reg::BackendRegAPI;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, path::PathBuf, str::FromStr, time::SystemTime};
 
@@ -115,7 +115,7 @@ pub enum BackendType {
 
 impl BackendType {
     pub fn which_pm() -> Option<BackendType> {
-        match SYSTEM_INFO.os() {
+        match SystemInfoAPI::os() {
             OS::Macos => Some(BackendType::Brew),
             OS::Windows => Some(BackendType::Winget),
             OS::Linux(distro) => match distro {

@@ -25,3 +25,4 @@ sysinfo = "0.33.1"
 tabled = "0.18.0"
 which = "*"
 tokio = { version = "*", features = ["rt-multi-thread", "fs","io-util"] }
+thiserror = "*"

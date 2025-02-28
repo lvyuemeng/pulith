@@ -1103,13 +1103,13 @@ dependencies = [
 name = "pulith-backend"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clap",
  "once_cell",
  "pulith-core",
  "reqwest",
  "serde",
  "statum",
+ "thiserror",
  "which",
 ]
 
@@ -1117,7 +1117,6 @@ dependencies = [
 name = "pulith-core"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bincode",
  "home",
  "indicatif",
@@ -1131,6 +1130,7 @@ dependencies = [
  "sha2",
  "sysinfo 0.33.1",
  "tabled",
+ "thiserror",
  "tokio",
 ]
 
