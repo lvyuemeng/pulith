@@ -1,15 +1,11 @@
-use crate::backend::{
-    Add, Backend, BackendType, Metadata, Snap,
-    reg::backend_reg::{BackendRegAPI, BackendRegLoader},
-};
+use crate::backend::{Add, Backend, Metadata};
+use crate::package::Package;
 
-use anyhow::Result;
-use std::{
-    path::PathBuf,
-};
+use std::path::PathBuf;
+use std::process::Command;
 
 // Native Package Manager(with out Snap)
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 pub struct Winget(PathBuf);
 
@@ -31,8 +27,13 @@ impl Backend for Winget {
 }
 
 impl Add for Winget {
-    type Ctx = String;
-    fn add(&self, ctx: Self::Ctx) -> anyhow::Result<()> {
-		
+    type Ctx = Package;
+    fn add(&self, ctx: Self::Ctx) -> Result<()> {
+        let mut cmd = Command::new(&self.0);
+        cmd.args(["add", &ctx.name()]);
+        if let Some(ver) = ctx.ver() {
+            cmd.args(["-v", &format!("{ver}")]);
+        }
+        cmd.output()
 	}
 }

@@ -1,18 +1,17 @@
+use crate::backend::BackendType;
+
+use pulith_core::ver::VersionKind;
 use std::{fmt, str::FromStr};
 
-use crate::backend::BackendType;
-use anyhow::bail;
-use pulith_core::ver::VersionKind;
-
 #[derive(Debug, Clone)]
-enum Descriptor {
+pub enum Descriptor {
     Backend(BackendType),
     Package(Package),
     List(usize),
 }
 
 #[derive(Debug, Clone)]
-struct Package {
+pub struct Package {
     backend: Option<BackendType>,
     name: String,
     ver: Option<VersionKind>,
@@ -52,22 +51,28 @@ impl FromStr for Descriptor {
 }
 
 impl fmt::Display for Descriptor {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::Backend(bk) => {
-				write!(f,"{}",bk.as_ref())
-			},
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backend(bk) => {
+                write!(f, "{}", bk.as_ref())
+            }
             Self::List(num) => {
-                write!(f,"{num}")
+                write!(f, "{num}")
             }
             Self::Package(p) => {
-                write!(f,"{p}")
+                write!(f, "{p}")
             }
-		}
-	}
+        }
+    }
 }
 
 impl Package {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn ver(&self) -> Option<&VersionKind> {
+        self.ver.as_ref()
+    }
     pub fn id(&self) -> String {
         let sanitize = |s: &str| {
             s.chars()
@@ -90,7 +95,6 @@ impl Package {
 impl fmt::Display for Package {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = self.id();
-        write!(f,"{s}")
+        write!(f, "{s}")
     }
 }
-

@@ -46,6 +46,16 @@ impl FromStr for VersionKind {
     }
 }
 
+impl fmt::Display for VersionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VersionKind::SemVer(v) => write!(f, "{}", v),
+            VersionKind::CalVer(v) => write!(f, "{}", v),
+            VersionKind::Partial(v) => write!(f, "{}", v),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SemVer(Version);
 
@@ -193,7 +203,7 @@ impl FromStr for Partial {
             (major, minor, patch, other)
         } else {
             Err(PartialError {
-                msg: format!("Invalid format: {value}"),
+                msg: value.to_string(),
             })?
         };
 
