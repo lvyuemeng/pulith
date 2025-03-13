@@ -145,9 +145,4 @@ impl FrameApi {
         let profile = self.get_profile().unwrap();
         profile.cmd.t.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
-    
-    pub fn expand_alias(s:&str) -> Result<,AliasError> {
-        let parts = s.split_whitespace().collect::<Vec<_>>();
-        let 
-    }
 }

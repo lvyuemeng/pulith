@@ -7,9 +7,6 @@ Profiles with name(otherwise "default"):
 ```toml
 [default]
 
-# support regex for name.
-# support string or "y" as true for flags without args.
-
 # define: "replace" = "original"
 # profile_name.backend.verb.alias
 [default.{backend}.install.flag_alias]
@@ -22,7 +19,7 @@ Profiles with name(otherwise "default"):
 
 # profile_name.backend.verb.flag
 [default.{backend}.install.flag]
-"--verbose" = "y"
+"--verbose" = true
 
 # profile_name.backend.flag
 [default.{backend}.flag]
@@ -30,13 +27,14 @@ Profiles with name(otherwise "default"):
 
 
 # parse template to create alias
-# { num }: positional args. { 0 } for first args etc..
+# { num }: positional args. { 1 } for first args etc..
 # { * }: multiple args. should be in the end.
 # { --flag }: flags define, single args. { --package -p } for --package and -p
 # { --flag * }: flags define, multiple args { --package -p } for --package and -p
 
 [default.alias]
-"install_by_id" = "install @{ 0 }:{ 1 } --id { 2 }"
+"install_by_id" = "install @{ 1 }:{ 2 } { --id } { --custom -c * }"
+"remove_by_apt" = "remove @apt:{ 1 } --force"
 
 # evaluated in shell(important! install external thing!)
 # defined in scipts/insall_by_winget.pwsh
