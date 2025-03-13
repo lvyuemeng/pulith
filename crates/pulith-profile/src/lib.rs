@@ -33,6 +33,11 @@ pub enum Error {
     TeraError(#[from] tera::Error),
 }
 
+#[derive(Debug,Error)]
+pub enum AliasError {
+
+}
+
 impl FrameApi {
     // root
     // - /pulith
@@ -96,7 +101,7 @@ impl FrameApi {
         ctx
     }
 
-    pub fn get_script(&self) -> Vec<(String, String)> {
+    pub fn get_cmd_script(&self) -> Vec<(String, String)> {
         // read profile alias.script from profile
         // read file names from SCRIPT_ROOT
         // check existence of script by profile
@@ -123,16 +128,26 @@ impl FrameApi {
         profile_scripts
     }
 
-    pub fn script_command(&self) -> Vec<clap::Arg> {
-        let scripts = self.get_script();
+    pub fn script_command(&self) -> Vec<clap::Command> {
+        let scripts = self.get_cmd_script();
         let args = scripts
             .into_iter()
             .map(|(k, v)| {
-                let arg = clap::Arg::new(k).help(format!("run script {}", v));
+                let arg = clap::Command::new(k).about(format!("run script {}", v));
                 arg
             })
             .collect();
 
         args
+    }
+
+    pub fn get_cmd_alias(&self) -> Vec<(String, String)> {
+        let profile = self.get_profile().unwrap();
+        profile.cmd.t.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+    
+    pub fn expand_alias(s:&str) -> Result<,AliasError> {
+        let parts = s.split_whitespace().collect::<Vec<_>>();
+        let 
     }
 }
