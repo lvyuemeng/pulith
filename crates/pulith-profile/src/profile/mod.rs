@@ -7,7 +7,7 @@ pub struct Profile {
     pub inheritance: Option<String>,
     #[serde(flatten)]
     pub backend: HashMap<String, BackendConfig>,
-    pub cmd: CmdConfig,
+    pub command: CmdConfig,
 }
 
 #[derive(Debug, Deserialize)]

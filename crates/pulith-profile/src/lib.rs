@@ -114,7 +114,7 @@ impl FrameApi {
             scripts.push(name);
         }
         let profile = self.get_profile().unwrap();
-        let profile_scripts = profile.cmd.script;
+        let profile_scripts = profile.command.script;
         let profile_scripts = profile_scripts
             .iter()
             .filter_map(|(k, v)| {
@@ -143,6 +143,6 @@ impl FrameApi {
 
     pub fn get_cmd_alias(&self) -> Vec<(String, String)> {
         let profile = self.get_profile().unwrap();
-        profile.cmd.t.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        profile.command.t.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 }
