@@ -1,16 +1,16 @@
 ---
-name: Feature Request
-about: Suggest an idea or feature for the project
-title: "[FEATURE] "
-labels: enhancement
+name: 🚀Feature Request
+about: Suggest an idea or feature for the project.
+title: "[Feature]: Some feature... "
+labels: ["enhancement"]
 assignees: ''
 ---
 
 ### Description
 A clear and concise description of the feature or idea.
 
-### Problem or Use Case
-Explain the problem or use case this feature would address.
+### Use Case
+Explain use case this feature would address.
 
 ### Proposed Solution
 Describe the solution you'd like to see.
