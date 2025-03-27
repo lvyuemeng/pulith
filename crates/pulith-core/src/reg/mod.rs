@@ -1,3 +1,5 @@
+pub mod sa;
+
 use crate::task_pool::POOL;
 
 use serde::de::DeserializeOwned;

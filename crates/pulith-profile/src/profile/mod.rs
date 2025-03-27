@@ -1,28 +1,14 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 
-#[derive(Debug, Deserialize)]
-pub struct Profile {
-    pub inheritance: Option<String>,
-    #[serde(flatten)]
-    pub backend: HashMap<String, BackendConfig>,
-    pub command: CmdConfig,
-}
+// #[derive(Debug, Deserialize)]
+// pub struct Profile {
+//     #[serde(flatten)]
+//     pub backend: HashMap<String, FlagConfig>,
+//     pub command: CmdConfig,
+// }
 
-#[derive(Debug, Deserialize)]
-pub struct BackendConfig {
-    #[serde(flatten)]
-    pub verbs: HashMap<String, FlagConfig>,
-    #[serde(flatten)]
-    pub f: FlagConfig,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct FlagConfig {
-    pub flag_alias: HashMap<String, String>,
-    pub flag: HashMap<String, FlagValue>,
-}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct CmdConfig {
@@ -31,15 +17,7 @@ pub struct CmdConfig {
     pub script: HashMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum FlagValue {
-    Bool(bool),
-    String(String),
-    List(Vec<String>),
-}
-
-impl Profile {
+/* impl Profile {
     /// ## resolve command flags:
     /// 1. replace flag alias with flag in backend
     /// 2. replace flag alias with flag in backend.verb
@@ -124,3 +102,4 @@ impl Profile {
             .or_else(|| self.backend.get(backend).map(|b| &b.f.flag))
     }
 }
+ */

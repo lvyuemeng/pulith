@@ -4,13 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tabled = {workspace = true}
-reqwest = {workspace = true}
-bincode = { workspace = true }
+tabled = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 once_cell = { workspace = true }
-tokio = { workspace = true}
+tokio = { workspace = true }
 sha2 = { workspace = true }
 regex = { workspace = true }
 semver = { workspace = true }
@@ -18,4 +17,4 @@ indicatif = { workspace = true }
 query-shell = { workspace = true }
 sysinfo = { workspace = true }
 home = { workspace = true }
-thiserror = {workspace = true}
+thiserror = { workspace = true }

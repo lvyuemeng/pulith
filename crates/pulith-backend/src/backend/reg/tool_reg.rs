@@ -7,31 +7,32 @@ use std::{
     path::PathBuf,
 };
 
-pub struct ToolRegAPI;
+// pub struct ToolRegAPI;
 
-impl ToolRegAPI {
-    pub fn get_names(reg: &ToolRegLoader,bk: &BackendType) -> Option<impl Iterator<Item = String>> {
-        reg.deref()
-            .iter()
-            .find(bk)
-            .map(|(_, info)| info.keys().cloned()) // TODO: more info
-    }
-}
+// impl ToolRegAPI {
+//     pub fn get_names(reg: &ToolRegLoader,bk: &BackendType) -> Option<impl Iterator<Item = String>> {
+//         reg.deref()
+//             .iter()
+//             .find(bk)
+//             .map(|(_, info)| info.keys().cloned()) // TODO: more info
+//     }
+// }
 
-type ToolRegLoader = RegLoader<ToolInfo>;
-type ToolStorage = HashMap<BackendType, ToolInfo>;
-type ToolInfo = BTreeMap<String, ToolStatus>;
+// type ToolRegLoader = RegLoader<ToolInfo>;
+// type ToolStorage = HashMap<BackendType, ToolInfo>;
+// type ToolInfo = BTreeMap<String, ToolStatus>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ToolStatus {
     install_path: PathBuf,
     version: VersionKind,
     scope: Scope,
-    checksum: Option<Vec<u8>>,
+    updated_at: Option<u64>,
+    checksum: Option<[u8;u32]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "scope", rename_all = "kebab-case")]
+#[serde(untagged, rename_all = "kebab-case")]
 enum Scope {
     Global,
     Local(Vec<PathBuf>),
