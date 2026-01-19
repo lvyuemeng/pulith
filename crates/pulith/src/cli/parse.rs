@@ -9,7 +9,9 @@ impl Descriptor {
         }
     }
     pub fn only_tool(self) -> Option<(String, VersionKind)> {
-        if let (Some(name), Some(ver_key)) = (self.name, self.ver_key) && self.bk.is_none() {
+        if let (Some(name), Some(ver_key)) = (self.name, self.ver_key)
+            && self.bk.is_none()
+        {
             Some((name, ver_key))
         } else {
             None

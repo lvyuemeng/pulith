@@ -1,0 +1,10 @@
+[package]
+name = "pulith-platform"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sysinfo = { workspace = true }
+query-shell = { workspace = true }
+home = { workspace = true }
+once_cell = { workspace = true }

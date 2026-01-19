@@ -39,9 +39,7 @@ impl FromStr for VersionKind {
         } else if let Ok(v) = Version::parse(s) {
             Ok(VersionKind::SemVer(SemVer(v)))
         } else {
-            Ok(VersionKind::Partial(
-                s.parse::<Partial>()?,
-            ))
+            Ok(VersionKind::Partial(s.parse::<Partial>()?))
         }
     }
 }

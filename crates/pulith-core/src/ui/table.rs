@@ -1,7 +1,6 @@
 use tabled::{
-    Table,
+    Table, Tabled,
     settings::{Panel, Remove, Style, object::Rows},
-    Tabled,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -12,7 +11,7 @@ pub struct Formatter {
 }
 
 impl Formatter {
-    pub fn build<T: Tabled, I: IntoIterator<Item = T>>(self,data: I) -> Table {
+    pub fn build<T: Tabled, I: IntoIterator<Item = T>>(self, data: I) -> Table {
         let mut table = Table::new(data);
         if let Some(header) = self.header {
             table.with(Panel::header(header));

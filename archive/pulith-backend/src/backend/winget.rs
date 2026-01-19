@@ -18,12 +18,12 @@ impl Winget {
 
 impl Backend for Winget {
     fn metadata(&self) -> Metadata {
-		Metadata::new(
-			"winget",
-			"https://github.com/microsoft/winget-cli",
-			"Windows Native Package Manager",
-		)
-	}
+        Metadata::new(
+            "winget",
+            "https://github.com/microsoft/winget-cli",
+            "Windows Native Package Manager",
+        )
+    }
 }
 
 impl Add for Winget {
@@ -35,5 +35,5 @@ impl Add for Winget {
             cmd.args(["-v", &format!("{ver}")]);
         }
         cmd.output()
-	}
+    }
 }

@@ -19,7 +19,7 @@ enum InstallState {
 #[derive(Debug)]
 pub struct InstallerInner<S: InstallState> {}
 
-pub struct Installer<T:Backend,S:InstallState> {
+pub struct Installer<T: Backend, S: InstallState> {
     inner: InstallerInner<S>,
     _bk: PhantomData<T>,
 }

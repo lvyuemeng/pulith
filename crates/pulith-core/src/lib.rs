@@ -1,6 +1,5 @@
-pub mod client;
-pub mod env;
-pub mod reg;
-mod task_pool;
-pub mod ui;
-pub mod ver;
+// Core utilities for resource management
+// Re-exports from specialized crates for convenience
+
+pub use pulith_platform::{arch, os, path, shell};
+pub use pulith_version::{VersionError, VersionKind, VersionKindType};

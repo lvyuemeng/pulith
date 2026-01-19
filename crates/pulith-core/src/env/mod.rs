@@ -108,7 +108,7 @@ impl SystemInfoAPI {
     pub fn os() -> OS {
         SYSTEM_INFO.os
     }
-    
+
     pub fn arch() -> Arch {
         SYSTEM_INFO.arch
     }

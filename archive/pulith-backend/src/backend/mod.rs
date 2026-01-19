@@ -6,7 +6,7 @@ pub mod winget;
 use anyhow::{Result, bail};
 use clap::Command;
 use pulith_core::{
-    env::{Linux, SystemInfoAPI, OS},
+    env::{Linux, OS, SystemInfoAPI},
     ver::VersionKind,
 };
 use serde::{Deserialize, Serialize};

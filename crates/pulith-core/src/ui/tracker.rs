@@ -32,7 +32,6 @@ pub struct ProgressTracker {
 }
 
 impl Tracker<u64> for ProgressTracker {
-
     fn step(&self, len: u64) -> &Self {
         self.pb.inc(len);
         self
@@ -45,7 +44,7 @@ impl Tracker<u64> for ProgressTracker {
     }
 }
 
-#[derive(Debug, Clone,Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ProgressTrackerBuilder {
     len: Option<u64>,
     prefix: Option<String>,
@@ -69,7 +68,7 @@ impl ProgressTrackerBuilder {
     }
 }
 
-impl TrackerBuilder<ProgressTracker,u64> for ProgressTrackerBuilder {
+impl TrackerBuilder<ProgressTracker, u64> for ProgressTrackerBuilder {
     fn build(self) -> ProgressTracker {
         let pb = if let Some(len) = self.len {
             ProgressBar::new(len)

@@ -28,7 +28,7 @@ struct ToolStatus {
     version: VersionKind,
     scope: Scope,
     updated_at: Option<u64>,
-    checksum: Option<[u8;u32]>,
+    checksum: Option<[u8; u32]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
