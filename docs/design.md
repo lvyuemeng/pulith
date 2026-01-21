@@ -35,34 +35,9 @@ This ecosystem provides battle-tested building blocks so developers can focus on
 3. **Cross-Platform**: Consistent behavior across Windows, macOS, Linux
 4. **Extensibility**: Higher-layer patterns (sources, backends) designed later
 5. **Best Practices**: Security, verification, and correctness baked in
+6. **Mechanism-only**: Provide primitives to fetch, store, stage, and track external resources.
 
 ## Crate Ecosystem
-
-### Crate Structure
-
-```
-pulith/
-└── crates/
-    ├── pulith-platform/   # OS, arch, shell, path helpers
-    ├── pulith-version/    # Version parsing, comparison
-    ├── pulith-fetch/      # HTTP downloads, progress, checksum
-    ├── pulith-shim/       # Shim generation
-    ├── pulith-install/    # Atomic ops, staging, activation
-    ├── pulith-registry/   # Typed state, atomic saves
-    └── pulith-ui/         # Progress, tables, spinners
-```
-
-### Implementation Status
-
-| Crate | Status | Notes |
-|-------|--------|-------|
-| `pulith-platform` | ✅ Done | OS/distro, arch, shell, path helpers |
-| `pulith-version` | ✅ Done | SemVer, CalVer, partial version parsing |
-| `pulith-shim` | ✅ Done | Shim generation with three-layer pattern |
-| `pulith-fetch` | 🔲 Part | HTTP downloads with verification |
-| `pulith-install` | 🔲 Pending | Atomic file operations |
-| `pulith-registry` | 🔲 Pending | State persistence |
-| `pulith-ui` | 🔲 Pending | Progress and tables |
 
 ### Crate Descriptions
 
@@ -94,20 +69,66 @@ HTTP downloading with verification:
 - Redirect handling
 - Proxy support
 
-#### pulith-install
-Atomic file system operations:
-- Staged installs (download → verify → activate)
-- Atomic file replacement (same-FS + copy fallback)
-- Symlink and shim management
-- PATH activation helpers
-- Rollback on failure
+#### pulith-fs
 
-#### pulith-registry
-Typed state management with persistence:
-- Auto-saving on drop
-- Hash verification (detect external modification)
-- Binary serialization
-- Migration support
+Role: Cross-platform atomic filesystem primitives. Mechanism Only: It does not know what a "tool" is. It only knows how to move bytes safely.
+
+Example:
+
+- atomic_write(path, content): Writes to a temp file, fsyncs, then renames.
+
+- atomic_symlink(target, link_path): Creates a new link, then renames over the old one.
+
+- replace_dir(src, dest): The holy grail of installers. Atomically swaps a directory. On Windows, this handles the complex retry/rename dance required when files are locked.
+
+- hardlink_or_copy(src, dest): Optimization primitive.
+
+Managed workspace for preparing artifacts.
+
+**Workspace** (formerly Stage)
+
+Role: A transactional workspace for preparing resources. Philosophy: Installation is a transaction. It either happens completely or not at all. Mechanism only: no policy, no format enforcement.
+
+Example:
+
+```rust
+let workspace = Workspace::new(temp_dir)?;
+
+// 2. Do work (User Policy defines what happens here)
+workspace.write("bin/tool", bytes)?;
+workspace.create_dir("lib")?;
+workspace.create_dir_all("nested/deep")?;
+
+// 3. Commit (The Mechanism)
+// This atomically moves the staged directory to the final destination.
+// If this fails, the workspace is dropped and the temp dir is cleaned up.
+workspace.commit(final_destination_path)?;
+```
+
+Why this fits: It doesn't care if you are installing a Node version, a VIM plugin, or a config file. It guarantees that final_destination_path never exists in a half-written state.
+
+**Transaction** (formerly State)
+
+Role: Concurrent-safe read-modify-write on a persistent file, without enforcing a schema. Concrete-Independent: It deals in opaque Bytes only.
+
+Example:
+
+```rust
+let tx = Transaction::open("registry.json")?;
+
+// Blocks other processes, reads current content, allows modification,
+// and atomically writes back.
+tx.execute(|bytes| {
+    let data: MyCustomSchema = MyCustomSchema::from(bytes); // User defines Schema
+    data.last_update = now();
+    Ok(data.to_bytes()) // User handles serialization
+})?;
+```
+
+Mechanism: Handles file locking (flock/LockFile), read-modify-write cycles, and atomic replacement. It prevents two instances of your tool from corrupting the data.
+```
+
+Mechanism: Handles file locking (flock/LockFile), read-modify-write cycles, and atomic replacement. It prevents two instances of your tool from corrupting the registry.
 
 #### pulith-ui
 User interface primitives:
@@ -115,36 +136,6 @@ User interface primitives:
 - Tables (tabled-based)
 - Spinners and status indicators
 - Composable builders
-
-## Crate Relationships
-
-```
-                    ┌─────────────────┐
-                    │   User Tool     │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-        ┌──────────┐  ┌──────────┐  ┌──────────┐
-        │ pulith-  │  │ pulith-  │  │ pulith-  │
-        │ version  │  │platform  │  │   shim   │
-        └────┬─────┘  └──────────┘  └──────────┘
-             │              │
-             │      ┌───────┴───────┐
-             │      │               │
-             ▼      ▼               ▼
-        ┌──────────┐         ┌──────────┐
-        │ pulith-  │◄────────┤ pulith-  │
-        │ fetch    │         │ registry │
-        └────┬─────┘         └──────────┘
-             │
-             ▼
-        ┌──────────┐
-        │ pulith-  │
-        │ install  │
-        └──────────┘
-```
 
 ## Design Directions (Deferred)
 

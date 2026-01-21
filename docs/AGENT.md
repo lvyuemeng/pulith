@@ -132,19 +132,6 @@ Use `pulith_platform` for OS and distribution detection.
 
 ## Code Organization
 
-### Module Structure
-
-```
-crate/
-├── src/
-│   ├── lib.rs          # Public API re-exports
-│   ├── prelude.rs      # Common imports (optional)
-│   ├── error.rs        # Error types (optional)
-│   └── ...
-└── tests/
-    └── integration.rs  # Integration tests
-```
-
 ### Naming Conventions
 
 | Element | Convention | Example |
@@ -267,4 +254,3 @@ use crate::module::Item;
 
 - [README.md](./README.md) - Project overview
 - [design.md](./design.md) - Design specification 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - General architecture

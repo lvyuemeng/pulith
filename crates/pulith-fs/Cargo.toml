@@ -1,0 +1,17 @@
+[package]
+name = "pulith-fs"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-platform atomic filesystem primitives"
+repository = "https://github.com/anomalyco/pulith"
+documentation = "https://github.com/anomalyco/pulith/blob/main/pulith-fs/README.md"
+keywords = ["filesystem", "atomic", "cross-platform"]
+categories = ["os::unix-apis", "os::windows-apis"]
+
+[dependencies]
+nix = { version = "0.30", features = ["fs"] }
+windows = { version = "0.62", features = ["Win32", "Win32_Foundation", "Win32_Storage_FileSystem"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

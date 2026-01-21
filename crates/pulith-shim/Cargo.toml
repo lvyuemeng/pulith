@@ -5,12 +5,4 @@ edition = "2024"
 description = "Executable shim generation and management for Unix and Windows"
 
 [dependencies]
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-pulith-core = { path = "../pulith-core" }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"
+thiserror.workspace = true

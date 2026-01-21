@@ -1,10 +1,9 @@
-//! Effect abstractions for file system and network operations.
+//! Effect abstractions for file system and command operations.
 //!
-//! This module provides unified trait definitions for I/O operations,
+////! This module provides unified trait definitions for I/O operations,
 //! enabling testability and abstraction across the codebase.
 
-use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -14,62 +13,35 @@ pub enum FsError {
 }
 
 #[derive(Debug, Error)]
-pub enum NetworkError {
-    #[error("request failed: {0}")]
-    Reqwest(#[from] reqwest::Error),
-    #[error("invalid URL: {0}")]
-    InvalidUrl(String),
-}
-
-#[derive(Debug, Error)]
-pub enum EnvironmentError {
-    #[error("environment variable read failed: {0}")]
-    VarRead(#[from] std::env::VarError),
-    #[error("current directory read failed: {0}")]
-    CurrentDir(#[from] std::io::Error),
+pub enum ExecuteError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("command failed: {cmd}")]
+    CommandFailed { cmd: String },
 }
 
 pub trait FileSystem {
     fn read(&self, path: &Path) -> Result<Vec<u8>, FsError>;
     fn write(&self, path: &Path, content: &[u8]) -> Result<(), FsError>;
     fn create_dir_all(&self, path: &Path) -> Result<(), FsError>;
+    fn copy(&self, src: &Path, dst: &Path) -> Result<(), FsError>;
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError>;
     fn remove_file(&self, path: &Path) -> Result<(), FsError>;
     fn remove_dir_all(&self, path: &Path) -> Result<(), FsError>;
     fn exists(&self, path: &Path) -> bool;
+    fn link(&self, original: &Path, link: &Path) -> Result<(), FsError>;
+    fn unlink(&self, path: &Path) -> Result<(), FsError>;
 
     #[cfg(unix)]
     fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), FsError>;
-
-    #[cfg(unix)]
-    fn symlink(&self, original: &Path, link: &Path) -> Result<(), FsError>;
 }
 
 pub trait ReadFileSystem: FileSystem {
     fn read_to_string(&self, path: &Path) -> Result<String, FsError>;
 }
 
-#[async_trait::async_trait]
-pub trait AsyncFileSystem {
-    async fn read(&self, path: &Path) -> Result<Vec<u8>, FsError>;
-    async fn write(&self, path: &Path, content: &[u8]) -> Result<(), FsError>;
-    async fn create(&self, path: &Path) -> Result<tokio::fs::File, FsError>;
-    async fn create_dir_all(&self, path: &Path) -> Result<(), FsError>;
-    async fn remove_file(&self, path: &Path) -> Result<(), FsError>;
-    async fn remove_dir_all(&self, path: &Path) -> Result<(), FsError>;
-    async fn exists(&self, path: &Path) -> bool;
-
-    #[cfg(unix)]
-    async fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), FsError>;
-}
-
-#[async_trait::async_trait]
-pub trait Network {
-    async fn get(&self, url: &str) -> Result<bytes::Bytes, NetworkError>;
-}
-
-pub trait Environment {
-    fn var(&self, name: &str) -> Option<String>;
-    fn current_dir(&self) -> Option<PathBuf>;
+pub trait CommandRunner {
+    fn run(&self, cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), ExecuteError>;
 }
 
 pub struct OsFileSystem;
@@ -87,6 +59,16 @@ impl FileSystem for OsFileSystem {
         std::fs::create_dir_all(path).map_err(FsError::Io)
     }
 
+    fn copy(&self, src: &Path, dst: &Path) -> Result<(), FsError> {
+        std::fs::copy(src, dst).map_err(FsError::Io)?;
+        Ok(())
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError> {
+        std::fs::rename(from, to)?;
+        Ok(())
+    }
+
     fn remove_file(&self, path: &Path) -> Result<(), FsError> {
         std::fs::remove_file(path).map_err(FsError::Io)
     }
@@ -97,15 +79,37 @@ impl FileSystem for OsFileSystem {
 
     fn exists(&self, path: &Path) -> bool { path.exists() }
 
+    fn link(&self, original: &Path, link: &Path) -> Result<(), FsError> {
+        if original.is_dir() {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(original, link)
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_dir(original, link)
+            }
+        } else {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(original, link)
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_file(original, link)
+            }
+        }
+        .map_err(FsError::Io)
+    }
+
+    fn unlink(&self, path: &Path) -> Result<(), FsError> {
+        std::fs::remove_file(path).map_err(FsError::Io)
+    }
+
     #[cfg(unix)]
     fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), FsError> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, PermissionsExt::from_mode(mode)).map_err(FsError::Io)
-    }
-
-    #[cfg(unix)]
-    fn symlink(&self, original: &Path, link: &Path) -> Result<(), FsError> {
-        std::os::unix::fs::symlink(original, link).map_err(FsError::Io)
     }
 }
 
@@ -115,81 +119,36 @@ impl ReadFileSystem for OsFileSystem {
     }
 }
 
-pub struct TokioFileSystem;
+pub struct OsCommandRunner;
 
-#[async_trait::async_trait]
-impl AsyncFileSystem for TokioFileSystem {
-    async fn read(&self, path: &Path) -> Result<Vec<u8>, FsError> {
-        tokio::fs::read(path).await.map_err(FsError::Io)
+impl CommandRunner for OsCommandRunner {
+    fn run(&self, cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), ExecuteError> {
+        let mut command = std::process::Command::new(cmd);
+        command.args(args);
+        for (k, v) in env {
+            command.env(k, v);
+        }
+        let status = command.status().map_err(ExecuteError::Io)?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(ExecuteError::CommandFailed {
+                cmd: cmd.to_string(),
+            })
+        }
     }
-
-    async fn write(&self, path: &Path, content: &[u8]) -> Result<(), FsError> {
-        tokio::fs::write(path, content).await.map_err(FsError::Io)
-    }
-
-    async fn create(&self, path: &Path) -> Result<tokio::fs::File, FsError> {
-        tokio::fs::File::create(path).await.map_err(FsError::Io)
-    }
-
-    async fn create_dir_all(&self, path: &Path) -> Result<(), FsError> {
-        tokio::fs::create_dir_all(path).await.map_err(FsError::Io)
-    }
-
-    async fn remove_file(&self, path: &Path) -> Result<(), FsError> {
-        tokio::fs::remove_file(path).await.map_err(FsError::Io)
-    }
-
-    async fn remove_dir_all(&self, path: &Path) -> Result<(), FsError> {
-        tokio::fs::remove_dir_all(path).await.map_err(FsError::Io)
-    }
-
-    async fn exists(&self, path: &Path) -> bool {
-        tokio::fs::try_exists(path).await.unwrap_or(false)
-    }
-
-    #[cfg(unix)]
-    async fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), FsError> {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(path, PermissionsExt::from_mode(mode))
-            .await
-            .map_err(FsError::Io)
-    }
-}
-
-pub struct HttpNetwork;
-
-#[async_trait::async_trait]
-impl Network for HttpNetwork {
-    async fn get(&self, url: &str) -> Result<bytes::Bytes, NetworkError> {
-        let client = reqwest::Client::new();
-        client
-            .get(url)
-            .send()
-            .await
-            .map_err(NetworkError::Reqwest)?
-            .bytes()
-            .await
-            .map_err(NetworkError::Reqwest)
-    }
-}
-
-pub struct OsEnvironment;
-
-impl Environment for OsEnvironment {
-    fn var(&self, name: &str) -> Option<String> { std::env::var(name).ok() }
-    fn current_dir(&self) -> Option<PathBuf> { std::env::current_dir().ok() }
 }
 
 #[cfg(test)]
 pub struct MemFileSystem {
-    files: RefCell<std::collections::HashMap<PathBuf, Vec<u8>>>,
+    files: std::cell::RefCell<std::collections::HashMap<PathBuf, Vec<u8>>>,
 }
 
 #[cfg(test)]
 impl MemFileSystem {
     pub fn new() -> Self {
         Self {
-            files: RefCell::new(std::collections::HashMap::new()),
+            files: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -215,6 +174,31 @@ impl FileSystem for MemFileSystem {
 
     fn create_dir_all(&self, _path: &Path) -> Result<(), FsError> { Ok(()) }
 
+    fn copy(&self, src: &Path, dst: &Path) -> Result<(), FsError> {
+        let content = self
+            .files
+            .borrow()
+            .get(&src.to_path_buf())
+            .cloned()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "file not found").into()
+            })?;
+        self.files.borrow_mut().insert(dst.to_path_buf(), content);
+        Ok(())
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError> {
+        let content = self
+            .files
+            .borrow_mut()
+            .remove(&from.to_path_buf())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "file not found").into()
+            })?;
+        self.files.borrow_mut().insert(to.to_path_buf(), content);
+        Ok(())
+    }
+
     fn remove_file(&self, path: &Path) -> Result<(), FsError> {
         self.files
             .borrow_mut()
@@ -229,11 +213,17 @@ impl FileSystem for MemFileSystem {
 
     fn exists(&self, path: &Path) -> bool { self.files.borrow().contains_key(&path.to_path_buf()) }
 
-    #[cfg(unix)]
-    fn set_permissions(&self, _path: &Path, _mode: u32) -> Result<(), FsError> { Ok(()) }
+    fn link(&self, _original: &Path, _link: &Path) -> Result<(), FsError> { Ok(()) }
+
+    fn unlink(&self, path: &Path) -> Result<(), FsError> {
+        self.files.borrow_mut().remove(&path.to_path_buf());
+        Ok(())
+    }
 
     #[cfg(unix)]
-    fn symlink(&self, _original: &Path, _link: &Path) -> Result<(), FsError> { Ok(()) }
+    fn set_permissions(&self, _path: &Path, _mode: u32) -> Result<(), FsError> {
+        Ok::<(), FsError>(())
+    }
 }
 
 #[cfg(test)]
@@ -255,33 +245,11 @@ impl ReadFileSystem for MemFileSystem {
 }
 
 #[cfg(test)]
-pub struct MemEnvironment {
-    vars: std::collections::HashMap<String, String>,
-    cwd:  Option<PathBuf>,
-}
+pub struct TestCommandRunner;
 
 #[cfg(test)]
-impl MemEnvironment {
-    pub fn new() -> Self {
-        Self {
-            vars: std::collections::HashMap::new(),
-            cwd:  Some(PathBuf::from("/cwd")),
-        }
+impl CommandRunner for TestCommandRunner {
+    fn run(&self, _cmd: &str, _args: &[&str], _env: &[(&str, &str)]) -> Result<(), ExecuteError> {
+        Ok(())
     }
-
-    pub fn with_var(mut self, name: &str, value: &str) -> Self {
-        self.vars.insert(name.to_string(), value.to_string());
-        self
-    }
-
-    pub fn with_no_cwd(mut self) -> Self {
-        self.cwd = None;
-        self
-    }
-}
-
-#[cfg(test)]
-impl Environment for MemEnvironment {
-    fn var(&self, name: &str) -> Option<String> { self.vars.get(name).cloned() }
-    fn current_dir(&self) -> Option<PathBuf> { self.cwd.clone() }
 }
