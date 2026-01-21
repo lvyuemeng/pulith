@@ -1,5 +1,25 @@
 # pulith-version Design
 
+## Philosophy Alignment
+
+This crate follows the F1-F5 philosophy with a **pure core** and **no I/O**:
+
+| Principle | Alignment | Implementation |
+|-----------|-----------|----------------|
+| **F1: Functions First** | ✓ | All operations are pure functions (`parse`, `matches`, comparison) |
+| **F2: Immutability** | ✓ | All types use `Clone` + derived traits, no mutability |
+| **F3: Pure Core** | ✓ | No I/O; version parsing is purely functional |
+| **F4: Explicit Effects** | ✓ | Effects layer is empty (no side effects possible) |
+| **F5: Composition** | ✓ | `VersionKind` composes `SemVer`, `CalVer`, `Partial` |
+
+### Three-Layer Pattern
+
+```
+data.rs     → Immutable types (VersionKind, CalVer, Partial, errors)
+core.rs     → Pure operations (FromStr, Display, parsing logic)
+effects.rs  → Empty (all operations are pure)
+```
+
 ## Overview
 
 Version parsing, comparison, and display for multiple version schemes. Supports SemVer, CalVer, and partial versions.
@@ -23,14 +43,10 @@ Version parsing, comparison, and display for multiple version schemes. Supports 
 /// Version kind enum
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VersionKind {
-    SemVer(SemVer),
+    SemVer(semver::Version),
     CalVer(CalVer),
     Partial(Partial),
 }
-
-/// Semantic Versioning wrapper
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SemVer(semver::Version);
 
 /// Calendar Versioning
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,14 +66,14 @@ pub struct Partial {
 /// Parsing error
 #[derive(Debug, Error)]
 pub enum VersionError {
-    #[error("invalid SemVer: {0}")]
+    #[error("invalid semver")]
     SemVer(#[from] semver::Error),
 
-    #[error("invalid CalVer format: {0}")]
-    CalVer(String),
+    #[error(transparent)]
+    CalVer(#[from] calver::CalVerError),
 
-    #[error("invalid partial version: {0}")]
-    Partial(String),
+    #[error(transparent)]
+    Partial(#[from] partial::PartialError),
 
     #[error("unknown version scheme")]
     Unknown,
@@ -68,35 +84,24 @@ impl VersionKind {
     /// Parse string into VersionKind
     pub fn parse(s: &str) -> Result<Self, VersionError>;
 
-    /// Get version as display string
-    pub fn to_string(&self) -> String;
-
     /// Convert to SemVer if possible
-    pub fn as_semver(&self) -> Option<SemVer>;
+    pub fn as_semver(&self) -> Option<&semver::Version>;
 
     /// Get version kind type
     pub fn kind(&self) -> VersionKindType;
 }
 
-impl SemVer {
-    /// Create new SemVer
-    pub fn new(major: u64, minor: u64, patch: u64) -> Self;
-
-    /// Access underlying semver crate Version
-    pub fn inner(&self) -> &semver::Version;
-}
-
 impl CalVer {
     /// Parse CalVer string (YYYY, YYYY.MM, YYYY.MM.DD, etc.)
-    pub fn parse(s: &str) -> Result<Self, VersionError>;
+    pub fn parse(s: &str) -> Result<Self, CalVerError>;
 
     /// Create from date components
-    pub fn from_ymd(year: u64, month: u64, day: u64) -> Result<Self, VersionError>;
+    pub fn from_ymd(year: u64, month: u64, day: u64) -> Result<Self, CalVerError>;
 }
 
 impl Partial {
     /// Parse partial version string
-    pub fn parse(s: &str) -> Result<Self, VersionError>;
+    pub fn parse(s: &str) -> Result<Self, PartialError>;
 
     /// Check if this partial matches a full version
     pub fn matches(&self, version: &VersionKind) -> bool;
@@ -115,10 +120,8 @@ pub enum VersionKindType {
 
 ```
 pulith-version/src/
-├── lib.rs              # Public exports and main types
-├── semver.rs           # SemVer wrapper
-├── calver.rs           # Calendar versioning
-└── partial.rs          # Partial version parsing
+├── lib.rs              # Public API re-exports and crate docs
+└── version.rs          # All version types and operations
 ```
 
 ## Dependencies
@@ -127,7 +130,6 @@ pulith-version/src/
 [dependencies]
 semver    # Semantic versioning
 regex     # Partial version parsing
-serde     # Serialization support
 thiserror # Error handling
 ```
 
@@ -138,7 +140,7 @@ thiserror # Error handling
 ### Parse and Compare Versions
 
 ```rust
-use pulith_version::{VersionKind, VersionError};
+use pulith_version::VersionKind;
 
 let v1: VersionKind = "1.2.3".parse().unwrap();
 let v2: VersionKind = "2.0.0".parse().unwrap();
@@ -219,11 +221,11 @@ major.lts
 
 ## Design Decisions
 
-### Why Wrap semver Crate?
+### Why Use semver::Version Directly?
 
-- Use battle-tested semver parsing
-- Add custom version kinds alongside SemVer
-- Consistent API across all version types
+- Battle-tested parsing and comparison
+- No need to wrap when we want standard SemVer behavior
+- Consistent with CalVer which uses semver::Version internally
 
 ### CalVer Implementation
 

@@ -8,6 +8,48 @@
 - **Linting**: `cargo clippy` with strict warnings
 - **Documentation**: `cargo doc` for API documentation
 
+## Philosophy
+
+### 1. Guiding Philosophy
+
+- F1 — Functions First.
+
+Behavior is expressed as output = f(input). Avoid hidden state, magic side effects, and behaviorful objects.
+
+- F2 — Immutability by Default.
+Core data is immutable; mutation is allowed only at system boundaries (I/O, caches, buffers).
+
+- F3 — Pure Core, Impure Edge.
+All reasoning lives in a pure core. All effects (model calls, tools, storage, logging) live at the edge.
+
+- F4 — Explicit Effects.
+If a function has effects or uses randomness, this must be explicit in its interface.
+
+- F5 — Composition Over Orchestration.
+Prefer composable pipelines over ad-hoc control flow or global state.
+
+### 2. Structure
+
+- Data Layer (Pure): Explicit, immutable types (Query, State, Plan, Action, Event).
+
+- Core (Pure): Deterministic transformations over data (update, plan, rank).
+
+- Effect Layer: Only place for I/O, tools, persistence, and model sampling.
+
+- Orchestrator: Thin loop wiring pure logic to effects; holds no intelligence.
+
+### 3. Efficiency (Pragmatic FP)
+
+- E1 — Structural Sharing: Use persistent data to avoid deep copies.
+
+- E2 — Laziness: Defer computation when possible.
+
+- E3 — Batch at Boundaries: Group model/tool calls.
+
+- E4 — Pure Hot Path, Mutable Cold Path: Keep reasoning pure; allow mutation only in caches/buffers.
+
+- E5 — Cost-Aware Planning: Plans should consider latency, token budget, and tool cost.
+
 ## Workspace Structure
 
 ```
@@ -223,5 +265,6 @@ use crate::module::Item;
 
 ## References
 
-- [design.md](./design.md) - Architecture and crate design
 - [README.md](./README.md) - Project overview
+- [design.md](./design.md) - Design specification 
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - General architecture

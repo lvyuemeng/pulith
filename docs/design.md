@@ -42,27 +42,27 @@ This ecosystem provides battle-tested building blocks so developers can focus on
 
 ```
 pulith/
-├── crates/
-│   ├── pulith-platform/   # ✅ Implemented - OS, arch, shell, path helpers
-│   ├── pulith-version/    # ✅ Implemented - Version parsing, comparison, display
-│   ├── pulith-fetch/      # HTTP downloads, progress, checksum
-│   ├── pulith-install/    # Atomic ops, staging, activation
-│   ├── pulith-registry/   # Typed state, atomic saves
-│   ├── pulith-ui/         # Progress, tables, spinners
-│   └── pulith-source/     # Source adapters (deferred design)
+└── crates/
+    ├── pulith-platform/   # OS, arch, shell, path helpers
+    ├── pulith-version/    # Version parsing, comparison
+    ├── pulith-fetch/      # HTTP downloads, progress, checksum
+    ├── pulith-shim/       # Shim generation
+    ├── pulith-install/    # Atomic ops, staging, activation
+    ├── pulith-registry/   # Typed state, atomic saves
+    └── pulith-ui/         # Progress, tables, spinners
 ```
 
 ### Implementation Status
 
-| Crate | Status | Description |
-|-------|--------|-------------|
+| Crate | Status | Notes |
+|-------|--------|-------|
 | `pulith-platform` | ✅ Done | OS/distro, arch, shell, path helpers |
 | `pulith-version` | ✅ Done | SemVer, CalVer, partial version parsing |
-| `pulith-fetch` | 🔲 Pending | HTTP downloads |
+| `pulith-shim` | ✅ Done | Shim generation with three-layer pattern |
+| `pulith-fetch` | 🔲 Part | HTTP downloads with verification |
+| `pulith-install` | 🔲 Pending | Atomic file operations |
 | `pulith-registry` | 🔲 Pending | State persistence |
 | `pulith-ui` | 🔲 Pending | Progress and tables |
-| `pulith-install` | 🔲 Pending | Atomic file operations |
-| `pulith-source` | ⏸ Deferred | Source adapters |
 
 ### Crate Descriptions
 
@@ -79,7 +79,12 @@ Version parsing and comparison for multiple formats:
 - **SemVer**: Semantic versioning (1.2.3, 1.2.3-alpha+build)
 - **CalVer**: Calendar versioning (2024.01, 2024.01.15)
 - **Partial**: Partial versions (18, 3.11, lts)
-- **Custom**: User-defined version schemes
+
+#### pulith-shim ✅
+Shim generation for version switching:
+- Unix shell stubs (bash, zsh, fish)
+- Windows batch and PowerShell scripts
+- Platform-specific executable wrappers
 
 #### pulith-fetch
 HTTP downloading with verification:
@@ -101,7 +106,7 @@ Atomic file system operations:
 Typed state management with persistence:
 - Auto-saving on drop
 - Hash verification (detect external modification)
-- Binary serialization with postcard
+- Binary serialization
 - Migration support
 
 #### pulith-ui
@@ -110,21 +115,6 @@ User interface primitives:
 - Tables (tabled-based)
 - Spinners and status indicators
 - Composable builders
-
-#### pulith-platform
-Cross-platform helpers:
-- OS and distribution detection
-- Architecture detection
-- Shell detection and invocation
-- PATH manipulation
-- Home directory resolution
-
-#### pulith-source
-Source adapters for fetching resources (design deferred):
-- npm registry
-- GitHub releases
-- HTTP direct
-- S3 and custom sources
 
 ## Crate Relationships
 
@@ -138,7 +128,7 @@ Source adapters for fetching resources (design deferred):
               ▼              ▼              ▼
         ┌──────────┐  ┌──────────┐  ┌──────────┐
         │ pulith-  │  │ pulith-  │  │ pulith-  │
-        │ version ✅│  │platform ✅│  │   ui     │
+        │ version  │  │platform  │  │   shim   │
         └────┬─────┘  └──────────┘  └──────────┘
              │              │
              │      ┌───────┴───────┐
@@ -159,12 +149,6 @@ Source adapters for fetching resources (design deferred):
 ## Design Directions (Deferred)
 
 These areas require further design when needed:
-
-### Source Adapters
-- Trait definition for sources
-- Locator syntax (github:owner/repo@v1.0.0)
-- Authentication and caching
-- Dynamic vs static registration
 
 ### Backend Abstractions
 - Trait for package managers
@@ -187,5 +171,5 @@ These areas require further design when needed:
 ## References
 
 - [README.md](./README.md) - Project overview and getting started
-- [docs/migration.md](./migration.md) - Historical context and pivot
 - [docs/AGENT.md](./AGENT.md) - Coding specifications
+- [docs/design/*.md] - Design of subcrates

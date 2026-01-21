@@ -9,7 +9,7 @@ Cross-platform system utilities for resource management tools. Provides OS, arch
 **Included:**
 - OS and distribution detection (Windows, macOS, Linux distros)
 - Architecture detection (x86, x64, ARM variants)
-- Shell detection and invocation
+- Shell detection and config directory resolution
 - PATH manipulation
 - Home and temp directory resolution
 
@@ -17,6 +17,7 @@ Cross-platform system utilities for resource management tools. Provides OS, arch
 - Async runtime (handled separately)
 - Version parsing (separate crate)
 - UI components (separate crate)
+- Shell invocation (removed, use `std::process::Command` directly)
 
 ## Public API
 
@@ -92,35 +93,42 @@ pub mod shell {
     }
 
     /// Detect current shell
-    pub fn detect() -> Shell;
+    pub fn detect() -> Option<Shell>;
 
     /// Get shell executable path
     pub fn executable(shell: Shell) -> Option<&'static str>;
 
-    /// Invoke shell with command
-    pub fn invoke(shell: Shell, command: &str) -> std::io::Result<std::process::ExitStatus>;
+    /// Get shell config directory
+    pub fn config_dir(shell: Shell) -> Option<std::path::PathBuf>;
 }
 
 pub mod path {
-    /// Platform-specific path helpers
-    pub fn home_dir() -> Option<std::path::PathBuf>;
+    /// User's home directory
+    pub fn user_home() -> Option<std::path::PathBuf>;
 
-    pub fn temp_dir() -> std::path::PathBuf;
+    /// User's configuration directory
+    pub fn user_config() -> Option<std::path::PathBuf>;
 
-    pub fn config_dir() -> Option<std::path::PathBuf>;
+    /// User's data directory
+    pub fn user_data() -> Option<std::path::PathBuf>;
 
-    pub fn data_dir() -> Option<std::path::PathBuf>;
+    /// System temporary directory
+    pub fn user_temp() -> std::path::PathBuf;
 
-    pub fn cache_dir() -> Option<std::path::PathBuf>;
+    /// Get PATH environment variable as list of paths
+    pub fn path_env() -> Option<Vec<std::path::PathBuf>>;
 
-    /// Add path to PATH environment variable
-    pub fn prepend_to_path(path: &std::path::Path) -> std::io::Result<()>;
+    /// Prepend path to PATH environment variable (process-level)
+    ///
+    /// # Safety
+    /// Only safe in single-threaded programs.
+    pub fn prepend_path(path: &std::path::Path) -> std::io::Result<()>;
 
-    /// Remove path from PATH environment variable
-    pub fn remove_from_path(path: &std::path::Path) -> std::io::Result<()>;
-
-    /// Get current PATH as list of paths
-    pub fn path_entries() -> Vec<std::path::PathBuf>;
+    /// Remove path from PATH environment variable (process-level)
+    ///
+    /// # Safety
+    /// Only safe in single-threaded programs.
+    pub fn remove_path(path: &std::path::Path) -> std::io::Result<()>;
 }
 ```
 
@@ -131,7 +139,7 @@ pulith-platform/src/
 ├── lib.rs              # Public exports
 ├── os.rs               # OS and distribution detection
 ├── arch.rs             # Architecture detection
-├── shell.rs            # Shell detection and invocation
+├── shell.rs            # Shell detection and config directories
 └── path.rs             # Path and directory helpers
 ```
 
@@ -139,7 +147,6 @@ pulith-platform/src/
 
 ```toml
 [dependencies]
-sysinfo      # System information
 query-shell  # Shell detection
 home         # Home directory
 ```
@@ -162,14 +169,17 @@ match os {
 }
 ```
 
-### Detect Shell and Execute
+### Detect Shell Config Directory
 
 ```rust
 use pulith_platform::shell::{self, Shell};
 
 let shell = shell::detect();
-let status = shell::invoke(shell, "echo hello").unwrap();
-assert!(status.success());
+if let Some(s) = shell {
+    if let Some(config) = shell::config_dir(s) {
+        println!("Shell config: {}", config.display());
+    }
+}
 ```
 
 ### Manipulate PATH
@@ -178,19 +188,13 @@ assert!(status.success());
 use pulith_platform::path;
 
 let new_path = std::path::PathBuf::from("/custom/bin");
-path::prepend_to_path(&new_path).unwrap();
+path::prepend_path(&new_path).unwrap();
 
-let entries = path::path_entries();
+let entries = path::path_env().unwrap();
 assert!(entries[0] == new_path);
 ```
 
 ## Design Decisions
-
-### Why sysinfo?
-
-- Lightweight system information
-- Cross-platform support
-- No runtime dependencies
 
 ### Why query-shell?
 
@@ -198,11 +202,17 @@ assert!(entries[0] == new_path);
 - Supports many shell types
 - Actively maintained
 
-### Shell Invocation Design
+### Why No Shell Invocation?
 
-- Simple command string (platform shell interprets)
-- Returns exit status only (stdout/stderr handled by caller)
-- For richer output, use `std::process::Command` directly
+- `std::process::Command` is sufficient for most cases
+- Simpler API surface area
+- Platform-specific shells handle quoting/escaping differently
+
+### PATH Manipulation Safety
+
+- Marked `unsafe` due to environment variable thread-safety concerns
+- Only intended for single-threaded CLI tools
+- Consider using `std::env::set_var` with proper synchronization in multithreaded contexts
 
 ## Platform-Specific Notes
 
@@ -210,12 +220,14 @@ assert!(entries[0] == new_path);
 - PATH uses semicolon separator
 - Shell is typically `cmd.exe` or `powershell.exe`
 - Home is `USERPROFILE`
+- Config uses `APPDATA`
 
 ### macOS
 - Shell is typically `zsh` or `bash`
 - Home is standard
+- Config uses `~/Library/Application Support`
 
 ### Linux
 - Distribution detection via `/etc/os-release`
 - Shell varies by user preference
-- XDG directories for config/data/cache
+- XDG directories for config/data (`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME`)
