@@ -1,0 +1,13 @@
+[package]
+name = "pulith-platform"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pulith-fs = { path = "../pulith-fs" }
+
+home = "0.5"
+query-shell = "0.3"
+once_cell = "1.21"
+thiserror.workspace = true
+

@@ -1,0 +1,19 @@
+[package]
+name = "pulith-install"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75.0"
+description = "Transactional filesystem engine for converting verified artifacts into active system state"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "pulith_install"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+pulith-platform = { path = "../pulith-platform" }
+
+[dev-dependencies]
+tempfile = "3.0"

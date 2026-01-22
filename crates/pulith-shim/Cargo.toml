@@ -1,0 +1,8 @@
+[package]
+name = "pulith-shim"
+version = "0.1.0"
+edition = "2024"
+description = "Executable shim generation and management for Unix and Windows"
+
+[dependencies]
+thiserror.workspace = true

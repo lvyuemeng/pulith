@@ -1,0 +1,28 @@
+[package]
+name = "pulith-fetch"
+version = "0.2.0"
+edition = "2024"
+description = "HTTP downloading with streaming verification and atomic placement"
+
+[features]
+default = ["reqwest"]
+reqwest = ["dep:reqwest"]
+
+[dependencies]
+pulith-fs = { path = "../pulith-fs" }
+pulith-verify = { path = "../pulith-verify" }
+
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+bytes = "1"
+futures-util = "0.3"
+hex = "0.4"
+
+reqwest = { version = "0.13.1", features = [
+	"stream",
+	"default-tls",
+], optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
