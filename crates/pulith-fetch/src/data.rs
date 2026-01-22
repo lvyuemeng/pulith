@@ -1,89 +1,121 @@
-//! Data layer: immutable types for download configuration and progress tracking.
-
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::ParseSha256HashError;
+#[derive(Clone)]
+pub struct FetchOptions {
+    pub checksum: Option<Vec<u8>>,
+    pub max_retries: u32,
+    pub retry_backoff: Duration,
+    pub timeouts: Timeouts,
+    pub headers: HashMap<String, String>,
+    pub follow_redirects: bool,
+    pub max_redirects: u32,
+    pub on_progress: Option<Arc<dyn Fn(Progress) + Send + Sync>>,
+}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sha256Hash(pub String);
-
-impl std::str::FromStr for Sha256Hash {
-    type Err = ParseSha256HashError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.trim();
-        if s.len() != 64 {
-            return Err(ParseSha256HashError(s.to_string()));
+impl Default for FetchOptions {
+    fn default() -> Self {
+        Self {
+            checksum: None,
+            max_retries: 3,
+            retry_backoff: Duration::from_millis(100),
+            timeouts: Timeouts::default(),
+            headers: HashMap::new(),
+            follow_redirects: true,
+            max_redirects: 10,
+            on_progress: None,
         }
-        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(ParseSha256HashError(s.to_string()));
-        }
-        Ok(Self(s.to_string()))
     }
 }
 
-impl Sha256Hash {
-    pub fn from_hex(s: &str) -> Result<Self, ParseSha256HashError> { s.parse() }
+impl FetchOptions {
+    pub fn checksum(mut self, checksum: Option<Vec<u8>>) -> Self {
+        self.checksum = checksum;
+        self
+    }
 
-    pub fn as_str(&self) -> &str { &self.0 }
-}
+    pub fn max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
 
-#[derive(Debug, Clone)]
-pub struct DownloadOptions {
-    pub url:             String,
-    pub checksum:        Option<Sha256Hash>,
-    pub max_retries:     u32,
-    pub retry_backoff:   Duration,
-    pub connect_timeout: Duration,
-    pub read_timeout:    Duration,
-    pub on_progress:     ProgressCallback,
-}
+    pub fn retry_backoff(mut self, retry_backoff: Duration) -> Self {
+        self.retry_backoff = retry_backoff;
+        self
+    }
 
-impl Default for DownloadOptions {
-    fn default() -> Self {
-        Self {
-            url:             String::new(),
-            checksum:        None,
-            max_retries:     3,
-            retry_backoff:   Duration::from_millis(100),
-            connect_timeout: Duration::from_secs(30),
-            read_timeout:    Duration::from_secs(30),
-            on_progress:     noop_progress,
-        }
+    pub fn timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
+    pub fn headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    pub fn follow_redirects(mut self, follow_redirects: bool) -> Self {
+        self.follow_redirects = follow_redirects;
+        self
+    }
+
+    pub fn max_redirects(mut self, max_redirects: u32) -> Self {
+        self.max_redirects = max_redirects;
+        self
+    }
+
+    pub fn on_progress(mut self, on_progress: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
+        self.on_progress = Some(on_progress);
+        self
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DownloadPhase {
+pub struct Timeouts {
+    pub connect: Duration,
+    pub read: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_secs(30),
+            read: Duration::from_secs(300),
+        }
+    }
+}
+
+impl Timeouts {
+    pub fn connect(mut self, connect: Duration) -> Self {
+        self.connect = connect;
+        self
+    }
+
+    pub fn read(mut self, read: Duration) -> Self {
+        self.read = read;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchPhase {
     Connecting,
     Downloading,
     Verifying,
+    Committing,
     Completed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Progress {
+    pub phase: FetchPhase,
     pub bytes_downloaded: u64,
-    pub total_bytes:      Option<u64>,
-    pub phase:            DownloadPhase,
-    pub retry_count:      u32,
+    pub total_bytes: Option<u64>,
+    pub retry_count: u32,
 }
 
 impl Progress {
-    pub fn new(
-        bytes_downloaded: u64,
-        total_bytes: Option<u64>,
-        phase: DownloadPhase,
-        retry_count: u32,
-    ) -> Self {
-        Self {
-            bytes_downloaded,
-            total_bytes,
-            phase,
-            retry_count,
-        }
-    }
-
     pub fn percentage(&self) -> Option<f32> {
         self.total_bytes.map(|total| {
             if total == 0 {
@@ -93,50 +125,8 @@ impl Progress {
             }
         })
     }
-}
 
-pub type ProgressCallback = fn(Progress);
-
-pub fn noop_progress(_: Progress) {}
-
-pub struct ProgressTracker {
-    callback:         ProgressCallback,
-    total_bytes:      Option<u64>,
-    bytes_downloaded: u64,
-    retry_count:      u32,
-}
-
-impl ProgressTracker {
-    pub fn new(callback: ProgressCallback, total_bytes: Option<u64>) -> Self {
-        let tracker = Self {
-            callback,
-            total_bytes,
-            bytes_downloaded: 0,
-            retry_count: 0,
-        };
-        tracker.emit(DownloadPhase::Connecting);
-        tracker
-    }
-
-    pub fn set_retry_count(&mut self, count: u32) { self.retry_count = count; }
-
-    pub fn add_bytes(&mut self, bytes: u64) {
-        self.bytes_downloaded += bytes;
-        self.emit(DownloadPhase::Downloading);
-    }
-
-    pub fn set_downloading(&mut self) { self.emit(DownloadPhase::Downloading); }
-
-    pub fn set_verifying(&mut self) { self.emit(DownloadPhase::Verifying); }
-
-    pub fn set_completed(&mut self) { self.emit(DownloadPhase::Completed); }
-
-    fn emit(&self, phase: DownloadPhase) {
-        (self.callback)(Progress::new(
-            self.bytes_downloaded,
-            self.total_bytes,
-            phase,
-            self.retry_count,
-        ));
+    pub fn is_completed(&self) -> bool {
+        matches!(self.phase, FetchPhase::Completed)
     }
 }

@@ -89,10 +89,10 @@ impl CalVer {
     }
 
     pub fn from_ymd(year: u64, month: u64, day: u64) -> Result<Self, CalVerError> {
-        if month < 1 || month > 12 {
+        if !(1..=12).contains(&month) {
             return Err(CalVerError(format!("invalid month: {}", month)));
         }
-        if day < 1 || day > 31 {
+        if !(1..=31).contains(&day) {
             return Err(CalVerError(format!("invalid day: {}", day)));
         }
 
@@ -189,14 +189,14 @@ impl Partial {
     pub fn matches(&self, version: &VersionKind) -> bool {
         match version {
             VersionKind::SemVer(v) => {
-                self.major.map_or(true, |m| m == v.major)
-                    && self.minor.map_or(true, |m| m == v.minor)
-                    && self.patch.map_or(true, |m| m == v.patch)
+                self.major.is_none_or(|m| m == v.major)
+                    && self.minor.is_none_or(|m| m == v.minor)
+                    && self.patch.is_none_or(|m| m == v.patch)
             }
             VersionKind::CalVer(v) => {
-                self.major.map_or(true, |m| m == v.year())
-                    && self.minor.map_or(true, |m| m == v.month())
-                    && self.patch.map_or(true, |m| m == v.day())
+                self.major.is_none_or(|m| m == v.year())
+                    && self.minor.is_none_or(|m| m == v.month())
+                    && self.patch.is_none_or(|m| m == v.day())
             }
             VersionKind::Partial(other) => {
                 self.major == other.major && self.minor == other.minor && self.patch == other.patch

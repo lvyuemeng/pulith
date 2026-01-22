@@ -9,9 +9,11 @@ keywords = ["filesystem", "atomic", "cross-platform"]
 categories = ["os::unix-apis", "os::windows-apis"]
 
 [dependencies]
-nix = { version = "0.30", features = ["fs"] }
-windows = { version = "0.62", features = ["Win32", "Win32_Foundation", "Win32_Storage_FileSystem"] }
 thiserror.workspace = true
+memmap2 = "0.9"
+uuid = { version = "1", features = ["v4"] }
+junction = "1.4.1"
+fs2 = "0.4"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

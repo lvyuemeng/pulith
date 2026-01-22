@@ -1,155 +1,236 @@
 # Pulith Design Document
 
-## Vision
+## vision
 
-**Resource Management Primitives for Rust**
+**resource management primitives for rust**
 
-A crate ecosystem providing everything a Rust tool needs to fetch, verify, store, and track external resources - packages, config files, tools, plugins, or any versioned artifacts.
+a crate ecosystem providing everything a rust tool needs to fetch, verify, store, and track external resources - packages, config files, tools, plugins, or any versioned artifacts.
 
-> "Everything a Rust tool needs to manage versioned external resources - built with best practices."
+> "everything a rust tool needs to manage versioned external resources - built with best practices."
 
-## Why This Exists
+## why this exists
 
 80% of tools that manage external resources reinvent the same primitives:
-- Version parsing and comparison
-- HTTP downloads with progress and verification
-- Atomic file operations and staging
-- State tracking with rollback
-- Cross-platform correctness
+- version parsing and comparison
+- http downloads with progress and verification
+- atomic file operations and staging
+- state tracking with rollback
+- cross-platform correctness
 
-This ecosystem provides battle-tested building blocks so developers can focus on their unique value proposition.
+this ecosystem provides battle-tested building blocks so developers can focus on their unique value proposition.
 
-## Target Use Cases
+## target use cases
 
-- **Version Managers**: rustup, nvm, pyenv, goenv
-- **Config Managers**: dotfiles, config sync, .env managers
-- **Plugin Managers**: vim-plug, neovim plugins, IDE extensions
-- **Registry Servers**: npm registry mirrors, PyPI caches, internal registries
-- **Tool Managers**: SDK managers, CLI tool installers
-- **Artifact Repositories**: container image caches, binary caches
+- **version managers**: rustup, nvm, pyenv, goenv
+- **config managers**: dotfiles, config sync, .env managers
+- **plugin managers**: vim-plug, neovim plugins, ide extensions
+- **registry servers**: npm registry mirrors, pypi caches, internal registries
+- **tool managers**: sdk managers, cli tool installers
+- **artifact repositories**: container image caches, binary caches
 
-## Design Principles
+## design principles
 
-1. **Atomicity**: All state-changing operations are atomic with rollback
-2. **Composability**: Crates can be used independently or together
-3. **Cross-Platform**: Consistent behavior across Windows, macOS, Linux
-4. **Extensibility**: Higher-layer patterns (sources, backends) designed later
-5. **Best Practices**: Security, verification, and correctness baked in
-6. **Mechanism-only**: Provide primitives to fetch, store, stage, and track external resources.
+1. **atomicity**: all state-changing operations are atomic with rollback
+2. **composability**: crates can be used independently or together
+3. **cross-platform**: consistent behavior across windows, macos, linux
+4. **extensibility**: higher-layer patterns (sources, backends) designed later
+5. **best practices**: security, verification, and correctness baked in
+6. **mechanism-only**: provide primitives to fetch, store, stage, and track external resources.
 
-## Crate Ecosystem
+## completed crates
 
-### Crate Descriptions
+| crate | status | purpose | key features |
+|-------|--------|---------|--------------|
+| `pulith-platform` | ✅ | cross-platform helpers | os/arch detection, shell detection, path manipulation |
+| `pulith-version` | ✅ | version parsing | semver, calver, partial versions with comparison |
+| `pulith-shim` | ✅ | shim generation | targetresolver trait, composable resolvers |
+| `pulith-fs` | ✅ | atomic filesystem | atomic_write, workspace, transaction, replace_dir |
+| `pulith-verify` | ✅ | content verification | hasher trait, verifiedreader, sha256/blake3 |
+| `pulith-archive` | ✅ | archive handling | format detection, streaming extraction, zip-slip protection |
+| `pulith-fetch` | ✅ | http downloading | tee-reader streaming, atomic placement, progress callbacks |
 
-#### pulith-platform ✅
-Cross-platform helpers:
-- OS and distribution detection (Windows, macOS, Linux distros)
-- Architecture detection (x86, x64, ARM variants)
-- Shell detection and invocation
-- PATH manipulation
-- Home and temp directory resolution
+## crate relationships
 
-#### pulith-version ✅
-Version parsing and comparison for multiple formats:
-- **SemVer**: Semantic versioning (1.2.3, 1.2.3-alpha+build)
-- **CalVer**: Calendar versioning (2024.01, 2024.01.15)
-- **Partial**: Partial versions (18, 3.11, lts)
+**dependency matrix:**
 
-#### pulith-shim ✅
-Shim generation for version switching:
-- Unix shell stubs (bash, zsh, fish)
-- Windows batch and PowerShell scripts
-- Platform-specific executable wrappers
+| crate | dependencies |
+|-------|--------------|
+| `pulith-fetch` | `pulith-fs`, `pulith-verify` |
+| `pulith-archive` | `pulith-fs` (optional: `pulith-verify`) |
+| `pulith-verify` | none (standalone) |
+| `pulith-fs` | none (standalone) |
+| `pulith-platform` | none (standalone) |
+| `pulith-version` | none (standalone) |
+| `pulith-shim` | none (standalone) |
 
-#### pulith-fetch
-HTTP downloading with verification:
-- Progress tracking with callbacks
-- SHA256 checksum verification
-- Retry logic with backoff
-- Redirect handling
-- Proxy support
+## crate descriptions
 
-#### pulith-fs
+### pulith-platform ✅
+cross-platform helpers:
+- os and distribution detection (windows, macos, linux distros)
+- architecture detection (x86, x64, arm variants)
+- shell detection and invocation
+- path manipulation
+- home and temp directory resolution
 
-Role: Cross-platform atomic filesystem primitives. Mechanism Only: It does not know what a "tool" is. It only knows how to move bytes safely.
+**design**: `docs/design/platform.md`
 
-Example:
+### pulith-version ✅
+version parsing and comparison for multiple formats:
+- **semver**: semantic versioning (1.2.3, 1.2.3-alpha+build)
+- **calver**: calendar versioning (2024.01, 2024.01.15)
+- **partial**: partial versions (18, 3.11, lts)
 
-- atomic_write(path, content): Writes to a temp file, fsyncs, then renames.
+**design**: `docs/design/version.md`
 
-- atomic_symlink(target, link_path): Creates a new link, then renames over the old one.
+### pulith-shim ✅
+shim generation for version switching:
+- targetresolver trait for custom resolution policies
+- pairresolver and tripleresolver for fallback/chain patterns
+- compile-time generic resolution (zero-cost abstraction)
 
-- replace_dir(src, dest): The holy grail of installers. Atomically swaps a directory. On Windows, this handles the complex retry/rename dance required when files are locked.
+**design**: `docs/design/shim.md`
 
-- hardlink_or_copy(src, dest): Optimization primitive.
+### pulith-fs ✅
 
-Managed workspace for preparing artifacts.
+role: cross-platform atomic filesystem primitives. mechanism only: it does not know what a "tool" is. it only knows how to move bytes safely.
 
-**Workspace** (formerly Stage)
+**core primitives:**
 
-Role: A transactional workspace for preparing resources. Philosophy: Installation is a transaction. It either happens completely or not at all. Mechanism only: no policy, no format enforcement.
+- `atomic_write(path, content)`: writes to a temp file, fsyncs, then renames.
 
-Example:
+- `atomic_symlink(target, link_path)`: creates a new link, then renames over the old one.
+
+- `replace_dir(src, dest)`: the holy grail of installers. atomically swaps a directory. on windows, this handles the complex retry/rename dance required when files are locked.
+
+- `hardlink_or_copy(src, dest)`: optimization primitive.
+
+**workspace** (formerly stage)
+
+role: a transactional workspace for preparing resources. philosophy: installation is a transaction. it either happens completely or not at all. mechanism only: no policy, no format enforcement.
+
+example:
 
 ```rust
-let workspace = Workspace::new(temp_dir)?;
+let workspace = workspace::new(temp_dir)?;
 
-// 2. Do work (User Policy defines what happens here)
 workspace.write("bin/tool", bytes)?;
 workspace.create_dir("lib")?;
 workspace.create_dir_all("nested/deep")?;
 
-// 3. Commit (The Mechanism)
-// This atomically moves the staged directory to the final destination.
-// If this fails, the workspace is dropped and the temp dir is cleaned up.
+// this atomically moves the staged directory to the final destination.
+// if this fails, the workspace is dropped and the temp dir is cleaned up.
 workspace.commit(final_destination_path)?;
 ```
 
-Why this fits: It doesn't care if you are installing a Node version, a VIM plugin, or a config file. It guarantees that final_destination_path never exists in a half-written state.
+**transaction** (formerly state)
 
-**Transaction** (formerly State)
+role: concurrent-safe read-modify-write on a persistent file, without enforcing a schema. concrete-independent: it deals in opaque bytes only.
 
-Role: Concurrent-safe read-modify-write on a persistent file, without enforcing a schema. Concrete-Independent: It deals in opaque Bytes only.
-
-Example:
+example:
 
 ```rust
-let tx = Transaction::open("registry.json")?;
+let tx = transaction::open("registry.json")?;
 
-// Blocks other processes, reads current content, allows modification,
+// blocks other processes, reads current content, allows modification,
 // and atomically writes back.
 tx.execute(|bytes| {
-    let data: MyCustomSchema = MyCustomSchema::from(bytes); // User defines Schema
+    let data: mycustomschema = mycustomschema::from(bytes);
     data.last_update = now();
-    Ok(data.to_bytes()) // User handles serialization
+    ok(data.to_bytes())
 })?;
 ```
 
-Mechanism: Handles file locking (flock/LockFile), read-modify-write cycles, and atomic replacement. It prevents two instances of your tool from corrupting the data.
+mechanism: handles file locking (flock/lockfile), read-modify-write cycles, and atomic replacement. it prevents two instances of your tool from corrupting the registry.
+
+**design**: `docs/design/fs.md`
+
+### pulith-verify ✅
+
+content verification primitives for downloaded artifacts:
+- **zero-copy verification**: cpu cache touches bytes only once (hashing + i/o)
+- **hasher trait**: minimal interface for custom implementations (hardware accelerators, etc.)
+- **verifiedreader**: streaming verification wrapper for any `read` source
+- **built-in hashers**: sha256 (default via `sha2` crate), blake3 (optional via feature flag)
+
+example:
+
+```rust
+use pulith_verify::{verifiedreader, sha256hasher};
+
+let expected_hash = hex::decode("...")?;
+let hasher = sha256hasher::new();
+let mut reader = verifiedreader::new(file, hasher);
+
+std::io::copy(&mut reader, &mut dest)?;
+reader.finish(&expected_hash)?;
 ```
 
-Mechanism: Handles file locking (flock/LockFile), read-modify-write cycles, and atomic replacement. It prevents two instances of your tool from corrupting the registry.
+**design**: `docs/design/verify.md`
 
-#### pulith-ui
-User interface primitives:
-- Progress bars (indicatif-based)
-- Tables (tabled-based)
-- Spinners and status indicators
-- Composable builders
+### pulith-archive ✅
 
-## Design Directions (Deferred)
+archive extraction and creation primitives:
+- **format detection**: magic number inspection (zip, tar.gz, xz, zstd)
+- **single-pass extraction**: streams entries without loading entire archive into memory
+- **path sanitization**: lexical normalization prevents zip-slip attacks
+- **transaction-aware**: works with `pulith-fs::workspace` for atomic extraction
 
-These areas require further design when needed:
+example:
 
-### Backend Abstractions
-- Trait for package managers
-- Multi-manager orchestration
-- Flag resolution patterns
+```rust
+use pulith_archive::{archiveformat, unpacker};
 
-### Migration and Upgrades
-- Schema migration for registries
-- In-place upgrade patterns
-- Backup and restore
+let format = unpacker::detect_format_from_file(archive_path)?;
+
+match format {
+    archiveformat::tar(compression::gzip) => {
+        let decoder = flate2::read::gzdecoder::new(file);
+        unpacker::extract_tar_gz(decoder, destination)?;
+    }
+    _ => return err(error::unsupportedformat),
+}
+```
+
+**design**: `docs/design/archive.md`
+
+### pulith-fetch ✅
+
+http downloading with streaming verification and atomic placement:
+- **tee-reader pattern**: single-pass streaming from network → filesystem with concurrent sha256 hashing
+- **atomic placement**: uses `pulith-fs::workspace` for guaranteed cleanup on error
+- **httpclient trait**: abstraction for testability (reqwest implementation via feature flag)
+- **progress callbacks**: mechanism-only, caller handles ui/throttling
+
+example:
+
+```rust
+use pulith_fetch::{fetcher, reqwestclient, fetchoptions};
+
+let client = reqwestclient::new()?;
+let fetcher = fetcher::new(client, "/tmp");
+
+let options = fetchoptions::default()
+    .checksum(some(expected_hash));
+
+let path = fetcher.fetch(url, destination, options).await?;
+```
+
+**design**: `docs/design/fetch.md`
+
+## design directions (deferred)
+
+these areas require further design when needed:
+
+### backend abstractions
+- trait for package managers
+- multi-manager orchestration
+- flag resolution patterns
+
+### migration and upgrades
+- schema migration for registries
+- in-place upgrade patterns
+- backup and restore
 
 ## Out of Scope
 

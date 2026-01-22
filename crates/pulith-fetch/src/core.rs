@@ -1,42 +1,54 @@
-//! Core layer: pure transformations and verification logic.
+use std::time::Duration;
 
-use crate::data::Sha256Hash;
-use sha2::{Digest, Sha256};
-
-pub fn verify_checksum(bytes: &[u8], expected: &Sha256Hash) -> Result<(), ChecksumError> {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let actual = format!("{:x}", hasher.finalize());
-
-    if expected.as_str() != actual {
-        Err(ChecksumError)
-    } else {
-        Ok(())
-    }
+pub fn retry_delay(attempt: u32, base: Duration) -> Duration {
+    let multiplier = 2_u64.saturating_pow(attempt.saturating_sub(1));
+    let total_millis = base.as_millis() as u64 * multiplier;
+    Duration::from_millis(total_millis)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChecksumError;
+pub fn is_redirect(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn verify_checksum_valid() {
-        let data = b"hello world";
-        let hash = Sha256Hash(
-            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9".to_string(),
-        );
-        assert!(verify_checksum(data, &hash).is_ok());
+    fn test_retry_delay_first_attempt() {
+        let delay = retry_delay(1, Duration::from_millis(100));
+        assert_eq!(delay, Duration::from_millis(100));
     }
 
     #[test]
-    fn verify_checksum_invalid() {
-        let data = b"hello world";
-        let hash = Sha256Hash(
-            "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+    fn test_retry_delay_exponential_backoff() {
+        assert_eq!(
+            retry_delay(1, Duration::from_millis(100)),
+            Duration::from_millis(100)
         );
-        assert!(verify_checksum(data, &hash).is_err());
+        assert_eq!(
+            retry_delay(2, Duration::from_millis(100)),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            retry_delay(3, Duration::from_millis(100)),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            retry_delay(4, Duration::from_millis(100)),
+            Duration::from_millis(800)
+        );
+    }
+
+    #[test]
+    fn test_is_redirect() {
+        assert!(is_redirect(301));
+        assert!(is_redirect(302));
+        assert!(is_redirect(303));
+        assert!(is_redirect(307));
+        assert!(is_redirect(308));
+        assert!(!is_redirect(200));
+        assert!(!is_redirect(404));
+        assert!(!is_redirect(500));
     }
 }

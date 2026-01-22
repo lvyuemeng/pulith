@@ -15,7 +15,7 @@ pub fn try_run<R: TargetResolver>(r: R) -> Result<ExitStatus, Error> {
 
     let target = r
         .resolve(&command)
-        .ok_or_else(|| Error::CommandNotFound(command))?;
+        .ok_or(Error::CommandNotFound(command))?;
 
     validate(&target)?;
     exec(&target, forwarded_args)
@@ -41,7 +41,7 @@ fn exec(target: &PathBuf, args: Vec<String>) -> Result<ExitStatus, Error> {
     Command::new(target)
         .args(args)
         .status()
-        .map_err(|e| Error::ProcessFailed(e))
+        .map_err(Error::ProcessFailed)
 }
 
 #[derive(Debug)]

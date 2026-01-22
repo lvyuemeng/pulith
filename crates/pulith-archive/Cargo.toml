@@ -1,0 +1,32 @@
+[package]
+name = "pulith-archive"
+version = "0.2.0"
+edition = "2024"
+description = "Archive extraction with path sanitization and transactional staging"
+repository = "https://github.com/anomalyco/pulith"
+documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/archive.md"
+keywords = ["archive", "extract", "unzip", "tar"]
+categories = ["compression", "filesystem"]
+
+[features]
+default = ["zip", "tar", "sha256", "blake3"]
+zip = ["dep:zip"]
+tar = ["dep:tar", "dep:flate2"]
+xz = ["dep:xz2"]
+zstd = ["dep:zstd"]
+sha256 = ["dep:sha2", "dep:hex"]
+blake3 = ["dep:blake3"]
+
+[dependencies]
+pulith-fs = { path = "../pulith-fs" }
+thiserror.workspace = true
+tempfile.workspace = true
+
+sha2 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
+blake3 = { version = "1", optional = true }
+tar = { version = "0.4.44", optional = true }
+xz2 = { version = "0.1.7", optional = true }
+zstd = { version = "0.13.3", optional = true }
+flate2 = { version = "1.1.8", optional = true }
+zip = {version = "7.2.0",optional = true}

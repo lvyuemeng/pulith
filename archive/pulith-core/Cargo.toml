@@ -1,0 +1,16 @@
+[package]
+name = "pulith-core"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+tempfile = "3.18"
+
+[dependencies]
+# Internal crates
+thiserror = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+# async-trait = "0.1"
+# reqwest = { version = "0.12", default-features = false, features = ["json"] }
+bytes = "1"
+tokio = { version = "1", features = ["fs"] }

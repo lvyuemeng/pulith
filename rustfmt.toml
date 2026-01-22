@@ -1,6 +1,0 @@
-max_width = 100
-fn_single_line = true
-struct_field_align_threshold = 20
-reorder_imports = true
-reorder_modules = true
-edition = "2024"

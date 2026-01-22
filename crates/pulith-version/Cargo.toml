@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-semver = { workspace = true }
+semver = { version = "1.0.27", features = ["serde"] }
 regex = { workspace = true }
 thiserror = { workspace = true }
 once_cell = { workspace = true }

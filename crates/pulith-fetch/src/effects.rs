@@ -1,128 +1,169 @@
-//! Effect layer: I/O operations with trait abstraction.
-
+use async_trait::async_trait;
+use bytes::Bytes;
+use futures_util::TryStreamExt;
+use futures_util::Stream;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use tokio::io::{AsyncWriteExt};
+use pulith_verify::Hasher;
 
-use sha2::Digest;
-use sha2::Sha256;
-use tokio::io::{AsyncWriteExt, BufWriter};
+pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
 
-use crate::core::verify_checksum;
-use crate::data::{DownloadOptions, ProgressTracker};
-use crate::error::FetchError;
+#[async_trait]
+pub trait HttpClient: Send + Sync {
+    type Error: std::error::Error + Send + 'static;
 
-pub struct Downloader<F, N>
-where
-    F: pulith_core::fs::AsyncFileSystem,
-    N: pulith_core::fs::Network,
-{
-    fs:      F,
-    network: N,
-    options: DownloadOptions,
+    async fn stream(&self, url: &str) -> Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error>;
+    async fn head(&self, url: &str) -> Result<Option<u64>, Self::Error>;
 }
 
-impl<F, N> Downloader<F, N>
-where
-    F: pulith_core::fs::AsyncFileSystem,
-    N: pulith_core::fs::Network,
-{
-    pub fn new(fs: F, network: N, options: DownloadOptions) -> Self {
+pub struct Fetcher<C: HttpClient> {
+    client: C,
+    workspace_root: PathBuf,
+    options: crate::data::FetchOptions,
+}
+
+impl<C: HttpClient> Fetcher<C> {
+    pub fn new(client: C, workspace_root: impl Into<PathBuf>) -> Self {
         Self {
-            fs,
-            network,
-            options,
+            client,
+            workspace_root: workspace_root.into(),
+            options: crate::data::FetchOptions::default(),
         }
     }
 
-    pub async fn download_to_temp(&self) -> Result<PathBuf, FetchError> {
-        let temp_dir = std::env::temp_dir();
-        let filename = format!("pulith_fetch_{}", std::process::id());
-        let temp_path = temp_dir.join(filename);
-
-        self.download_to_path(&temp_path).await?;
-        Ok(temp_path)
+    pub fn with_options(mut self, options: crate::data::FetchOptions) -> Self {
+        self.options = options;
+        self
     }
 
-    pub async fn download_to(&self, path: &Path) -> Result<(), FetchError> {
-        self.download_to_path(path).await.map(|_| ())
+    pub async fn fetch(&self, url: &str, destination: &Path) -> Result<PathBuf, crate::error::FetchError> {
+        self.notify_progress(crate::data::Progress {
+            phase: crate::data::FetchPhase::Connecting,
+            bytes_downloaded: 0,
+            total_bytes: None,
+            retry_count: 0,
+        });
+
+        let ws = pulith_fs::Workspace::new(&self.workspace_root, destination)
+            .map_err(crate::error::FetchError::Fs)?;
+
+        let staging_path = ws.path().join("download.tmp");
+        let bytes_downloaded = self.stream_to_staging(url, &staging_path).await?;
+
+        self.notify_progress(crate::data::Progress {
+            phase: crate::data::FetchPhase::Verifying,
+            bytes_downloaded,
+            total_bytes: None,
+            retry_count: 0,
+        });
+
+        ws.commit().map_err(crate::error::FetchError::Fs)?;
+
+        self.notify_progress(crate::data::Progress {
+            phase: crate::data::FetchPhase::Completed,
+            bytes_downloaded,
+            total_bytes: None,
+            retry_count: 0,
+        });
+
+        Ok(destination.to_path_buf())
     }
 
-    pub async fn download_to_staging(
+    fn map_error<E: std::error::Error + Send + 'static>(e: E) -> crate::error::FetchError {
+        crate::error::FetchError::Network(e.to_string())
+    }
+
+    async fn stream_to_staging(
         &self,
-        staging_dir: &Path,
-        filename: &str,
-    ) -> Result<PathBuf, FetchError> {
-        if staging_dir.is_file() {
-            return Err(FetchError::DestinationIsDirectory);
-        }
+        url: &str,
+        staging_path: &Path,
+    ) -> Result<u64, crate::error::FetchError> {
+        let mut stream = self.client.stream(url).await.map_err(Self::map_error)?;
+        let mut file = tokio::fs::File::create(staging_path).await.map_err(Self::map_error)?;
+        let mut hasher: Option<pulith_verify::Sha256Hasher> = self.options.checksum.as_ref().map(|_| pulith_verify::Sha256Hasher::new());
 
-        if let Some(parent) = staging_dir.parent() {
-            if !parent.exists() {
-                self.fs.create_dir_all(parent).await?;
+        let mut bytes_downloaded = 0u64;
+
+        while let Some(chunk_result) = stream.try_next().await.transpose() {
+            let bytes = chunk_result.map_err(Self::map_error)?;
+
+            if let Some(ref mut h) = hasher {
+                h.update(&bytes);
+            }
+            file.write_all(&bytes).await.map_err(Self::map_error)?;
+
+            bytes_downloaded += bytes.len() as u64;
+
+            if let Some(ref callback) = self.options.on_progress {
+                callback(crate::data::Progress {
+                    phase: crate::data::FetchPhase::Downloading,
+                    bytes_downloaded,
+                    total_bytes: None,
+                    retry_count: 0,
+                });
             }
         }
 
-        let path = staging_dir.join(filename);
-        self.download_to_path(&path).await?;
-        Ok(path)
-    }
+        file.sync_all().await.map_err(Self::map_error)?;
 
-    async fn download_to_path(&self, path: &Path) -> Result<PathBuf, FetchError> {
-        if path.is_dir() {
-            return Err(FetchError::DestinationIsDirectory);
-        }
-
-        let mut attempt = 0u32;
-
-        while attempt < self.options.max_retries {
-            attempt += 1;
-
-            match self.do_download(path, attempt).await {
-                Ok(()) => {
-                    return Ok(path.to_path_buf());
-                }
-                Err(_) if attempt < self.options.max_retries => {
-                    let delay = self.options.retry_backoff * attempt;
-                    tokio::time::sleep(delay).await;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
+        if let Some(h) = hasher {
+            let actual = h.finalize();
+            if let Some(ref expected) = self.options.checksum
+                && actual.as_slice() != expected.as_slice()
+            {
+                return Err(crate::error::FetchError::ChecksumMismatch {
+                    expected: hex::encode(expected),
+                    actual: hex::encode(actual),
+                });
             }
         }
 
-        Err(FetchError::MaxRetriesExceeded {
-            count: self.options.max_retries,
-        })
+        Ok(bytes_downloaded)
     }
 
-    async fn do_download(&self, path: &Path, attempt: u32) -> Result<(), FetchError> {
-        let bytes = self.network.get(&self.options.url).await?;
-
-        let total_size = Some(bytes.len() as u64);
-        let mut progress = ProgressTracker::new(self.options.on_progress, total_size);
-        progress.set_retry_count(attempt.saturating_sub(1));
-
-        progress.set_downloading();
-
-        let mut file = BufWriter::new(self.fs.create(path).await?);
-
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-
-        file.write_all(&bytes).await?;
-        file.flush().await?;
-
-        progress.set_verifying();
-
-        if let Some(expected) = &self.options.checksum {
-            verify_checksum(&bytes, expected).map_err(|_| FetchError::ChecksumMismatch {
-                expected: expected.as_str().to_string(),
-                actual:   format!("{:x}", hasher.finalize()),
-            })?;
+    fn notify_progress(&self, progress: crate::data::Progress) {
+        if let Some(ref callback) = self.options.on_progress {
+            callback(progress);
         }
-
-        progress.set_completed();
-
-        Ok(())
     }
 }
+
+#[cfg(feature = "reqwest")]
+mod reqwest_client {
+    use super::*;
+    use reqwest::Client;
+
+    pub struct ReqwestClient {
+        client: Client,
+    }
+
+    impl ReqwestClient {
+        pub fn new() -> Result<Self, reqwest::Error> {
+            let client = Client::builder()
+                .build()?;
+            Ok(Self { client })
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for ReqwestClient {
+        type Error = reqwest::Error;
+
+        async fn stream(&self, url: &str) -> Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error> {
+            let response = self.client.get(url).send().await?;
+            let stream = response.bytes_stream().map_ok(Bytes::from);
+            Ok(Box::pin(stream))
+        }
+
+        async fn head(&self, url: &str) -> Result<Option<u64>, Self::Error> {
+            self.client.head(url).send().await?
+                .content_length()
+                .map(Ok)
+                .transpose()
+        }
+    }
+}
+
+#[cfg(feature = "reqwest")]
+pub use reqwest_client::ReqwestClient;

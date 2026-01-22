@@ -1,43 +1,43 @@
-#[derive(Debug, thiserror::Error)]
+use std::path::PathBuf;
+use thiserror::Error;
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Error)]
 pub enum Error {
-    #[error("operation failed")]
-    Failed,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 
-    #[error("path not found")]
-    NotFound,
+    #[error("path not found: {}", .0.display())]
+    NotFound(PathBuf),
 
-    #[error("permission denied")]
-    PermissionDenied,
+    #[error("resource modified externally: {}", .0.display())]
+    ModifiedExternally(PathBuf),
 
-    #[error("already exists")]
-    AlreadyExists,
+    #[error("atomic write failed at {}: {}", .path.display(), .source)]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
-    #[error("retry limit exceeded")]
-    RetryLimitExceeded,
+    #[error("atomic read failed at {}: {}", .path.display(), .source)]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("directory replace failed at {}: {}", .path.display(), .source)]
+    ReplaceDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("retry limit exceeded after {0} attempts")]
+    RetryLimitExceeded(u32),
 
     #[error("cross-device hardlink not supported")]
     CrossDeviceHardlink,
 
-    #[error("symlink not supported on this platform")]
-    SymlinkNotSupported,
-
-    #[error("path exceeds maximum length")]
-    PathTooLong,
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-pub fn from_io(err: std::io::Error) -> Error {
-    match err.kind() {
-        std::io::ErrorKind::NotFound => Error::NotFound,
-        std::io::ErrorKind::PermissionDenied => Error::PermissionDenied,
-        std::io::ErrorKind::AlreadyExists => Error::AlreadyExists,
-        std::io::ErrorKind::InvalidInput => Error::Failed,
-        std::io::ErrorKind::InvalidData => Error::Failed,
-        _ => Error::Failed,
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self { from_io(err) }
+    #[error("operation failed")]
+    Failed,
 }

@@ -1,7 +1,9 @@
-//! Cross-platform system utilities for resource management.
-//!
-//! Provides OS, architecture, shell, and path helpers.
+pub use error::{Error, Result};
 
-pub use self::platform::{Arch, Distro, OS, Shell};
-
-mod platform;
+pub mod arch;
+pub mod command;
+pub mod dir;
+pub mod env;
+mod error;
+pub mod os;
+pub mod shell;
