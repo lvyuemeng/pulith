@@ -36,7 +36,7 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<()>
                 path: src_path,
                 source: e,
             })?;
-            crate::primitives::atomic_symlink(target, &dest_path)?;
+            crate::primitives::symlink::atomic_symlink(target, &dest_path)?;
         } else {
             fs::copy(&src_path, &dest_path).map_err(|e| Error::Write {
                 path: dest_path,

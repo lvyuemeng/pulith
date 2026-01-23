@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use tokio::io::{AsyncWriteExt};
 use pulith_verify::Hasher;
+use pulith_fs::workflow;
 
 pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
 
@@ -45,7 +46,7 @@ impl<C: HttpClient> Fetcher<C> {
             retry_count: 0,
         });
 
-        let ws = pulith_fs::Workspace::new(&self.workspace_root, destination)
+        let ws = workflow::Workspace::new(&self.workspace_root, destination)
             .map_err(crate::error::FetchError::Fs)?;
 
         let staging_path = ws.path().join("download.tmp");

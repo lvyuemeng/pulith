@@ -1,12 +1,12 @@
 use crate::{Error, Result};
 use std::path::Path;
 
-pub struct ReplaceDirOptions {
+pub struct Options {
     pub retry_count: u32,
     pub retry_delay: std::time::Duration,
 }
 
-impl Default for ReplaceDirOptions {
+impl Default for Options {
     fn default() -> Self {
         Self {
             retry_count: 5,
@@ -15,7 +15,7 @@ impl Default for ReplaceDirOptions {
     }
 }
 
-impl ReplaceDirOptions {
+impl Options {
     pub fn new() -> Self {
         Self::default()
     }
@@ -29,11 +29,7 @@ impl ReplaceDirOptions {
     }
 }
 
-pub fn replace_dir(
-    src: impl AsRef<Path>,
-    dest: impl AsRef<Path>,
-    options: ReplaceDirOptions,
-) -> Result<()> {
+pub fn replace_dir(src: impl AsRef<Path>, dest: impl AsRef<Path>, options: Options) -> Result<()> {
     let src = src.as_ref();
     let dest = dest.as_ref();
 
@@ -80,7 +76,7 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("file.txt"), "data").unwrap();
 
-        replace_dir(&src, &dest, ReplaceDirOptions::new()).unwrap();
+        replace_dir(&src, &dest, Options::new()).unwrap();
         assert!(dest.exists());
         assert!(dest.join("file.txt").exists());
     }

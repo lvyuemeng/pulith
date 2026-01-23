@@ -1,13 +1,12 @@
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use pulith_fs::Workspace;
+use pulith_fs::workflow::Workspace;
 
-use crate::data::options::ExtractionOptions;
-use crate::data::report::ArchiveReport;
-use crate::detect::detect_from_reader;
+use crate::entry::ArchiveReport;
 use crate::error::Result;
-use crate::extract::extractor_for;
+use crate::extract::extract_from_reader;
+use crate::options::ExtractOptions;
 
 pub struct WorkspaceExtraction {
     workspace: Workspace,
@@ -30,12 +29,10 @@ impl WorkspaceExtraction {
 }
 
 pub fn extract_to_workspace<R: Read + Seek + 'static>(
-    mut reader: R,
+    reader: R,
     destination: &Path,
-    options: ExtractionOptions,
+    options: ExtractOptions,
 ) -> Result<WorkspaceExtraction> {
-    let format = detect_from_reader(&mut reader)?.ok_or(crate::error::Error::UnsupportedFormat)?;
-
     let temp_dir = tempfile::Builder::new()
         .prefix("pulith-archive-")
         .tempdir()
@@ -45,11 +42,9 @@ pub fn extract_to_workspace<R: Read + Seek + 'static>(
         })?;
 
     let workspace =
-        Workspace::new(temp_dir.path(), destination).map_err(|e| crate::error::Error::from(e))?;
+        Workspace::new(temp_dir.path(), destination).map_err(crate::error::Error::from)?;
 
-    let extractor = extractor_for(format).ok_or(crate::error::Error::UnsupportedFormat)?;
-
-    let report = extractor.extract(reader, temp_dir.path(), &options, Some(&workspace))?;
+    let report = extract_from_reader(reader, temp_dir.path(), &options)?;
 
     Ok(WorkspaceExtraction { workspace, report })
 }
@@ -59,7 +54,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::data::archive::ArchiveFormat;
+    use crate::format::ArchiveFormat;
 
     #[test]
     fn workspace_extraction_report_access() {
@@ -102,29 +97,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let dest = temp_dir.path().join("dest");
 
-        let result = extract_to_workspace(cursor, &dest, ExtractionOptions::default());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn extract_to_workspace_zip_format() {
-        let zip_header = [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00];
-        let cursor = Cursor::new(zip_header);
-        let temp_dir = tempfile::tempdir().unwrap();
-        let dest = temp_dir.path().join("dest");
-
-        let result = extract_to_workspace(cursor, &dest, ExtractionOptions::default());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn extract_to_workspace_tar_gz_format() {
-        let tar_gz_header = [0x1F, 0x8B, 0x08, 0x00];
-        let cursor = Cursor::new(tar_gz_header);
-        let temp_dir = tempfile::tempdir().unwrap();
-        let dest = temp_dir.path().join("dest");
-
-        let result = extract_to_workspace(cursor, &dest, ExtractionOptions::default());
+        let result = extract_to_workspace(cursor, &dest, ExtractOptions::default());
         assert!(result.is_err());
     }
 

@@ -78,15 +78,15 @@ impl Drop for AlignedBuf {
 unsafe impl Send for AlignedBuf {}
 unsafe impl Sync for AlignedBuf {}
 
-pub fn align_down(n: u64, align: u64) -> u64 {
+pub fn align_down(n: usize, align: usize) -> usize {
     n & !(align - 1)
 }
 
-pub fn align_up(n: u64, align: u64) -> u64 {
+pub fn align_up(n: usize, align: usize) -> usize {
     (n + align - 1) & !(align - 1)
 }
 
-pub fn is_aligned(n: u64, align: u64) -> bool {
+pub fn is_aligned(n: usize, align: usize) -> bool {
     n & (align - 1) == 0
 }
 

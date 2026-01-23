@@ -7,21 +7,19 @@
 //! - `workspace.rs` - Transactional extraction
 //! - `extract/` - Per-format implementations
 //! - `data/` - Shared types
+//! - `codec/` - Compression codecs
+//! - `ops/` - Permission and hash operations
 
-pub use data::archive::{ArchiveFormat, Compression};
-pub use data::options::{ExtractionOptions, HashStrategy, PermissionStrategy, Progress};
-pub use data::report::{ArchiveReport, ExtractedEntry};
-pub use detect::{detect_format, detect_from_reader};
 pub use error::{Error, Result};
-pub use sanitize::{sanitize_path, sanitize_symlink_target, strip_path_components};
+pub use extract::extract_from_reader;
+pub use options::ExtractOptions;
+pub use sanitize::{sanitize_path_with_options, sanitize_symlink_target_with_options, SanitizedPath};
 pub use workspace::{extract_to_workspace, WorkspaceExtraction};
 
-pub mod data;
-pub mod detect;
+pub mod options;
+mod format;
+pub mod entry;
 pub mod extract;
-pub mod progress {
-	pub use crate::data::Progress;
-}
 mod error;
 mod sanitize;
 mod workspace;

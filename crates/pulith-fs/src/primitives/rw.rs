@@ -1,18 +1,19 @@
+use crate::permissions::PermissionMode;
 use crate::{Error, Result};
 use std::fs;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AtomicWriteOptions {
-    pub permissions: Option<u32>,
+pub struct Options {
+    pub permissions: Option<PermissionMode>,
     pub sync: bool,
 }
 
-impl AtomicWriteOptions {
+impl Options {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn permissions(mut self, mode: u32) -> Self {
+    pub fn permissions(mut self, mode: PermissionMode) -> Self {
         self.permissions = Some(mode);
         self
     }
@@ -22,11 +23,7 @@ impl AtomicWriteOptions {
     }
 }
 
-pub fn atomic_write(
-    path: impl AsRef<Path>,
-    content: &[u8],
-    options: AtomicWriteOptions,
-) -> Result<()> {
+pub fn atomic_write(path: impl AsRef<Path>, content: &[u8], options: Options) -> Result<()> {
     let path = path.as_ref();
     let parent = path.parent().ok_or_else(|| Error::Write {
         path: path.to_path_buf(),
@@ -41,15 +38,8 @@ pub fn atomic_write(
         source: e,
     })?;
 
-    #[cfg(unix)]
     if let Some(mode) = options.permissions {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(mode)).map_err(|e| {
-            Error::Write {
-                path: tmp_path.clone(),
-                source: e,
-            }
-        })?;
+        mode.apply_to_path(&tmp_path)?;
     }
 
     if options.sync {
@@ -91,17 +81,52 @@ mod tests {
     fn test_atomic_write() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.txt");
-        atomic_write(&path, b"hello world", AtomicWriteOptions::new()).unwrap();
+        atomic_write(&path, b"hello world", Options::new()).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"hello world");
     }
 
     #[test]
-    fn test_atomic_write_with_permissions() {
+    fn test_atomic_write_with_custom_permissions() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.txt");
-        atomic_write(&path, b"data", AtomicWriteOptions::new().permissions(0o755)).unwrap();
+        atomic_write(
+            &path,
+            b"data",
+            Options::new().permissions(PermissionMode::Custom(0o755)),
+        )
+        .unwrap();
         let metadata = fs::metadata(&path).unwrap();
         #[cfg(unix)]
         assert_eq!(metadata.permissions().mode() & 0o777, 0o755);
+    }
+
+    #[test]
+    fn test_atomic_write_with_readonly() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        atomic_write(
+            &path,
+            b"data",
+            Options::new().permissions(PermissionMode::ReadOnly),
+        )
+        .unwrap();
+        let metadata = fs::metadata(&path).unwrap();
+        #[cfg(unix)]
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o444);
+        #[cfg(windows)]
+        assert!(metadata.permissions().readonly());
+    }
+
+    #[test]
+    fn test_atomic_write_with_inherit() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        atomic_write(
+            &path,
+            b"data",
+            Options::new().permissions(PermissionMode::Inherit),
+        )
+        .unwrap();
+        assert!(path.exists());
     }
 }

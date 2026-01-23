@@ -7,7 +7,7 @@
 
 use pulith_shim::TargetResolver;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 pub fn try_run<R: TargetResolver>(r: R) -> Result<ExitStatus, Error> {
@@ -30,9 +30,9 @@ fn parse_invoke() -> Result<(String, Vec<String>), Error> {
     Ok((command, forward))
 }
 
-fn validate(target: &PathBuf) -> Result<(), Error> {
+fn validate(target: &Path) -> Result<(), Error> {
     if !target.exists() {
-        return Err(Error::TargetNotFound(target.clone()));
+        return Err(Error::TargetNotFound(target.to_path_buf()));
     }
     Ok(())
 }

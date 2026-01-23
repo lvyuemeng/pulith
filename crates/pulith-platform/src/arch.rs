@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::os::OS;
-use std::env;
 use std::str::FromStr;
+use std::{env, fmt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Arch {
@@ -71,20 +71,6 @@ impl TargetTriple {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        let mut triple = format!(
-            "{}-{}-{}",
-            self.arch_to_str(),
-            self.vendor,
-            self.os_to_str()
-        );
-        if let Some(env) = &self.env {
-            triple.push('-');
-            triple.push_str(env);
-        }
-        triple
-    }
-
     fn arch_to_str(&self) -> &str {
         match self.arch {
             Arch::X86 => "i686",
@@ -106,6 +92,22 @@ impl TargetTriple {
     }
 }
 
+impl fmt::Display for TargetTriple {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut triple = format!(
+            "{}-{}-{}",
+            self.arch_to_str(),
+            self.vendor,
+            self.os_to_str()
+        );
+        if let Some(env) = &self.env {
+            triple.push('-');
+            triple.push_str(env);
+        }
+        f.write_str(&triple)
+    }
+}
+
 impl FromStr for TargetTriple {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
@@ -119,22 +121,12 @@ impl FromStr for TargetTriple {
                 env: None,
             }),
             [arch, os, env] => {
-                let os_result = os.parse::<OS>();
-                if os_result.is_ok() {
-                    Ok(Self {
-                        arch: arch.parse()?,
-                        vendor: "unknown".to_string(),
-                        os: os_result.unwrap(),
-                        env: Some(env.to_string()),
-                    })
-                } else {
-                    Ok(Self {
-                        arch: arch.parse()?,
-                        vendor: os.to_string(),
-                        os: env.parse()?,
-                        env: None,
-                    })
-                }
+                Ok(Self {
+                    arch: arch.parse()?,
+                    vendor: "unknown".to_string(),
+                    os: os.parse()?,
+                    env: Some(env.to_string()),
+                })
             }
             [arch, vendor, os, env] => Ok(Self {
                 arch: arch.parse()?,
@@ -155,9 +147,7 @@ mod tests {
     fn test_arch_current_matches_cfg() {
         let arch = Arch::current();
         match arch {
-            Arch::X86 => assert!(cfg!(any(
-                target_arch = "x86",
-            ))),
+            Arch::X86 => assert!(cfg!(any(target_arch = "x86",))),
             Arch::X86_64 => assert!(cfg!(target_arch = "x86_64")),
             Arch::ARM => assert!(cfg!(target_arch = "arm")),
             Arch::ARM64 => assert!(cfg!(any(target_arch = "aarch64", target_arch = "arm64ec"))),
@@ -174,12 +164,7 @@ mod tests {
     #[test]
     fn test_arch_is_x86() {
         let arch = Arch::current();
-        assert_eq!(
-            arch.is_x86(),
-            cfg!(any(
-                target_arch = "x86",
-            ))
-        );
+        assert_eq!(arch.is_x86(), cfg!(any(target_arch = "x86",)));
     }
 
     #[test]

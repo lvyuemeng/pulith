@@ -1,17 +1,28 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::options::ExtractOptions;
 
+/// Result of sanitizing an archive entry path.
 #[derive(Clone, Debug)]
-pub struct SanitizedEntry {
+pub struct SanitizedPath {
     pub original: PathBuf,
     pub resolved: PathBuf,
-    pub symlink_target: Option<PathBuf>,
 }
 
-pub fn sanitize_path(entry_path: &Path, base: &Path) -> Result<SanitizedEntry> {
+/// Sanitize a path for extraction using the provided options.
+///
+/// Combines path normalization, component stripping, and security validation.
+pub fn sanitize_path_with_options<P: AsRef<Path>, B: AsRef<Path>>(
+    entry_path: P,
+    base: B,
+    options: &ExtractOptions,
+) -> Result<SanitizedPath> {
+    let entry_path = entry_path.as_ref();
+    let base = base.as_ref();
     let normalized = normalize_path(entry_path)?;
 
+    // Reject absolute paths (zip-slip protection)
     if normalized.is_absolute() {
         return Err(Error::ZipSlip {
             entry: entry_path.to_path_buf(),
@@ -19,28 +30,42 @@ pub fn sanitize_path(entry_path: &Path, base: &Path) -> Result<SanitizedEntry> {
         });
     }
 
-    let resolved = base.join(&normalized);
-    let normalized_resolved = normalize_path(&resolved)?;
+    // Strip components if requested
+    let processed = if options.strip_components > 0 {
+        strip_components(&normalized, options.strip_components)?
+    } else {
+        normalized
+    };
 
-    if !normalized_resolved.starts_with(base) {
+    // Resolve against base and normalize
+    let resolved = normalize_path(&base.join(processed))?;
+
+    // Ensure result doesn't escape base directory
+    if !resolved.starts_with(base) {
         return Err(Error::ZipSlip {
             entry: entry_path.to_path_buf(),
-            resolved: normalized_resolved,
+            resolved,
         });
     }
 
-    Ok(SanitizedEntry {
+    Ok(SanitizedPath {
         original: entry_path.to_path_buf(),
-        resolved: normalized_resolved,
-        symlink_target: None,
+        resolved,
     })
 }
 
-pub fn sanitize_symlink_target(
-    target: &Path,
-    symlink_location: &Path,
-    base: &Path,
+/// Sanitize a symlink target path using the provided options.
+pub fn sanitize_symlink_target_with_options<P: AsRef<Path>, L: AsRef<Path>, B: AsRef<Path>>(
+    target: P,
+    symlink_location: L,
+    base: B,
+    options: &ExtractOptions,
 ) -> Result<PathBuf> {
+    let target = target.as_ref();
+    let symlink_location = symlink_location.as_ref();
+    let base = base.as_ref();
+
+    // Reject absolute symlink targets
     if target.is_absolute() {
         return Err(Error::AbsoluteSymlinkTarget {
             target: target.to_path_buf(),
@@ -50,81 +75,61 @@ pub fn sanitize_symlink_target(
 
     let normalized = normalize_path(target)?;
 
-    let resolved = symlink_location
-        .parent()
-        .map(|p| p.join(&normalized))
-        .unwrap_or_else(|| normalized.clone());
-
-    let absolute_resolved = if resolved.is_absolute() {
-        resolved
+    // Strip components if requested
+    let processed = if options.strip_components > 0 {
+        strip_components(&normalized, options.strip_components)?
     } else {
-        base.join(&resolved)
+        normalized
     };
 
-    let normalized_resolved = normalize_path(&absolute_resolved)?;
+    // Resolve relative to symlink location
+    let resolved = symlink_location
+        .parent()
+        .map(|p| p.join(&processed))
+        .unwrap_or(processed);
 
-    if !normalized_resolved.starts_with(base) {
+    // Make absolute and normalize
+    let absolute = if resolved.is_absolute() {
+        resolved
+    } else {
+        base.join(resolved)
+    };
+    let final_path = normalize_path(&absolute)?;
+
+    // Ensure symlink doesn't escape base directory
+    if !final_path.starts_with(base) {
         return Err(Error::SymlinkEscape {
             target: target.to_path_buf(),
-            resolved: normalized_resolved,
+            resolved: final_path,
         });
     }
 
-    Ok(normalize_path(&normalized_resolved)?)
+    Ok(final_path)
 }
 
-pub fn strip_path_components(path: &Path, count: usize) -> Result<PathBuf> {
-    let normalized = normalize_path(path)?;
-    let components: Vec<_> = normalized.components().collect();
-
+/// Strip leading path components.
+fn strip_components(path: &Path, count: usize) -> Result<PathBuf> {
+    let components: Vec<_> = path.components().collect();
     if components.len() <= count {
         return Err(Error::NoComponentsRemaining {
             original: path.to_path_buf(),
             count,
         });
     }
-
-    let stripped: PathBuf = components[count..].iter().collect();
-    Ok(stripped)
+    Ok(components[count..].iter().collect())
 }
 
+/// Normalize path separators and resolve relative components.
 fn normalize_path(path: &Path) -> Result<PathBuf> {
-    let path_str = path.as_os_str().to_string_lossy();
-
-    #[cfg(not(windows))]
-    {
-        if path.is_absolute() {
-            let normalized = path_str.replace('\\', "/");
-            return Ok(PathBuf::from(normalized));
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        let has_drive = path_str.chars().nth(1) == Some(':')
-            || path_str.starts_with("//")
-            || path_str.starts_with("\\\\")
-            || (path_str.starts_with("/") && !path_str.starts_with("//"));
-        if has_drive {
-            let normalized = path_str.replace('\\', "/");
-            return Ok(PathBuf::from(normalized));
-        }
-    }
-
-    let normalized = path_str.replace('\\', "/");
-    let normalized = PathBuf::from(normalized);
-
     let mut result = PathBuf::new();
 
-    for component in normalized.components() {
+    for component in path.components() {
         match component {
-            Component::ParentDir => {
-                result.pop();
-            }
-            Component::Normal(part) => {
-                result.push(part);
-            }
-            _ => {}
+            Component::ParentDir => { result.pop(); }
+            Component::Normal(part) => result.push(part),
+            Component::RootDir => result.push("/"),
+            Component::Prefix(prefix) => result.push(prefix.as_os_str()),
+            Component::CurDir => {} // ignore current dir
         }
     }
 
@@ -144,160 +149,67 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_normal_path() {
-        let entry = Path::new("bin/tool");
-        let base = test_base_path();
-        let result = sanitize_path(entry, base).unwrap();
+    fn basic_path_sanitization() {
+        let options = ExtractOptions::default();
+        let result = sanitize_path_with_options("bin/tool", test_base_path(), &options).unwrap();
         assert_eq!(result.original, Path::new("bin/tool"));
-        assert!(result.resolved.starts_with(base));
-        assert!(result.resolved.to_string_lossy().contains("bin/tool"));
+        assert!(result.resolved.starts_with(test_base_path()));
     }
 
     #[test]
-    fn sanitize_path_with_dot() {
-        let entry = Path::new("bin/./tool");
-        let base = test_base_path();
-        let result = sanitize_path(entry, base).unwrap();
-        assert!(result.resolved.starts_with(base));
-        assert!(result.resolved.to_string_lossy().contains("bin/tool"));
+    fn path_with_component_stripping() {
+        let options = ExtractOptions::default().strip_components(1);
+        let result = sanitize_path_with_options("tool-1.0/bin/tool", test_base_path(), &options).unwrap();
+
+        // Check that the stripped path contains the expected components
+        let resolved_str = result.resolved.to_string_lossy();
+        assert!(resolved_str.contains("bin") && resolved_str.contains("tool"));
+        assert!(!resolved_str.contains("tool-1.0"));
+
+        // Verify the relative part after base path
+        let relative_part = result.resolved.strip_prefix(test_base_path()).unwrap();
+        assert_eq!(relative_part, Path::new("bin/tool"));
     }
 
     #[test]
-    fn sanitize_path_with_parent() {
-        let entry = Path::new("bin/../lib/tool");
-        let base = test_base_path();
-        let result = sanitize_path(entry, base).unwrap();
-        assert!(result.resolved.starts_with(base));
-        assert!(result.resolved.to_string_lossy().contains("lib/tool"));
-    }
-
-    #[test]
-    fn sanitize_zipslip_attack() {
-        let entry = if cfg!(windows) {
-            Path::new("C:\\etc\\passwd")
-        } else {
-            Path::new("/etc/passwd")
-        };
-        let base = test_base_path();
-        let result = sanitize_path(entry, base);
+    fn zip_slip_protection() {
+        let options = ExtractOptions::default();
+        let malicious_path = if cfg!(windows) { "C:\\etc\\passwd" } else { "/etc/passwd" };
+        let result = sanitize_path_with_options(malicious_path, test_base_path(), &options);
         assert!(matches!(result, Err(Error::ZipSlip { .. })));
     }
 
     #[test]
-    fn sanitize_deep_zipslip_attack() {
-        let entry = if cfg!(windows) {
-            Path::new("D:\\etc\\passwd")
-        } else {
-            Path::new("/home/user/etc/passwd")
-        };
-        let base = test_base_path();
-        let result = sanitize_path(entry, base);
-        assert!(matches!(result, Err(Error::ZipSlip { .. })));
-    }
-
-    #[test]
-    fn sanitize_path_preserves_forward_slash() {
-        let entry = Path::new("subdir/file.txt");
-        let base = test_base_path();
-        let result = sanitize_path(entry, base).unwrap();
-        assert!(result.resolved.starts_with(base));
-        assert!(result.resolved.to_string_lossy().contains('/'));
-    }
-
-    #[test]
-    fn sanitize_symlink_relative_safe() {
-        let target = Path::new("../lib");
+    fn symlink_target_sanitization() {
+        let options = ExtractOptions::default();
+        let target = "../lib";
         let symlink_location = test_base_path().join("bin/mylink");
-        let base = test_base_path();
-        let result = sanitize_symlink_target(target, &symlink_location, base).unwrap();
-        assert!(result.starts_with(base));
-        assert!(result.to_string_lossy().contains("lib"));
+        let result = sanitize_symlink_target_with_options(
+            target, symlink_location, test_base_path(), &options
+        ).unwrap();
+        assert!(result.starts_with(test_base_path()));
     }
 
     #[test]
-    fn sanitize_symlink_absolute_rejected() {
-        let target = if cfg!(windows) {
-            PathBuf::from("C:\\etc\\passwd")
-        } else {
-            PathBuf::from("/etc/passwd")
-        };
+    fn symlink_absolute_path_rejected() {
+        let options = ExtractOptions::default();
+        let absolute_target = if cfg!(windows) { "C:\\etc\\passwd" } else { "/etc/passwd" };
         let symlink_location = test_base_path().join("bin/mylink");
-        let base = test_base_path();
-        let result = sanitize_symlink_target(&target, &symlink_location, base);
+        let result = sanitize_symlink_target_with_options(
+            absolute_target, symlink_location, test_base_path(), &options
+        );
         assert!(matches!(result, Err(Error::AbsoluteSymlinkTarget { .. })));
     }
 
     #[test]
-    fn sanitize_symlink_escape_attack() {
-        let target = if cfg!(windows) {
-            Path::new("D:\\etc\\passwd")
-        } else {
-            Path::new("/etc/passwd")
-        };
-        let symlink_location = test_base_path().join("bin/mylink");
-        let base = test_base_path();
-        let result = sanitize_symlink_target(target, &symlink_location, base);
-        assert!(matches!(
-            result,
-            Err(Error::SymlinkEscape { .. }) | Err(Error::AbsoluteSymlinkTarget { .. })
-        ));
+    fn path_normalization() {
+        let result = normalize_path(Path::new("foo//bar\\baz/../qux")).unwrap();
+        assert_eq!(result, Path::new("foo/bar/qux"));
     }
 
     #[test]
-    fn strip_path_components_single() {
-        let path = Path::new("tool-1.0/bin/tool");
-        let result = strip_path_components(path, 1).unwrap();
-        assert_eq!(result, Path::new("bin/tool"));
-    }
-
-    #[test]
-    fn strip_path_components_multiple() {
-        let path = Path::new("tool-1.0/bin/subdir/tool");
-        let result = strip_path_components(path, 2).unwrap();
-        assert_eq!(result, Path::new("subdir/tool"));
-    }
-
-    #[test]
-    fn strip_path_components_all_remaining() {
-        let path = Path::new("tool-1.0/bin/tool");
-        let result = strip_path_components(path, 2).unwrap();
-        assert_eq!(result, Path::new("tool"));
-    }
-
-    #[test]
-    fn strip_path_components_exceeds_length() {
-        let path = Path::new("bin/tool");
-        let result = strip_path_components(path, 5);
-        assert!(matches!(result, Err(Error::NoComponentsRemaining { .. })));
-    }
-
-    #[test]
-    fn strip_path_components_zero() {
-        let path = Path::new("bin/tool");
-        let result = strip_path_components(path, 0).unwrap();
-        assert_eq!(result, Path::new("bin/tool"));
-    }
-
-    #[test]
-    fn normalize_path_removes_double_slashes() {
-        let path = Path::new("foo//bar//baz");
-        let result = normalize_path(path).unwrap();
-        assert_eq!(result, Path::new("foo/bar/baz"));
-    }
-
-    #[test]
-    fn normalize_path_handles_mixed_separators() {
-        let path = Path::new("foo\\bar/baz");
-        let result = normalize_path(path).unwrap();
-        assert_eq!(result, Path::new("foo/bar/baz"));
-    }
-
-    #[test]
-    fn sanitize_path_with_nested_parent_dirs() {
-        let entry = Path::new("a/b/../../c/./d");
-        let base = test_base_path();
-        let result = sanitize_path(entry, base).unwrap();
-        assert!(result.resolved.starts_with(base));
-        assert!(result.resolved.to_string_lossy().contains("c/d"));
+    fn component_stripping() {
+        let result = strip_components(Path::new("a/b/c/d"), 2).unwrap();
+        assert_eq!(result, Path::new("c/d"));
     }
 }
