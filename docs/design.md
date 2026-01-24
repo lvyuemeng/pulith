@@ -101,7 +101,7 @@ role: cross-platform atomic filesystem primitives. mechanism only: it does not k
 
 - `atomic_symlink(target, link_path)`: creates a new link, then renames over the old one.
 
-- `replace_dir(src, dest)`: the holy grail of installers. atomically swaps a directory. on windows, this handles the complex retry/rename dance required when files are locked.
+- `replace_dir(src, dest)`: atomic directory replacement. On Windows, handles the complex retry/rename dance required when files are locked.
 
 - `hardlink_or_copy(src, dest)`: optimization primitive.
 
@@ -135,9 +135,9 @@ let tx = transaction::open("registry.json")?;
 // blocks other processes, reads current content, allows modification,
 // and atomically writes back.
 tx.execute(|bytes| {
-    let data: mycustomschema = mycustomschema::from(bytes);
+    let data: MyCustomSchema = MyCustomSchema::from(bytes);
     data.last_update = now();
-    ok(data.to_bytes())
+    Ok(data.to_bytes())
 })?;
 ```
 
@@ -156,11 +156,11 @@ content verification primitives for downloaded artifacts:
 example:
 
 ```rust
-use pulith_verify::{verifiedreader, sha256hasher};
+use pulith_verify::{VerifiedReader, Sha256Hasher};
 
 let expected_hash = hex::decode("...")?;
-let hasher = sha256hasher::new();
-let mut reader = verifiedreader::new(file, hasher);
+let hasher = Sha256Hasher::new();
+let mut reader = VerifiedReader::new(file, hasher);
 
 std::io::copy(&mut reader, &mut dest)?;
 reader.finish(&expected_hash)?;
@@ -179,16 +179,16 @@ archive extraction and creation primitives:
 example:
 
 ```rust
-use pulith_archive::{archiveformat, unpacker};
+use pulith_archive::{ArchiveFormat, Compression, unpacker};
 
 let format = unpacker::detect_format_from_file(archive_path)?;
 
 match format {
-    archiveformat::tar(compression::gzip) => {
-        let decoder = flate2::read::gzdecoder::new(file);
+    ArchiveFormat::Tar(Compression::Gzip) => {
+        let decoder = flate2::read::GzDecoder::new(file);
         unpacker::extract_tar_gz(decoder, destination)?;
     }
-    _ => return err(error::unsupportedformat),
+    _ => return Err(Error::UnsupportedFormat),
 }
 ```
 
@@ -205,13 +205,13 @@ http downloading with streaming verification and atomic placement:
 example:
 
 ```rust
-use pulith_fetch::{fetcher, reqwestclient, fetchoptions};
+use pulith_fetch::{Fetcher, ReqwestClient, FetchOptions};
 
-let client = reqwestclient::new()?;
-let fetcher = fetcher::new(client, "/tmp");
+let client = ReqwestClient::new()?;
+let fetcher = Fetcher::new(client, "/tmp");
 
-let options = fetchoptions::default()
-    .checksum(some(expected_hash));
+let options = FetchOptions::default()
+    .checksum(Some(expected_hash));
 
 let path = fetcher.fetch(url, destination, options).await?;
 ```
@@ -243,5 +243,11 @@ these areas require further design when needed:
 ## References
 
 - [README.md](./README.md) - Project overview and getting started
-- [docs/AGENT.md](./AGENT.md) - Coding specifications
-- [docs/design/*.md] - Design of subcrates
+- [docs/AGENT.md](./AGENT.md) - Coding specifications and development guidelines
+- [docs/design/verify.md](./design/verify.md) - Content verification primitives design
+- [docs/design/fetch.md](./design/fetch.md) - HTTP fetching design
+- [docs/design/fs.md](./design/fs.md) - Filesystem primitives design
+- [docs/design/archive.md](./design/archive.md) - Archive handling design
+- [docs/design/version.md](./design/version.md) - Version parsing design
+- [docs/design/platform.md](./design/platform.md) - Platform utilities design
+- [docs/design/shim.md](./design/shim.md) - Shim generation design

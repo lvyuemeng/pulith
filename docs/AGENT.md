@@ -93,7 +93,7 @@ pub enum Error {
 
 ## Async and Concurrency
 
-- **Runtime**: Use shared `tokio` runtime from `pulith_core::task_pool`
+- **Runtime**: Use shared `tokio` runtime from a centralized task pool
 - **Pattern**: `POOL.block_on(async { ... })` for blocking async calls
 - **Never** spawn new runtimes in library code
 - **Thread Safety**: All public types must be `Send + Sync`
@@ -252,5 +252,13 @@ use crate::module::Item;
 
 ## References
 
-- [README.md](./README.md) - Project overview
-- [design.md](./design.md) - Design specification 
+- [README.md](./README.md) - Project overview and getting started
+- [design.md](./design.md) - Design specification and crate architecture
+- [docs/design/*.md](./design/) - Detailed design documents for each crate
+- [docs/design/verify.md](./design/verify.md) - Content verification design
+- [docs/design/fetch.md](./design/fetch.md) - HTTP fetching design
+- [docs/design/fs.md](./design/fs.md) - Filesystem primitives design
+- [docs/design/archive.md](./design/archive.md) - Archive handling design
+- [docs/design/version.md](./design/version.md) - Version parsing design
+- [docs/design/platform.md](./design/platform.md) - Platform utilities design
+- [docs/design/shim.md](./design/shim.md) - Shim generation design

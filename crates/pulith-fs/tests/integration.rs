@@ -1,7 +1,5 @@
-use pulith_fs::{
-    AtomicWriteOptions, FallbackStrategy, HardlinkOrCopyOptions, Result, atomic_read, atomic_write,
-    hardlink_or_copy,
-};
+use pulith_fs::PermissionMode;
+use pulith_fs::primitives::{hardlink, rw, symlink};
 use tempfile::tempdir;
 
 #[test]
@@ -9,10 +7,10 @@ fn test_atomic_write_basic() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test.txt");
 
-    atomic_write(&path, b"hello world", AtomicWriteOptions::new()).unwrap();
+    rw::atomic_write(&path, b"hello world", rw::Options::new()).unwrap();
 
     assert!(path.exists());
-    assert_eq!(atomic_read(&path).unwrap(), b"hello world");
+    assert_eq!(rw::atomic_read(&path).unwrap(), b"hello world");
 }
 
 #[test]
@@ -22,10 +20,10 @@ fn test_atomic_write_preserves_content_on_failure() {
 
     std::fs::write(&path, "original").unwrap();
 
-    let result = atomic_write(&path, b"new content", AtomicWriteOptions::new());
+    let result = rw::atomic_write(&path, b"new content", rw::Options::new());
 
     assert!(result.is_ok());
-    assert_eq!(atomic_read(&path).unwrap(), b"new content");
+    assert_eq!(rw::atomic_read(&path).unwrap(), b"new content");
 }
 
 #[cfg(unix)]
@@ -39,7 +37,7 @@ fn test_hardlink_or_copy_hardlink() {
 
     std::fs::write(&src, "shared content").unwrap();
 
-    hardlink_or_copy(&src, &dest, HardlinkOrCopyOptions::new()).unwrap();
+    hardlink::hardlink_or_copy(&src, &dest, hardlink::Options::new()).unwrap();
 
     assert!(dest.exists());
 
@@ -58,10 +56,10 @@ fn test_hardlink_or_copy_hardlink() {
 
     std::fs::write(&src, "shared content").unwrap();
 
-    hardlink_or_copy(&src, &dest, HardlinkOrCopyOptions::new()).unwrap();
+    hardlink::hardlink_or_copy(&src, &dest, hardlink::Options::new()).unwrap();
 
     assert!(dest.exists());
-    assert_eq!(atomic_read(&dest).unwrap(), b"shared content");
+    assert_eq!(rw::atomic_read(&dest).unwrap(), b"shared content");
 }
 
 #[test]
@@ -72,11 +70,11 @@ fn test_hardlink_or_copy_fallback_copy() {
 
     std::fs::write(&src, "content to copy").unwrap();
 
-    let options = HardlinkOrCopyOptions::new().fallback(FallbackStrategy::Copy);
-    hardlink_or_copy(&src, &dest, options).unwrap();
+    let options = hardlink::Options::new().fallback(hardlink::FallBack::Copy);
+    hardlink::hardlink_or_copy(&src, &dest, options).unwrap();
 
     assert!(dest.exists());
-    assert_eq!(atomic_read(&dest).unwrap(), b"content to copy");
+    assert_eq!(rw::atomic_read(&dest).unwrap(), b"content to copy");
 }
 
 #[cfg(unix)]
@@ -87,10 +85,10 @@ fn test_atomic_write_with_permissions() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("executable.sh");
 
-    atomic_write(
+    rw::atomic_write(
         &path,
         b"#!/bin/bash\necho hello",
-        AtomicWriteOptions::new().permissions(0o755),
+        rw::Options::new().permissions(PermissionMode::custom(0o755)),
     )
     .unwrap();
 
@@ -103,17 +101,15 @@ fn test_atomic_write_with_permissions() {
 #[cfg(unix)]
 #[test]
 fn test_symlink_functionality() {
-    use pulith_fs::atomic_symlink;
-
     let dir = tempdir().unwrap();
     let target = dir.path().join("target_file");
     let link = dir.path().join("symlink");
 
     std::fs::write(&target, "target content").unwrap();
-    atomic_symlink(&target, &link).unwrap();
+    symlink::atomic_symlink(&target, &link).unwrap();
 
     assert!(link.is_symlink());
-    assert_eq!(atomic_read(&link).unwrap(), b"target content");
+    assert_eq!(rw::atomic_read(&link).unwrap(), b"target content");
 }
 
 #[cfg(unix)]
@@ -127,8 +123,8 @@ fn test_hardlink_or_copy_directory() {
     std::fs::write(src.join("file1.txt"), "content1").unwrap();
     std::fs::write(src.join("file2.txt"), "content2").unwrap();
 
-    let options = HardlinkOrCopyOptions::new().fallback(FallbackStrategy::Copy);
-    hardlink_or_copy(&src, &dest, options).unwrap();
+    let options = hardlink::Options::new().fallback(hardlink::FallBack::Copy);
+    hardlink::hardlink_or_copy(&src, &dest, options).unwrap();
 
     assert!(dest.is_dir());
     assert!(dest.join("file1.txt").exists());
@@ -138,8 +134,6 @@ fn test_hardlink_or_copy_directory() {
 #[cfg(windows)]
 #[test]
 fn test_junction_creation() {
-    use pulith_fs::atomic_symlink;
-
     let dir = tempdir().unwrap();
     let target = dir.path().join("target_dir");
     let junction = dir.path().join("junction_link");
@@ -147,7 +141,7 @@ fn test_junction_creation() {
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("file.txt"), "test").unwrap();
 
-    if atomic_symlink(&target, &junction).is_ok() {
+    if symlink::atomic_symlink(&target, &junction).is_ok() {
         assert!(junction.exists());
         assert!(junction.is_dir());
         assert!(junction.join("file.txt").exists());
@@ -157,8 +151,6 @@ fn test_junction_creation() {
 #[cfg(windows)]
 #[test]
 fn test_replace_directory() {
-    use pulith_fs::replace_dir;
-
     let dir = tempdir().unwrap();
     let src = dir.path().join("new_version");
     let dest = dir.path().join("current");
@@ -166,7 +158,7 @@ fn test_replace_directory() {
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("bin.exe"), "binary").unwrap();
 
-    replace_dir(&src, &dest, pulith_fs::ReplaceDirOptions::new()).unwrap();
+    replace_dir::replace_dir(&src, &dest, replace_dir::Options::new()).unwrap();
 
     assert!(dest.exists());
     assert!(dest.join("bin.exe").exists());

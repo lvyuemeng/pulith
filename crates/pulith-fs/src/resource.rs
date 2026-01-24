@@ -3,11 +3,11 @@ use std::borrow::Cow;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ResourceOptions {
+pub struct Options {
     mmap_threshold: u64,
 }
 
-impl ResourceOptions {
+impl Options {
     pub fn new() -> Self {
         Self::default()
     }
@@ -24,7 +24,7 @@ impl ResourceOptions {
 
 pub struct Resource<'a> {
     path: Cow<'a, Path>,
-    options: ResourceOptions,
+    options: Options,
     initial_mtime: Option<std::time::SystemTime>,
 }
 
@@ -37,12 +37,12 @@ impl<'a> Resource<'a> {
 
         Ok(Self {
             path,
-            options: ResourceOptions::default(),
+            options: Options::default(),
             initial_mtime: metadata.modified().ok(),
         })
     }
 
-    pub fn with_options(path: impl Into<Cow<'a, Path>>, options: ResourceOptions) -> Result<Self> {
+    pub fn with_options(path: impl Into<Cow<'a, Path>>, options: Options) -> Result<Self> {
         let path = path.into();
         let metadata = path
             .metadata()

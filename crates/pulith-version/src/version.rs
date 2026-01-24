@@ -102,15 +102,23 @@ impl CalVer {
         ))
     }
 
-    pub fn year(&self) -> u64 { self.0.major }
-    pub fn month(&self) -> u64 { self.0.minor }
-    pub fn day(&self) -> u64 { self.0.patch }
+    pub fn year(&self) -> u64 {
+        self.0.major
+    }
+    pub fn month(&self) -> u64 {
+        self.0.minor
+    }
+    pub fn day(&self) -> u64 {
+        self.0.patch
+    }
 }
 
 impl std::str::FromStr for CalVer {
     type Err = CalVerError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> { CalVer::parse(s) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        CalVer::parse(s)
+    }
 }
 
 impl std::fmt::Display for CalVer {
@@ -132,7 +140,9 @@ impl std::fmt::Display for CalVer {
 impl std::ops::Deref for CalVer {
     type Target = SemVer;
 
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[derive(Debug, Error)]
@@ -141,12 +151,12 @@ pub struct PartialError(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Partial {
-    pub major:          Option<u64>,
-    pub minor:          Option<u64>,
-    pub patch:          Option<u64>,
-    pub pre_release:    Option<String>,
+    pub major: Option<u64>,
+    pub minor: Option<u64>,
+    pub patch: Option<u64>,
+    pub pre_release: Option<String>,
     pub build_metadata: Option<String>,
-    pub lts:            bool,
+    pub lts: bool,
 }
 
 impl Partial {
@@ -208,7 +218,9 @@ impl Partial {
 impl std::str::FromStr for Partial {
     type Err = PartialError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> { Partial::parse(s) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Partial::parse(s)
+    }
 }
 
 impl std::fmt::Display for Partial {
@@ -263,7 +275,9 @@ impl std::fmt::Display for VersionKind {
 }
 
 impl VersionKind {
-    pub fn parse(s: &str) -> Result<Self, VersionError> { s.parse() }
+    pub fn parse(s: &str) -> Result<Self, VersionError> {
+        s.parse()
+    }
 
     pub fn as_semver(&self) -> Option<&SemVer> {
         match self {

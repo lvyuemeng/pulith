@@ -9,18 +9,23 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn open_locked(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
-        let file = File::options()
+    fn open(path: impl AsRef<Path>) -> Result<File> {
+        File::options()
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .map_err(|e| Error::Write {
-                path: path.clone(),
+                path: path.as_ref().to_path_buf(),
                 source: e,
-            })?;
+            })
+    }
 
+    pub fn open_locked(path: impl AsRef<Path>) -> Result<Self> {
+        let file = Self::open(path.as_ref())?;
+
+        let path = path.as_ref().to_path_buf();
         file.lock_exclusive().map_err(|e| Error::Write {
             path: path.clone(),
             source: e,
@@ -30,17 +35,9 @@ impl Transaction {
     }
 
     pub fn try_open_locked(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
-        let file = File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&path)
-            .map_err(|e| Error::Write {
-                path: path.clone(),
-                source: e,
-            })?;
+        let file = Self::open(path.as_ref())?;
 
+        let path = path.as_ref().to_path_buf();
         file.try_lock_exclusive().map_err(|e| Error::Write {
             path: path.clone(),
             source: e,
@@ -61,7 +58,7 @@ impl Transaction {
     }
 
     pub fn write(&self, data: &[u8]) -> Result<()> {
-        crate::primitives::atomic_write(&self.path, data, Default::default())
+        crate::primitives::rw::atomic_write(&self.path, data, Default::default())
     }
 }
 

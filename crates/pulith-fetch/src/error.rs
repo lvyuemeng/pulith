@@ -39,19 +39,17 @@ impl From<std::io::Error> for FetchError {
     }
 }
 
-impl From<pulith_verify::VerificationError> for FetchError {
-    fn from(e: pulith_verify::VerificationError) -> Self {
+impl From<pulith_verify::VerifyError> for FetchError {
+    fn from(e: pulith_verify::VerifyError) -> Self {
         match e {
-            pulith_verify::VerificationError::Mismatch { expected, actual } => {
+            pulith_verify::VerifyError::HashMismatch { expected, actual } => {
                 FetchError::ChecksumMismatch {
                     expected: hex::encode(expected),
                     actual: hex::encode(actual),
                 }
             }
-            pulith_verify::VerificationError::Io(e) => FetchError::Network(e.to_string()),
-            pulith_verify::VerificationError::IllegalState(msg) => {
-                FetchError::Network(msg.to_string())
-            }
+            pulith_verify::VerifyError::Io(e) => FetchError::Network(e.to_string()),
+            pulith_verify::VerifyError::HexDecode(e) => FetchError::Network(e.to_string()),
         }
     }
 }

@@ -67,13 +67,13 @@ mod tests {
     #[test]
     fn test_user_home_returns_optional() {
         let home = user_home();
-        assert!(home.is_none() || home.unwrap().to_string_lossy().len() > 0);
+        assert!(home.is_none() || !home.unwrap().to_string_lossy().is_empty());
     }
 
     #[test]
     fn test_user_temp_returns_pathbuf() {
         let temp = user_temp();
-        assert!(temp.to_string_lossy().len() > 0);
+        assert!(!temp.to_string_lossy().is_empty());
     }
 
     #[test]
@@ -165,14 +165,14 @@ mod tests {
         let funcs = [user_home(), user_config(), user_data(), user_cache()];
         for dir in funcs.into_iter().flatten() {
             assert!(!dir.as_os_str().is_empty());
-            assert!(dir.to_string_lossy().len() > 0);
+            assert!(!dir.to_string_lossy().is_empty());
         }
     }
 
     #[test]
     fn test_user_temp_is_directory() {
         let temp = user_temp();
-        assert!(temp.to_string_lossy().len() > 0);
+        assert!(!temp.to_string_lossy().is_empty());
     }
 
     #[test]

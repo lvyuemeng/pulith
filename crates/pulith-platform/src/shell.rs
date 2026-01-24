@@ -252,7 +252,7 @@ mod tests {
         ];
         for shell in shells {
             let config_dir = shell.config_dir();
-            assert!(config_dir.is_none() || config_dir.unwrap().to_string_lossy().len() > 0);
+            assert!(config_dir.is_none() || !config_dir.unwrap().to_string_lossy().is_empty());
         }
     }
 

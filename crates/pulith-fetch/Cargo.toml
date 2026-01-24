@@ -12,12 +12,11 @@ reqwest = ["dep:reqwest"]
 pulith-fs = { path = "../pulith-fs" }
 pulith-verify = { path = "../pulith-verify" }
 
-thiserror = { workspace = true }
+thiserror.workspace = true
+hex.workspace = true
 tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
-bytes = "1"
 futures-util = "0.3"
-hex = "0.4"
+bytes = "1"
 
 reqwest = { version = "0.13.1", features = [
 	"stream",

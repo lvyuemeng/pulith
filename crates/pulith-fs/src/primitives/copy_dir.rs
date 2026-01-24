@@ -36,7 +36,7 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<()>
                 path: src_path,
                 source: e,
             })?;
-            crate::primitives::atomic_symlink(target, &dest_path)?;
+            crate::primitives::symlink::atomic_symlink(target, &dest_path)?;
         } else {
             fs::copy(&src_path, &dest_path).map_err(|e| Error::Write {
                 path: dest_path,
@@ -57,7 +57,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
-        std::fs::create_dir_all(&src.join("subdir")).unwrap();
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
         std::fs::write(src.join("file.txt"), "data").unwrap();
         std::fs::write(src.join("subdir/nested.txt"), "nested").unwrap();
 
