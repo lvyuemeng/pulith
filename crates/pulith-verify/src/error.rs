@@ -2,17 +2,17 @@ use std::io;
 use thiserror::Error;
 
 /// Error types for verification operations.
-/// 
+///
 /// Follows the error handling patterns specified in [AGENT.md](../../docs/AGENT.md).
 #[derive(Error, Debug)]
 pub enum VerifyError {
     /// Hash mismatch between expected and actual digest
     #[error("hash mismatch: expected {expected:?}, got {actual:?}")]
-    HashMismatch { 
+    HashMismatch {
         /// The expected hash digest
-        expected: Vec<u8>, 
+        expected: Vec<u8>,
         /// The actual computed hash digest
-        actual: Vec<u8> 
+        actual: Vec<u8>,
     },
 
     /// I/O error during verification process

@@ -56,7 +56,7 @@ impl Entry {
 
     /// Check if entry is executable (has execute bit set)
     pub fn is_executable(&self) -> bool {
-        self.mode.map_or(false, |m| m & 0o111 != 0)
+        self.mode.is_some_and(|m| m & 0o111 != 0)
     }
 }
 

@@ -122,21 +122,21 @@ impl FromStr for TargetTriple {
             }),
             [arch, vendor_os, os_env] => {
                 if let Ok(os) = vendor_os.parse::<OS>() {
-                    return Ok(Self {
+                    Ok(Self {
                         arch: arch.parse()?,
                         vendor: "unknown".to_string(),
                         os,
                         env: Some(os_env.to_string()),
-                    });
+                    })
                 } else if let Ok(os) = os_env.parse::<OS>() {
-                    return Ok(Self {
+                    Ok(Self {
                         arch: arch.parse()?,
                         vendor: vendor_os.to_string(),
                         os,
                         env: None,
-                    });
+                    })
                 } else {
-                    return Err(Error::UnknownTriple(s.to_string()));
+                    Err(Error::UnknownTriple(s.to_string()))
                 }
             }
             [arch, vendor, os, env] => Ok(Self {

@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use crate::entry::{Entry, EntryKind};
 use crate::error::{Error, Result};
-use crate::options::{self, HashStrategy, ExtractOptions};
 use crate::format;
+use crate::options::{self, ExtractOptions, HashStrategy};
 use pulith_fs::workflow::Workspace;
 
 use crate::entry::ArchiveReport;
@@ -76,10 +76,7 @@ pub fn extract<S: EntrySource>(
         );
 
         // Sanitize the path using the composable API
-        let sanitized = options.sanitize_path(
-            &entry.original_path,
-            destination.as_ref(),
-        )?;
+        let sanitized = options.sanitize_path(&entry.original_path, destination.as_ref())?;
 
         entry = entry.with_target_path(sanitized.resolved.clone());
 
@@ -87,30 +84,33 @@ pub fn extract<S: EntrySource>(
         write_entry(&mut pending, &sanitized.resolved)?;
 
         // Compute hash if requested and we have a reader
-        if let Some(mut reader) = pending.reader {
-            if options.hash_strategy != HashStrategy::None {
-                let hash = options.hash_strategy.compute(&mut *reader as &mut dyn Read)?;
-                if let Some(hash_value) = hash {
-                    entry = entry.with_hash(hash_value);
-                }
+        if let Some(mut reader) = pending.reader
+            && options.hash_strategy != HashStrategy::None
+        {
+            let hash = options
+                .hash_strategy
+                .compute(&mut *reader as &mut dyn Read)?;
+            if let Some(hash_value) = hash {
+                entry = entry.with_hash(hash_value);
             }
         }
 
         // Apply permissions to the target path
         if let Some(target_path) = &entry.target_path {
-            options.perm_strategy.apply_to_path(target_path, pending.mode)?;
+            options
+                .perm_strategy
+                .apply_to_path(target_path, pending.mode)?;
         }
 
         // Report progress if callback is provided
         if let Some(ref callback) = options.on_progress {
-            let percentage = options.expected_total_bytes
-                .and_then(|expected| {
-                    if expected > 0 {
-                        Some((bytes_processed as f32 / expected as f32) * 100.0)
-                    } else {
-                        None
-                    }
-                });
+            let percentage = options.expected_total_bytes.and_then(|expected| {
+                if expected > 0 {
+                    Some((bytes_processed as f32 / expected as f32) * 100.0)
+                } else {
+                    None
+                }
+            });
 
             callback(options::Progress {
                 bytes_processed,
@@ -138,13 +138,13 @@ fn write_entry(pending: &mut PendingEntry, target_path: &Path) -> Result<()> {
 }
 
 fn write_file(pending: &mut PendingEntry, target_path: &Path) -> Result<()> {
-    if let Some(parent) = target_path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| Error::DirectoryCreationFailed {
-                path: parent.to_path_buf(),
-                source: e,
-            })?;
-        }
+    if let Some(parent) = target_path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| Error::DirectoryCreationFailed {
+            path: parent.to_path_buf(),
+            source: e,
+        })?;
     }
 
     if let Some(ref mut reader) = pending.reader {

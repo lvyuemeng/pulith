@@ -34,11 +34,16 @@ impl<D: digest::Digest + Send> Hasher for DigestHasher<D> {
 }
 
 /// Built-in hashers as type aliases and constructors for convenience.
-
 #[cfg(feature = "sha256")]
 pub type Sha256Hasher = DigestHasher<sha2::Sha256>;
 
 #[cfg(feature = "sha256")]
+impl Default for Sha256Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha256Hasher {
     /// Create a new SHA-256 hasher instance.
     pub fn new() -> Self {

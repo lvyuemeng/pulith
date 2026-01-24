@@ -2,7 +2,6 @@ use pulith_fs::PermissionMode;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::Result;
 use crate::error::Error;
@@ -308,7 +307,9 @@ fn normalize_path(path: &Path) -> Result<PathBuf> {
 
     for component in path.components() {
         match component {
-            Component::ParentDir => { result.pop(); }
+            Component::ParentDir => {
+                result.pop();
+            }
             Component::Normal(part) => result.push(part),
             Component::RootDir => result.push("/"),
             Component::Prefix(prefix) => result.push(prefix.as_os_str()),
@@ -370,12 +371,12 @@ mod tests_strategy {
         assert_eq!(resolution.archive_mode, None);
         assert_eq!(resolution.resolved, PermissionMode::Custom(0o644));
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn test_base_path() -> &'static Path {
         if cfg!(windows) {
@@ -412,7 +413,7 @@ mod tests {
     #[test]
     fn extraction_options_on_progress_callback() {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
-        
+
         let options = ExtractOptions::default().on_progress(Arc::new(move |_| {
             COUNTER.fetch_add(1, Ordering::SeqCst);
         }));
@@ -516,7 +517,9 @@ mod tests {
     #[test]
     fn path_with_component_stripping() {
         let options = ExtractOptions::default().strip_components(1);
-        let result = options.sanitize_path("tool-1.0/bin/tool", test_base_path()).unwrap();
+        let result = options
+            .sanitize_path("tool-1.0/bin/tool", test_base_path())
+            .unwrap();
 
         // Check that the stripped path contains the expected components
         let resolved_str = result.resolved.to_string_lossy();
@@ -531,7 +534,11 @@ mod tests {
     #[test]
     fn zip_slip_protection() {
         let options = ExtractOptions::default();
-        let malicious_path = if cfg!(windows) { "C:\\etc\\passwd" } else { "/etc/passwd" };
+        let malicious_path = if cfg!(windows) {
+            "C:\\etc\\passwd"
+        } else {
+            "/etc/passwd"
+        };
         let result = options.sanitize_path(malicious_path, test_base_path());
         assert!(matches!(result, Err(Error::ZipSlip { .. })));
     }
@@ -541,20 +548,23 @@ mod tests {
         let options = ExtractOptions::default();
         let target = "../lib";
         let symlink_location = test_base_path().join("bin/mylink");
-        let result = options.sanitize_symlink_target(
-            target, symlink_location, test_base_path()
-        ).unwrap();
+        let result = options
+            .sanitize_symlink_target(target, symlink_location, test_base_path())
+            .unwrap();
         assert!(result.starts_with(test_base_path()));
     }
 
     #[test]
     fn symlink_absolute_path_rejected() {
         let options = ExtractOptions::default();
-        let absolute_target = if cfg!(windows) { "C:\\etc\\passwd" } else { "/etc/passwd" };
+        let absolute_target = if cfg!(windows) {
+            "C:\\etc\\passwd"
+        } else {
+            "/etc/passwd"
+        };
         let symlink_location = test_base_path().join("bin/mylink");
-        let result = options.sanitize_symlink_target(
-            absolute_target, symlink_location, test_base_path()
-        );
+        let result =
+            options.sanitize_symlink_target(absolute_target, symlink_location, test_base_path());
         assert!(matches!(result, Err(Error::AbsoluteSymlinkTarget { .. })));
     }
 

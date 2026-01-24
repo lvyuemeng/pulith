@@ -1,5 +1,4 @@
 use crate::{Error, Result};
-use std::fs;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

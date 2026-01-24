@@ -13,11 +13,10 @@ pulith-fs = { path = "../pulith-fs" }
 pulith-verify = { path = "../pulith-verify" }
 
 thiserror.workspace = true
+hex.workspace = true
 tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
 futures-util = "0.3"
 bytes = "1"
-hex = "0.4"
 
 reqwest = { version = "0.13.1", features = [
 	"stream",

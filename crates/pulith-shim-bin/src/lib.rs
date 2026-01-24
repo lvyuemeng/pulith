@@ -13,9 +13,7 @@ use std::process::{Command, ExitStatus};
 pub fn try_run<R: TargetResolver>(r: R) -> Result<ExitStatus, Error> {
     let (command, forwarded_args) = parse_invoke()?;
 
-    let target = r
-        .resolve(&command)
-        .ok_or(Error::CommandNotFound(command))?;
+    let target = r.resolve(&command).ok_or(Error::CommandNotFound(command))?;
 
     validate(&target)?;
     exec(&target, forwarded_args)

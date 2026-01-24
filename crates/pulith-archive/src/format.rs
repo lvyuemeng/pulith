@@ -22,16 +22,19 @@ impl TarCompress {
     pub fn decoder<R: Read>(self, reader: R) -> Result<Decoder<R>, Error> {
         match self {
             Self::None => Ok(Decoder::Passthrough(reader)),
-            Self::Gzip => Ok(Decoder::Gzip(flate2::read::GzDecoder::new(reader))),
+            Self::Gzip => Ok(Decoder::Gzip(Box::new(flate2::read::GzDecoder::new(
+                reader,
+            )))),
             #[cfg(feature = "xz")]
-            Self::Xz => Ok(Decoder::Xz(xz2::read::XzDecoder::new(reader))),
+            Self::Xz => Ok(Decoder::Xz(Box::new(xz2::read::XzDecoder::new(reader)))),
             #[cfg(not(feature = "xz"))]
             Self::Xz => Err(Error::UnsupportedFormat),
             #[cfg(feature = "zstd")]
             Self::Zstd => {
                 // zstd requires 'static for its decoder, so we require it only for zstd
                 let reader: Box<dyn Read + Send + Sync> = Box::new(reader);
-                let decoder = zstd::stream::Decoder::new(reader).map_err(|_| Error::Corrupted)?;
+                let decoder =
+                    Box::new(zstd::stream::Decoder::new(reader).map_err(|_| Error::Corrupted)?);
                 Ok(Decoder::Zstd(decoder))
             }
             #[cfg(not(feature = "zstd"))]
@@ -44,11 +47,11 @@ impl TarCompress {
 #[derive(Debug)]
 pub enum Decoder<R> {
     Passthrough(R),
-    Gzip(flate2::read::GzDecoder<R>),
+    Gzip(Box<flate2::read::GzDecoder<R>>),
     #[cfg(feature = "xz")]
-    Xz(xz2::read::XzDecoder<R>),
+    Xz(Box<xz2::read::XzDecoder<R>>),
     #[cfg(feature = "zstd")]
-    Zstd(zstd::stream::Decoder<'static, Box<dyn Read + Send + Sync>>),
+    Zstd(Box<zstd::stream::Decoder<'static, Box<dyn Read + Send + Sync>>>),
 }
 
 impl<R: Read> Read for Decoder<R> {
@@ -173,7 +176,6 @@ mod tests_detect {
         assert_eq!(format, Some(ArchiveFormat::Tar(TarCompress::Gzip)));
     }
 }
-
 
 #[cfg(test)]
 mod tests {
