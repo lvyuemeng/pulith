@@ -1,31 +1,50 @@
 //! Content verification primitives for downloaded artifacts.
 //!
-//! Provides incremental hashing and verification without enforcing specific hash
-//! algorithms or verification policies. Enables single-pass verification during
-//! data movement, minimizing CPU cache churn.
+//! Zero-copy streaming verification for downloaded artifacts, ensuring integrity
+//! without additional memory overhead.
+//!
+//! # Design Principles
+//!
+//! - **Zero-Copy Verification**: CPU cache touches bytes only once (hashing + I/O)
+//! - **Composability**: Generic over any `Hasher` trait implementation
+//! - **Extensibility**: Built on `digest::Digest` for broad algorithm support
+//! - **Error Handling**: Concrete error types using `thiserror`
 //!
 //! # Key Features
 //!
 //! - **Zero-copy verification**: CPU cache touches bytes only once (for both hashing and writing)
 //! - **Incremental**: Computes digests as data streams through
 //! - **Extensible**: Minimal `Hasher` trait allows custom implementations
+//! - **Thread-safe**: All public types implement `Send + Sync`
 //!
 //! # Example
 //!
 //! ```
-//! use pulith_verify::{VerifiedReader, Sha256Hasher};
+//! use pulith_verify::{VerifiedReader, Sha256Hasher, VerifyError};
+//! use std::fs::File;
+//! use std::io::{self, Read};
 //!
-//! let data = b"hello world";
-//! let expected = Sha256Hasher::digest(b"hello world");
+//! fn verify_artifact(path: &str, expected_hash_hex: &str) -> Result<(), VerifyError> {
+//!     let expected = hex::decode(expected_hash_hex)?;
+//!     let file = File::open(path)?;
+//!     let hasher = Sha256Hasher::new();
+//!     let mut reader = VerifiedReader::new(file, hasher);
 //!
-//! let reader = VerifiedReader::new(&data[..], Sha256Hasher::new());
-//! let mut buffer = Vec::new();
-//! std::io::copy(&mut reader.to_slice(), &mut buffer).unwrap();
+//!     let mut buffer = vec![0; 8192];
+//!     loop {
+//!         match reader.read(&mut buffer) {
+//!             Ok(0) => break,
+//!             Ok(_) => {},
+//!             Err(e) => return Err(VerifyError::Io(e)),
+//!         }
+//!     }
 //!
-//! reader.finish(&expected).unwrap();
+//!     reader.finish(&expected)?;
+//!     Ok(())
+//! }
 //! ```
 
-pub use self::error::{Result, VerificationError};
+pub use self::error::{Result, VerifyError};
 pub use self::hasher::{DigestHasher, Hasher};
 pub use self::reader::VerifiedReader;
 
@@ -34,6 +53,9 @@ pub use self::hasher::Sha256Hasher;
 
 #[cfg(feature = "blake3")]
 pub use self::hasher::Blake3Hasher;
+
+#[cfg(feature = "sha3")]
+pub use self::hasher::Sha3_256Hasher;
 
 mod error;
 mod hasher;

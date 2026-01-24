@@ -12,8 +12,7 @@
 
 pub use error::{Error, Result};
 pub use extract::extract_from_reader;
-pub use options::ExtractOptions;
-pub use sanitize::{sanitize_path_with_options, sanitize_symlink_target_with_options, SanitizedPath};
+pub use options::{ExtractOptions, SanitizedPath};
 pub use workspace::{extract_to_workspace, WorkspaceExtraction};
 
 pub mod options;
@@ -21,5 +20,4 @@ mod format;
 pub mod entry;
 pub mod extract;
 mod error;
-mod sanitize;
 mod workspace;

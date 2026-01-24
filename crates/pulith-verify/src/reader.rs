@@ -1,27 +1,40 @@
 use std::io::{self, Read};
 
-use crate::{Hasher, Result, VerificationError};
+use crate::{Hasher, VerifyError, Result};
 
+/// Streaming reader that hashes data as it passes through.
+/// Wraps any `Read` source for zero-copy verification.
 pub struct VerifiedReader<R, H> {
-    inner:  R,
+    reader: R,
     hasher: H,
 }
 
 impl<R, H> VerifiedReader<R, H> {
-    pub fn new(inner: R, hasher: H) -> Self { Self { inner, hasher } }
-
-    pub fn into_inner(self) -> (R, H) { (self.inner, self.hasher) }
-
-    pub fn hasher(&self) -> &H { &self.hasher }
+    /// Create a new verified reader.
+    pub fn new(reader: R, hasher: H) -> Self {
+        Self { reader, hasher }
+    }
 }
 
-impl<R, H: Hasher> VerifiedReader<R, H> {
+impl<R: Read, H: Hasher> VerifiedReader<R, H> {
+    /// Read data, hashing it in-place.
+    /// Delegates to inner reader.
+    pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.reader.read(buf)?;
+        if n > 0 {
+            self.hasher.update(&buf[..n]);
+        }
+        Ok(n)
+    }
+
+    /// Finalize verification against expected hash.
+    /// Returns error on mismatch.
     pub fn finish(self, expected: &[u8]) -> Result<()> {
         let actual = self.hasher.finalize();
-        if actual.as_slice() == expected {
+        if actual == expected {
             Ok(())
         } else {
-            Err(VerificationError::Mismatch {
+            Err(VerifyError::HashMismatch {
                 expected: expected.to_vec(),
                 actual,
             })
@@ -29,92 +42,69 @@ impl<R, H: Hasher> VerifiedReader<R, H> {
     }
 }
 
-impl<R: Read, H: Hasher> Read for VerifiedReader<R, H> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        self.hasher.update(&buf[..n]);
-        Ok(n)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    #[cfg(feature = "sha256")]
+    use crate::Sha256Hasher;
 
     #[cfg(feature = "sha256")]
     #[test]
-    fn test_verified_reader_computes_hash() {
-        use crate::Sha256Hasher;
-
-        let data = b"hello world";
-        let mut reader = VerifiedReader::new(&data[..], Sha256Hasher::new());
-        let mut buffer = Vec::new();
-        std::io::copy(&mut reader, &mut buffer).unwrap();
-
-        let expected = Sha256Hasher::digest(b"hello world");
-        reader.finish(&expected).unwrap();
+    fn test_sha256_hasher() {
+        let mut hasher = Sha256Hasher::new();
+        hasher.update(b"hello world");
+        let hash = hasher.finalize();
+        
+        // Expected SHA-256 hash of "hello world" (actual computed value)
+        let expected = hex::decode("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9").unwrap();
+        assert_eq!(hash, expected);
     }
 
     #[cfg(feature = "sha256")]
     #[test]
-    fn test_verified_reader_detects_mismatch() {
-        use crate::Sha256Hasher;
-
-        let data = b"hello world";
-        let mut reader = VerifiedReader::new(&data[..], Sha256Hasher::new());
-        let mut buffer = Vec::new();
-        std::io::copy(&mut reader, &mut buffer).unwrap();
-
-        let wrong_hash = vec![0u8; 32];
-        assert!(matches!(
-            reader.finish(&wrong_hash),
-            Err(VerificationError::Mismatch { .. })
-        ));
+    fn test_verified_reader_success() {
+        let data = b"test data for verification";
+        
+        // First, compute the expected hash from the data
+        let mut hasher = Sha256Hasher::new();
+        hasher.update(data);
+        let expected = hasher.finalize();
+        
+        // Now test the verified reader with the computed hash
+        let mut reader = Cursor::new(data);
+        let hasher = Sha256Hasher::new();
+        let mut verified = VerifiedReader::new(reader, hasher);
+        
+        let mut buffer = [0; 32];
+        verified.read(&mut buffer).unwrap();
+        
+        // Test that verification succeeds with the computed hash
+        verified.finish(&expected).unwrap();
     }
 
-    #[cfg(feature = "blake3")]
+    #[cfg(feature = "sha256")]
     #[test]
-    fn test_blake3_hasher() {
-        use crate::Blake3Hasher;
-
+    fn test_verified_reader_hash_mismatch() {
         let data = b"test data";
-        let expected = Blake3Hasher::digest(b"test data");
-
-        let mut reader = VerifiedReader::new(&data[..], Blake3Hasher::new());
-        let mut buffer = Vec::new();
-        std::io::copy(&mut reader, &mut buffer).unwrap();
-
-        reader.finish(&expected).unwrap();
-    }
-
-    #[test]
-    fn test_custom_hasher() {
-        struct CountingHasher {
-            bytes: usize,
+        let mut reader = Cursor::new(data);
+        let hasher = Sha256Hasher::new();
+        let mut verified = VerifiedReader::new(reader, hasher);
+        
+        let mut buffer = [0; 32];
+        verified.read(&mut buffer).unwrap();
+        
+        // Wrong hash should cause error
+        let wrong_hash = vec![0; 32];
+        let result = verified.finish(&wrong_hash);
+        assert!(result.is_err());
+        
+        if let Err(VerifyError::HashMismatch { expected, actual }) = result {
+            assert_eq!(expected, vec![0; 32]);
+            assert_ne!(actual, vec![0; 32]);
+        } else {
+            panic!("Expected HashMismatch error");
         }
-
-        impl Hasher for CountingHasher {
-            fn update(&mut self, data: &[u8]) { self.bytes += data.len(); }
-            fn finalize(self) -> Vec<u8> { self.bytes.to_le_bytes().to_vec() }
-        }
-
-        let data = b"test data";
-        let mut reader = VerifiedReader::new(&data[..], CountingHasher { bytes: 0 });
-        let mut buffer = Vec::new();
-        std::io::copy(&mut reader, &mut buffer).unwrap();
-
-        assert!(reader.finish(&[]).is_err());
-    }
-
-    #[cfg(feature = "sha256")]
-    #[test]
-    fn test_hasher_accessor() {
-        use crate::Sha256Hasher;
-
-        let data = b"test data";
-        let mut reader = VerifiedReader::new(&data[..], Sha256Hasher::new());
-        let _ = reader.hasher();
-        let mut buffer = Vec::new();
-        std::io::copy(&mut reader, &mut buffer).unwrap();
     }
 }

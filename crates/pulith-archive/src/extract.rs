@@ -76,10 +76,9 @@ pub fn extract<S: EntrySource>(
         );
 
         // Sanitize the path using the composable API
-        let sanitized = crate::sanitize::sanitize_path_with_options(
+        let sanitized = options.sanitize_path(
             &entry.original_path,
             destination.as_ref(),
-            options,
         )?;
 
         entry = entry.with_target_path(sanitized.resolved.clone());

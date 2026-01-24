@@ -1,10 +1,18 @@
 use pulith_fs::PermissionMode;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::Result;
 use crate::error::Error;
+
+/// Result of sanitizing an archive entry path.
+#[derive(Clone, Debug)]
+pub struct SanitizedPath {
+    pub original: PathBuf,
+    pub resolved: PathBuf,
+}
 
 #[derive(Clone, Default)]
 pub struct ExtractOptions {
@@ -47,6 +55,103 @@ impl ExtractOptions {
     pub fn on_progress(mut self, callback: Arc<dyn Fn(Progress) + Send + Sync>) -> Self {
         self.on_progress = Some(callback);
         self
+    }
+
+    /// Sanitize a path for extraction using the provided options.
+    ///
+    /// Combines path normalization, component stripping, and security validation.
+    pub fn sanitize_path<P: AsRef<Path>, B: AsRef<Path>>(
+        &self,
+        entry_path: P,
+        base: B,
+    ) -> Result<SanitizedPath> {
+        let entry_path = entry_path.as_ref();
+        let base = base.as_ref();
+        let normalized = normalize_path(entry_path)?;
+
+        // Reject absolute paths (zip-slip protection)
+        if normalized.is_absolute() {
+            return Err(Error::ZipSlip {
+                entry: entry_path.to_path_buf(),
+                resolved: normalized,
+            });
+        }
+
+        // Strip components if requested
+        let processed = if self.strip_components > 0 {
+            strip_components(&normalized, self.strip_components)?
+        } else {
+            normalized
+        };
+
+        // Resolve against base and normalize
+        let resolved = normalize_path(&base.join(processed))?;
+
+        // Ensure result doesn't escape base directory
+        if !resolved.starts_with(base) {
+            return Err(Error::ZipSlip {
+                entry: entry_path.to_path_buf(),
+                resolved,
+            });
+        }
+
+        Ok(SanitizedPath {
+            original: entry_path.to_path_buf(),
+            resolved,
+        })
+    }
+
+    /// Sanitize a symlink target path using the provided options.
+    pub fn sanitize_symlink_target<P: AsRef<Path>, L: AsRef<Path>, B: AsRef<Path>>(
+        &self,
+        target: P,
+        symlink_location: L,
+        base: B,
+    ) -> Result<PathBuf> {
+        let target = target.as_ref();
+        let symlink_location = symlink_location.as_ref();
+        let base = base.as_ref();
+
+        // Reject absolute symlink targets
+        if target.is_absolute() {
+            return Err(Error::AbsoluteSymlinkTarget {
+                target: target.to_path_buf(),
+                symlink: symlink_location.to_path_buf(),
+            });
+        }
+
+        let normalized = normalize_path(target)?;
+
+        // Strip components if requested
+        let processed = if self.strip_components > 0 {
+            strip_components(&normalized, self.strip_components)?
+        } else {
+            normalized
+        };
+
+        // Resolve relative to symlink location
+        let resolved = symlink_location
+            .parent()
+            .map(|p| p.join(&processed))
+            .unwrap_or(processed);
+
+        // Make absolute and normalize
+        let absolute = if resolved.is_absolute() {
+            resolved
+        } else {
+            base.join(resolved)
+        };
+        let final_path = normalize_path(&absolute)?;
+
+        // Ensure symlink doesn't escape base directory
+        if !final_path.starts_with(base) {
+            return Err(Error::SymlinkEscape {
+                target: target.to_path_buf(),
+                resolved: final_path,
+            });
+        }
+
+        Ok(final_path)
     }
 }
 
@@ -185,6 +290,35 @@ impl PermissionStrategy {
     }
 }
 
+/// Strip leading path components.
+fn strip_components(path: &Path, count: usize) -> Result<PathBuf> {
+    let components: Vec<_> = path.components().collect();
+    if components.len() <= count {
+        return Err(Error::NoComponentsRemaining {
+            original: path.to_path_buf(),
+            count,
+        });
+    }
+    Ok(components[count..].iter().collect())
+}
+
+/// Normalize path separators and resolve relative components.
+fn normalize_path(path: &Path) -> Result<PathBuf> {
+    let mut result = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::ParentDir => { result.pop(); }
+            Component::Normal(part) => result.push(part),
+            Component::RootDir => result.push("/"),
+            Component::Prefix(prefix) => result.push(prefix.as_os_str()),
+            Component::CurDir => {} // ignore current dir
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests_strategy {
     use super::*;
@@ -242,7 +376,14 @@ mod tests_strategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn test_base_path() -> &'static Path {
+        if cfg!(windows) {
+            Path::new("C:/opt/myapp")
+        } else {
+            Path::new("/opt/myapp")
+        }
+    }
 
     #[test]
     fn extraction_options_default() {
@@ -270,11 +411,10 @@ mod tests {
 
     #[test]
     fn extraction_options_on_progress_callback() {
-        let counter = Arc::new(AtomicU64::new(0));
-        let counter_clone = counter.clone();
-
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        
         let options = ExtractOptions::default().on_progress(Arc::new(move |_| {
-            counter_clone.fetch_add(1, Ordering::SeqCst);
+            COUNTER.fetch_add(1, Ordering::SeqCst);
         }));
 
         let progress = Progress {
@@ -285,7 +425,7 @@ mod tests {
         };
 
         (options.on_progress.as_ref().unwrap())(progress);
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert_eq!(COUNTER.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -363,5 +503,70 @@ mod tests {
             }
             assert_eq!(options.hash_strategy, *variant);
         }
+    }
+
+    #[test]
+    fn basic_path_sanitization() {
+        let options = ExtractOptions::default();
+        let result = options.sanitize_path("bin/tool", test_base_path()).unwrap();
+        assert_eq!(result.original, Path::new("bin/tool"));
+        assert!(result.resolved.starts_with(test_base_path()));
+    }
+
+    #[test]
+    fn path_with_component_stripping() {
+        let options = ExtractOptions::default().strip_components(1);
+        let result = options.sanitize_path("tool-1.0/bin/tool", test_base_path()).unwrap();
+
+        // Check that the stripped path contains the expected components
+        let resolved_str = result.resolved.to_string_lossy();
+        assert!(resolved_str.contains("bin") && resolved_str.contains("tool"));
+        assert!(!resolved_str.contains("tool-1.0"));
+
+        // Verify the relative part after base path
+        let relative_part = result.resolved.strip_prefix(test_base_path()).unwrap();
+        assert_eq!(relative_part, Path::new("bin/tool"));
+    }
+
+    #[test]
+    fn zip_slip_protection() {
+        let options = ExtractOptions::default();
+        let malicious_path = if cfg!(windows) { "C:\\etc\\passwd" } else { "/etc/passwd" };
+        let result = options.sanitize_path(malicious_path, test_base_path());
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[test]
+    fn symlink_target_sanitization() {
+        let options = ExtractOptions::default();
+        let target = "../lib";
+        let symlink_location = test_base_path().join("bin/mylink");
+        let result = options.sanitize_symlink_target(
+            target, symlink_location, test_base_path()
+        ).unwrap();
+        assert!(result.starts_with(test_base_path()));
+    }
+
+    #[test]
+    fn symlink_absolute_path_rejected() {
+        let options = ExtractOptions::default();
+        let absolute_target = if cfg!(windows) { "C:\\etc\\passwd" } else { "/etc/passwd" };
+        let symlink_location = test_base_path().join("bin/mylink");
+        let result = options.sanitize_symlink_target(
+            absolute_target, symlink_location, test_base_path()
+        );
+        assert!(matches!(result, Err(Error::AbsoluteSymlinkTarget { .. })));
+    }
+
+    #[test]
+    fn path_normalization() {
+        let result = normalize_path(Path::new("foo//bar\\baz/../qux")).unwrap();
+        assert_eq!(result, Path::new("foo/bar/qux"));
+    }
+
+    #[test]
+    fn component_stripping() {
+        let result = strip_components(Path::new("a/b/c/d"), 2).unwrap();
+        assert_eq!(result, Path::new("c/d"));
     }
 }
