@@ -17,9 +17,16 @@ fn extract_tar_gz() {
     let options = ExtractOptions::default();
     let result = extract_from_reader(&mut file, temp_dir.path(), &options);
 
-    assert!(result.is_ok(), "Extraction of test.tar.gz failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Extraction of test.tar.gz failed: {:?}",
+        result.err()
+    );
     let report = result.unwrap();
-    assert!(report.entry_count > 0, "No entries extracted from test.tar.gz");
+    assert!(
+        report.entry_count > 0,
+        "No entries extracted from test.tar.gz"
+    );
 
     println!("TAR.GZ extraction results:");
     println!("  Total entries: {}", report.entry_count);
@@ -42,7 +49,11 @@ fn extract_zip() {
     let options = ExtractOptions::default();
     let result = extract_from_reader(&mut file, temp_dir.path(), &options);
 
-    assert!(result.is_ok(), "Extraction of test.zip failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Extraction of test.zip failed: {:?}",
+        result.err()
+    );
     let report = result.unwrap();
     assert!(report.entry_count > 0, "No entries extracted from test.zip");
 

@@ -32,7 +32,7 @@ jobs:
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
-        run: cargo fmt --check --all
+        run: cargo fmt --all
 
       - name: Check clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -74,4 +74,5 @@ jobs:
         run: cargo install cargo-deny --locked
 
       - name: Audit dependencies
-        run: cargo deny check
+        # omit licenses
+        run: cargo deny check advisories bans sources

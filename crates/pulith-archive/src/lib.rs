@@ -12,12 +12,11 @@
 
 pub use error::{Error, Result};
 pub use extract::extract_from_reader;
-pub use options::{ExtractOptions, SanitizedPath};
-pub use workspace::{extract_to_workspace, WorkspaceExtraction};
+pub use options::ExtractOptions;
+pub use workspace::{WorkspaceExtraction, extract_to_workspace};
 
-pub mod options;
-mod format;
-pub mod entry;
-pub mod extract;
 mod error;
+pub mod extract;
+mod format;
+pub mod options;
 mod workspace;

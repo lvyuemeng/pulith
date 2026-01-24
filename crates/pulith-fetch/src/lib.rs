@@ -14,14 +14,14 @@
 //! - **Streaming Verification**: Uses `pulith-verify::Hasher` for incremental hashing
 //! - **Mechanism-Only**: No policy; caller handles progress UI and retry orchestration
 
-mod data;
 mod core;
+mod data;
 mod effects;
 mod error;
 
+pub use core::{is_redirect, retry_delay};
 pub use data::{FetchOptions, FetchPhase, Progress, Timeouts};
-pub use core::{retry_delay, is_redirect};
-pub use effects::{Fetcher, HttpClient, BoxStream};
+pub use effects::{BoxStream, Fetcher, HttpClient};
 
 #[cfg(feature = "reqwest")]
 pub use effects::ReqwestClient;

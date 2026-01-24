@@ -15,7 +15,7 @@ pub trait TargetResolver {
 
 #[derive(Clone)]
 pub struct PairResolver<R1, R2> {
-    primary:  R1,
+    primary: R1,
     fallback: R2,
 }
 
@@ -24,7 +24,9 @@ where
     R1: TargetResolver,
     R2: TargetResolver,
 {
-    pub fn new(primary: R1, fallback: R2) -> Self { Self { primary, fallback } }
+    pub fn new(primary: R1, fallback: R2) -> Self {
+        Self { primary, fallback }
+    }
 }
 
 impl<R1, R2> TargetResolver for PairResolver<R1, R2>
@@ -41,9 +43,9 @@ where
 
 #[derive(Clone)]
 pub struct TripleResolver<R1, R2, R3> {
-    first:  R1,
+    first: R1,
     second: R2,
-    third:  R3,
+    third: R3,
 }
 
 impl<R1, R2, R3> TripleResolver<R1, R2, R3>

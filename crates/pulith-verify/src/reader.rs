@@ -1,6 +1,6 @@
 use std::io::{self, Read};
 
-use crate::{Hasher, VerifyError, Result};
+use crate::{Hasher, Result, VerifyError};
 
 /// Streaming reader that hashes data as it passes through.
 /// Wraps any `Read` source for zero-copy verification.
@@ -56,9 +56,11 @@ mod tests {
         let mut hasher = Sha256Hasher::new();
         hasher.update(b"hello world");
         let hash = hasher.finalize();
-        
+
         // Expected SHA-256 hash of "hello world" (actual computed value)
-        let expected = hex::decode("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9").unwrap();
+        let expected =
+            hex::decode("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9")
+                .unwrap();
         assert_eq!(hash, expected);
     }
 
@@ -66,20 +68,20 @@ mod tests {
     #[test]
     fn test_verified_reader_success() {
         let data = b"test data for verification";
-        
+
         // First, compute the expected hash from the data
         let mut hasher = Sha256Hasher::new();
         hasher.update(data);
         let expected = hasher.finalize();
-        
+
         // Now test the verified reader with the computed hash
-        let mut reader = Cursor::new(data);
+        let reader = Cursor::new(data);
         let hasher = Sha256Hasher::new();
         let mut verified = VerifiedReader::new(reader, hasher);
-        
+
         let mut buffer = [0; 32];
         verified.read(&mut buffer).unwrap();
-        
+
         // Test that verification succeeds with the computed hash
         verified.finish(&expected).unwrap();
     }
@@ -88,18 +90,18 @@ mod tests {
     #[test]
     fn test_verified_reader_hash_mismatch() {
         let data = b"test data";
-        let mut reader = Cursor::new(data);
+        let reader = Cursor::new(data);
         let hasher = Sha256Hasher::new();
         let mut verified = VerifiedReader::new(reader, hasher);
-        
+
         let mut buffer = [0; 32];
         verified.read(&mut buffer).unwrap();
-        
+
         // Wrong hash should cause error
         let wrong_hash = vec![0; 32];
         let result = verified.finish(&wrong_hash);
         assert!(result.is_err());
-        
+
         if let Err(VerifyError::HashMismatch { expected, actual }) = result {
             assert_eq!(expected, vec![0; 32]);
             assert_ne!(actual, vec![0; 32]);

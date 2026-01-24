@@ -1,4 +1,4 @@
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::marker::PhantomData;
 
 pub const PAGE_SIZE: usize = 4096;

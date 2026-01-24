@@ -1,21 +1,22 @@
-use async_trait::async_trait;
 use bytes::Bytes;
-use futures_util::TryStreamExt;
 use futures_util::Stream;
+use futures_util::TryStreamExt;
+use pulith_fs::workflow;
+use pulith_verify::Hasher;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use tokio::io::{AsyncWriteExt};
-use pulith_verify::Hasher;
-use pulith_fs::workflow;
+use tokio::io::AsyncWriteExt;
 
 pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + Sync + 'a>>;
 
-#[async_trait]
 pub trait HttpClient: Send + Sync {
     type Error: std::error::Error + Send + 'static;
 
-    async fn stream(&self, url: &str) -> Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error>;
-    async fn head(&self, url: &str) -> Result<Option<u64>, Self::Error>;
+    fn stream(
+        &self,
+        url: &str,
+    ) -> impl Future<Output = Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error>> + Send;
+    fn head(&self, url: &str) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
 }
 
 pub struct Fetcher<C: HttpClient> {
@@ -38,7 +39,11 @@ impl<C: HttpClient> Fetcher<C> {
         self
     }
 
-    pub async fn fetch(&self, url: &str, destination: &Path) -> Result<PathBuf, crate::error::FetchError> {
+    pub async fn fetch(
+        &self,
+        url: &str,
+        destination: &Path,
+    ) -> Result<PathBuf, crate::error::FetchError> {
         self.notify_progress(crate::data::Progress {
             phase: crate::data::FetchPhase::Connecting,
             bytes_downloaded: 0,
@@ -81,8 +86,14 @@ impl<C: HttpClient> Fetcher<C> {
         staging_path: &Path,
     ) -> Result<u64, crate::error::FetchError> {
         let mut stream = self.client.stream(url).await.map_err(Self::map_error)?;
-        let mut file = tokio::fs::File::create(staging_path).await.map_err(Self::map_error)?;
-        let mut hasher: Option<pulith_verify::Sha256Hasher> = self.options.checksum.as_ref().map(|_| pulith_verify::Sha256Hasher::new());
+        let mut file = tokio::fs::File::create(staging_path)
+            .await
+            .map_err(Self::map_error)?;
+        let mut hasher: Option<pulith_verify::Sha256Hasher> = self
+            .options
+            .checksum
+            .as_ref()
+            .map(|_| pulith_verify::Sha256Hasher::new());
 
         let mut bytes_downloaded = 0u64;
 
@@ -141,24 +152,28 @@ mod reqwest_client {
 
     impl ReqwestClient {
         pub fn new() -> Result<Self, reqwest::Error> {
-            let client = Client::builder()
-                .build()?;
+            let client = Client::builder().build()?;
             Ok(Self { client })
         }
     }
 
-    #[async_trait]
     impl HttpClient for ReqwestClient {
         type Error = reqwest::Error;
 
-        async fn stream(&self, url: &str) -> Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error> {
+        async fn stream(
+            &self,
+            url: &str,
+        ) -> Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error> {
             let response = self.client.get(url).send().await?;
             let stream = response.bytes_stream().map_ok(Bytes::from);
             Ok(Box::pin(stream))
         }
 
         async fn head(&self, url: &str) -> Result<Option<u64>, Self::Error> {
-            self.client.head(url).send().await?
+            self.client
+                .head(url)
+                .send()
+                .await?
                 .content_length()
                 .map(Ok)
                 .transpose()

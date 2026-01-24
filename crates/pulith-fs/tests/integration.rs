@@ -1,4 +1,5 @@
-use pulith_fs::primitives::{hardlink, replace_dir, rw, symlink};
+use pulith_fs::PermissionMode;
+use pulith_fs::primitives::{hardlink, rw, symlink};
 use tempfile::tempdir;
 
 #[test]
@@ -36,7 +37,7 @@ fn test_hardlink_or_copy_hardlink() {
 
     std::fs::write(&src, "shared content").unwrap();
 
-    hardlink_or_copy(&src, &dest, Options::new()).unwrap();
+    hardlink::hardlink_or_copy(&src, &dest, hardlink::Options::new()).unwrap();
 
     assert!(dest.exists());
 
@@ -84,10 +85,10 @@ fn test_atomic_write_with_permissions() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("executable.sh");
 
-    atomic_write(
+    rw::atomic_write(
         &path,
         b"#!/bin/bash\necho hello",
-        AtomicWriteOptions::new().permissions(0o755),
+        rw::Options::new().permissions(PermissionMode::custom(0o755)),
     )
     .unwrap();
 
@@ -100,17 +101,15 @@ fn test_atomic_write_with_permissions() {
 #[cfg(unix)]
 #[test]
 fn test_symlink_functionality() {
-    use pulith_fs::atomic_symlink;
-
     let dir = tempdir().unwrap();
     let target = dir.path().join("target_file");
     let link = dir.path().join("symlink");
 
     std::fs::write(&target, "target content").unwrap();
-    atomic_symlink(&target, &link).unwrap();
+    symlink::atomic_symlink(&target, &link).unwrap();
 
     assert!(link.is_symlink());
-    assert_eq!(atomic_read(&link).unwrap(), b"target content");
+    assert_eq!(rw::atomic_read(&link).unwrap(), b"target content");
 }
 
 #[cfg(unix)]
@@ -124,8 +123,8 @@ fn test_hardlink_or_copy_directory() {
     std::fs::write(src.join("file1.txt"), "content1").unwrap();
     std::fs::write(src.join("file2.txt"), "content2").unwrap();
 
-    let options = Options::new().fallback(FallBack::Copy);
-    hardlink_or_copy(&src, &dest, options).unwrap();
+    let options = hardlink::Options::new().fallback(hardlink::FallBack::Copy);
+    hardlink::hardlink_or_copy(&src, &dest, options).unwrap();
 
     assert!(dest.is_dir());
     assert!(dest.join("file1.txt").exists());

@@ -34,26 +34,20 @@ impl<D: digest::Digest + Send> Hasher for DigestHasher<D> {
 }
 
 /// Built-in hashers as type aliases and constructors for convenience.
-
 #[cfg(feature = "sha256")]
 pub type Sha256Hasher = DigestHasher<sha2::Sha256>;
 
 #[cfg(feature = "sha256")]
+impl Default for Sha256Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha256Hasher {
     /// Create a new SHA-256 hasher instance.
     pub fn new() -> Self {
         DigestHasher::from_digest(sha2::Sha256::new())
-    }
-}
-
-#[cfg(feature = "blake3")]
-pub type Blake3Hasher = DigestHasher<blake3::Hasher>;
-
-#[cfg(feature = "blake3")]
-impl Blake3Hasher {
-    /// Create a new Blake3 hasher instance.
-    pub fn new() -> Self {
-        DigestHasher::from_digest(blake3::Hasher::new())
     }
 }
 
@@ -65,5 +59,33 @@ impl Sha3_256Hasher {
     /// Create a new SHA3-256 hasher instance.
     pub fn new() -> Self {
         DigestHasher::from_digest(sha3::Sha3_256::new())
+    }
+}
+
+#[cfg(feature = "blake3")]
+pub struct Blake3Hasher(blake3::Hasher);
+
+#[cfg(feature = "blake3")]
+impl Blake3Hasher {
+    pub fn new() -> Self {
+        Self(blake3::Hasher::new())
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl Default for Blake3Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl Hasher for Blake3Hasher {
+    fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    fn finalize(self) -> Vec<u8> {
+        self.0.finalize().as_bytes().to_vec()
     }
 }

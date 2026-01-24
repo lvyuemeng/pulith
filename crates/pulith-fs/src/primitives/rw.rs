@@ -92,12 +92,15 @@ mod tests {
         atomic_write(
             &path,
             b"data",
-            Options::new().permissions(PermissionMode::Custom(0o755)),
+            Options::new().permissions(PermissionMode::custom(0o755)),
         )
         .unwrap();
-        let metadata = fs::metadata(&path).unwrap();
         #[cfg(unix)]
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o755);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = fs::metadata(&path).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o755);
+        }
     }
 
     #[test]
@@ -112,7 +115,10 @@ mod tests {
         .unwrap();
         let metadata = fs::metadata(&path).unwrap();
         #[cfg(unix)]
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o444);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o444);
+        }
         #[cfg(windows)]
         assert!(metadata.permissions().readonly());
     }

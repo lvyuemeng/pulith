@@ -122,21 +122,21 @@ impl FromStr for TargetTriple {
             }),
             [arch, vendor_os, os_env] => {
                 if let Ok(os) = vendor_os.parse::<OS>() {
-                    return Ok(Self {
+                    Ok(Self {
                         arch: arch.parse()?,
                         vendor: "unknown".to_string(),
                         os,
                         env: Some(os_env.to_string()),
-                    });
+                    })
                 } else if let Ok(os) = os_env.parse::<OS>() {
-                    return Ok(Self {
+                    Ok(Self {
                         arch: arch.parse()?,
                         vendor: vendor_os.to_string(),
                         os,
                         env: None,
-                    });
+                    })
                 } else {
-                    return Err(Error::UnknownTriple(s.to_string()));
+                    Err(Error::UnknownTriple(s.to_string()))
                 }
             }
             [arch, vendor, os, env] => Ok(Self {
@@ -152,13 +152,14 @@ impl FromStr for TargetTriple {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::assertions_on_constants)]
     use super::*;
 
     #[test]
     fn test_arch_current_matches_cfg() {
         let arch = Arch::current();
         match arch {
-            Arch::X86 => assert!(cfg!(any(target_arch = "x86",))),
+            Arch::X86 => assert!(cfg!(any(target_arch = "x86"))),
             Arch::X86_64 => assert!(cfg!(target_arch = "x86_64")),
             Arch::ARM => assert!(cfg!(target_arch = "arm")),
             Arch::ARM64 => assert!(cfg!(any(target_arch = "aarch64", target_arch = "arm64ec"))),

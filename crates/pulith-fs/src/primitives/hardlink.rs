@@ -31,26 +31,43 @@ pub fn hardlink_or_copy(
     let src = src.as_ref();
     let dest = dest.as_ref();
 
-    match std::fs::hard_link(src, dest) {
-        Ok(_) => Ok(()),
-        Err(e)
-            if e.raw_os_error() == Some(18) || e.kind() == std::io::ErrorKind::CrossesDevices =>
-        {
-            if matches!(options.fallback, FallBack::Copy) {
-                std::fs::copy(src, dest)
-                    .map(drop)
-                    .map_err(|e| Error::Write {
-                        path: dest.to_path_buf(),
-                        source: e,
-                    })
-            } else {
-                Err(Error::CrossDeviceHardlink)
-            }
+    // Check if source is a directory
+    let src_metadata = std::fs::metadata(src).map_err(|e| Error::Read {
+        path: src.to_path_buf(),
+        source: e,
+    })?;
+
+    if src_metadata.is_dir() {
+        // For directories, use copy_dir_all instead of hard_link
+        if matches!(options.fallback, FallBack::Copy) {
+            crate::primitives::copy_dir::copy_dir_all(src, dest)
+        } else {
+            Err(Error::CrossDeviceHardlink)
         }
-        Err(e) => Err(Error::Write {
-            path: dest.to_path_buf(),
-            source: e,
-        }),
+    } else {
+        // For files, try hard link first
+        match std::fs::hard_link(src, dest) {
+            Ok(_) => Ok(()),
+            Err(e)
+                if e.raw_os_error() == Some(18)
+                    || e.kind() == std::io::ErrorKind::CrossesDevices =>
+            {
+                if matches!(options.fallback, FallBack::Copy) {
+                    std::fs::copy(src, dest)
+                        .map(drop)
+                        .map_err(|e| Error::Write {
+                            path: dest.to_path_buf(),
+                            source: e,
+                        })
+                } else {
+                    Err(Error::CrossDeviceHardlink)
+                }
+            }
+            Err(e) => Err(Error::Write {
+                path: dest.to_path_buf(),
+                source: e,
+            }),
+        }
     }
 }
 

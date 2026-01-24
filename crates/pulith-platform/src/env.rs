@@ -150,18 +150,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_in_path_with_existing_path() {
-        let result = is_in_path("/usr/bin");
-        assert!(result || !result);
-    }
-
-    #[test]
-    fn test_is_in_path_with_fake_path() {
-        let result = is_in_path("/fake/nonexistent/path/12345");
-        assert!(!result || result);
-    }
-
-    #[test]
     fn test_is_in_path_empty() {
         let result = is_in_path("");
         assert!(!result);

@@ -3,9 +3,8 @@ use std::path::Path;
 
 use pulith_fs::workflow::Workspace;
 
-use crate::entry::ArchiveReport;
 use crate::error::Result;
-use crate::extract::extract_from_reader;
+use crate::extract::{ArchiveReport, extract_from_reader};
 use crate::options::ExtractOptions;
 
 pub struct WorkspaceExtraction {
@@ -28,7 +27,7 @@ impl WorkspaceExtraction {
     }
 }
 
-pub fn extract_to_workspace<R: Read + Seek + 'static>(
+pub fn extract_to_workspace<R: Read + Seek + Send + Sync>(
     reader: R,
     destination: &Path,
     options: ExtractOptions,

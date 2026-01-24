@@ -13,12 +13,13 @@ A crate ecosystem providing everything a rust tool needs to fetch, verify, store
 - state tracking with rollback
 - cross-platform correctness
 
-this ecosystem provides battle-tested building blocks so developers can focus on their unique value proposition.
+This ecosystem provides battle-tested building blocks so developers can focus on their unique value proposition.
 
 ## Layout
 
 - [docs/](./docs/) - documents
 - [crates/](./crates/) — workspace
+- [archive/](./archive/) - Archived/Outdated crate
 
 ## Contribution 
 

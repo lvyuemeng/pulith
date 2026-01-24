@@ -1,25 +1,20 @@
 ---
-name: Bug Report
+name: 🐛Bug Report
 about: Report a bug or unexpected behavior
-title: "[BUG] "
-labels: bug
+title: "[Bug]: Problem... "
+labels: ["bug"] 
 assignees: ''
 ---
 
+### Environment
+- OS: [e.g., Windows, macOS, Linux]
+
 ### Description
-A clear and concise description of the bug.
+A clear and concise description of the bug(What's the actual behavior and expected behavior?).
 
 ### Steps to Reproduce
 A series of operations cause the problem.
 
-### Expected Behavior
-A clear and concise description of what you expected to happen.
-
-### Actual Behavior
-A clear and concise description of what actually happened.
-
 ### Screenshots
 If applicable, add screenshots to help explain the problem.
 
-### Environment
-- OS: [e.g., Windows, macOS, Linux]
