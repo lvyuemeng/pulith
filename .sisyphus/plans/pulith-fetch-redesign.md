@@ -290,7 +290,7 @@ Parallel Speedup: ~60% faster than sequential
   - Files: src/data/options.rs, src/effects/http.rs, src/core/segment.rs
   - Pre-commit: cargo check
 
-- [ ] 2. Create missing basic modules
+- [x] 2. Create missing basic modules
 
   **What to do**:
   - Create missing modules: multi_source.rs, resumable.rs, segmented.rs, batch.rs, cache.rs in effects/
@@ -371,7 +371,7 @@ Parallel Speedup: ~60% faster than sequential
   - Files: src/effects/multi_source.rs, src/effects/resumable.rs, src/effects/segmented.rs, src/effects/batch.rs, src/effects/cache.rs, src/transform/decompress.rs, src/transform/verify.rs
   - Pre-commit: cargo check
 
-- [ ] 3. Implement basic fetch functionality
+- [x] 3. Implement basic fetch functionality
 
   **What to do**:
   - Complete the implementation of the main fetch function in fetcher.rs
