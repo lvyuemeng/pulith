@@ -28,7 +28,7 @@ If a function has effects or uses randomness, this must be explicit in its inter
 - F5 — Composition Over Orchestration.
 Prefer composable pipelines over ad-hoc control flow or global state.
 
-### 2. Structure
+### 2. Structure Philosophy
 
 - Data Layer (Pure): Explicit, immutable types (Query, State, Plan, Action, Event).
 
@@ -38,7 +38,9 @@ Prefer composable pipelines over ad-hoc control flow or global state.
 
 - Orchestrator: Thin loop wiring pure logic to effects; holds no intelligence.
 
-### 3. Efficiency (Pragmatic FP)
+- You should name data structure by **functionality**.
+
+### 3. Efficiency (Pragmatic FP) Philosophy
 
 - E1 — Structural Sharing: Use persistent data to avoid deep copies.
 
@@ -60,6 +62,10 @@ pulith/
 │   └── ...
 └── Cargo.lock          # Lock file (committed)
 ```
+
+- modules structure should be named based on functionality.
+- modules counts should be small as much as possible rather diversified.
+- use `name.rs + name/*` module layout.
 
 ## Dependencies
 

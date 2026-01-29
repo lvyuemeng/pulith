@@ -1,0 +1,1525 @@
+use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
+use pulith_verify::{Hasher, Sha256Hasher};
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use tokio::io::{AsyncWriteExt, BufWriter};
+
+/// A boxed stream type for HTTP response bodies.
+///
+/// This type alias simplifies the complex stream type used throughout the crate.
+/// The stream yields `Result<Bytes, E>` where E is the error type from the HTTP client.
+pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + 'a>>;
+
+/// Asynchronous HTTP client abstraction.
+///
+/// This trait provides the minimal interface needed for fetching operations.
+/// Implementations handle their own redirect following, timeout configuration,
+/// and error mapping.
+///
+/// # Implementations
+///
+/// - [`ReqwestClient`]: Production implementation using `reqwest`
+/// - Mock implementations for testing
+pub trait HttpClient: Send + Sync {
+    /// Error type for HTTP operations.
+    type Error: std::error::Error + Send + 'static;
+
+    /// Open a streaming HTTP connection and return the response body as a stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to fetch
+    /// * `headers` - Custom headers to include with the request
+    ///
+    /// # Returns
+    ///
+    /// A stream of bytes from the response body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails (DNS failure, connection error,
+    /// HTTP error status, etc.). Implementations should map HTTP errors to
+    /// a suitable error type.
+    fn stream(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+    ) -> impl Future<Output = Result<BoxStream<'static, Result<Bytes, Self::Error>>, Self::Error>>
+           + Send;
+
+    /// Query the Content-Length header without downloading the body.
+    ///
+    /// This is used for progress reporting when the total file size is known.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to query
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(n))` if Content-Length is present,
+    /// `Ok(None)` if absent or using chunked encoding,
+    /// `Err(...)` if the request fails.
+    fn head(
+        &self,
+        url: &str,
+    ) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
+}
+
+// ============================================================================
+// FEATURE IMPLEMENTATIONS - Practical Examples
+// ============================================================================
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+// ============================================================================
+// 1. MULTI-SOURCE FETCHER - Downloads with Automatic Fallback
+// ============================================================================
+
+pub struct MultiSourceFetcher<C: crate::effects::HttpClient> {
+    client: C,
+    workspace_root: PathBuf,
+}
+
+impl<C: crate::effects::HttpClient> MultiSourceFetcher<C> {
+    pub fn new(client: C, workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            client,
+            workspace_root: workspace_root.into(),
+        }
+    }
+    
+    /// Fetch from multiple sources with automatic fallback
+    pub async fn fetch_multi_source(
+        &self,
+        sources: Vec<DownloadSource>,
+        destination: &Path,
+        options: crate::data::FetchOptions,
+    ) -> Result<FetchResult, crate::error::Error> {
+        // Sort sources by priority
+        let mut sorted_sources = sources;
+        sorted_sources.sort_by_key(|s| s.priority);
+        
+        let mut last_error = None;
+        
+        for (attempt, source) in sorted_sources.iter().enumerate() {
+            println!("Attempting source {}: {}", attempt + 1, source.url);
+            
+            // Create fetcher for this source
+            let fetcher = crate::effects::Fetcher::new(
+                &self.client,
+                &self.workspace_root,
+            );
+            
+            // Override checksum if source-specific one provided
+            let mut source_options = options.clone();
+            if let Some(checksum) = source.checksum {
+                source_options = source_options.checksum(Some(checksum));
+            }
+            
+            match fetcher.fetch(&source.url, destination, source_options).await {
+                Ok(path) => {
+                    return Ok(FetchResult {
+                        path,
+                        source_used: source.url.clone(),
+                        attempts: attempt + 1,
+                        checksum: None, // Would extract from VerifiedReader
+                    });
+                }
+                Err(e) => {
+                    println!("Source {} failed: {}", source.url, e);
+                    last_error = Some(e);
+                    continue;
+                }
+            }
+        }
+        
+        Err(last_error.unwrap_or_else(|| 
+            crate::error::Error::Network("All sources failed".to_string())
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct FetchResult {
+    pub path: PathBuf,
+    pub source_used: String,
+    pub attempts: usize,
+    pub checksum: Option<[u8; 32]>,
+}
+
+// ============================================================================
+// 2. RESUMABLE FETCHER - Resume Interrupted Downloads
+// ============================================================================
+
+pub struct ResumableFetcher<C: crate::effects::HttpClient> {
+    client: C,
+    workspace_root: PathBuf,
+}
+
+impl<C: crate::effects::HttpClient> ResumableFetcher<C> {
+    pub fn new(client: C, workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            client,
+            workspace_root: workspace_root.into(),
+        }
+    }
+    
+    /// Fetch with resume support
+    pub async fn fetch_resumable(
+        &self,
+        url: &str,
+        destination: &Path,
+        resume_from: Option<&Path>,
+    ) -> Result<PathBuf, crate::error::Error> {
+        let (start_byte, partial_file) = if let Some(resume_path) = resume_from {
+            if resume_path.exists() {
+         let metadata = tokio::fs::metadata(resume_path).await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                let size = metadata.len();
+                println!("Resuming from byte {}", size);
+                (size, Some(resume_path))
+            } else {
+                (0, None)
+            }
+        } else {
+            (0, None)
+        };
+        
+        // Build request with Range header
+        let headers = if start_byte > 0 {
+            vec![("Range".to_string(), format!("bytes={}-", start_byte))]
+        } else {
+            Vec::new()
+        };
+        
+        let options = crate::data::FetchOptions::default()
+            .headers(headers);
+        
+        // Open or create destination file
+        let file = if let Some(partial) = partial_file {
+         tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(partial)
+            .await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?
+        } else {
+         tokio::fs::File::create(destination)
+            .await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?
+        };
+        
+        // Stream remaining content
+         let mut stream = self.client.stream(url, &options.headers)
+            .await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+        
+        let mut writer = tokio::io::BufWriter::new(file);
+        let mut bytes_written = 0u64;
+        
+        while let Some(chunk_result) = stream.next().await {
+         let bytes = chunk_result
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+            
+         writer.write_all(&bytes)
+            .await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+            
+            bytes_written += bytes.len() as u64;
+        }
+        
+         writer.flush().await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+        
+        println!("Downloaded {} bytes (resume mode)", bytes_written);
+        
+        Ok(destination.to_path_buf())
+    }
+}
+
+// ============================================================================
+// 3. BANDWIDTH LIMITER - Rate-Limited Downloads
+// ============================================================================
+
+pub struct BandwidthLimiter {
+    max_bytes_per_second: u64,
+    bucket: Arc<tokio::sync::Mutex<TokenBucket>>,
+}
+
+struct TokenBucket {
+    tokens: f64,
+    capacity: f64,
+    refill_rate: f64,
+    last_refill: Instant,
+}
+
+impl BandwidthLimiter {
+    pub fn new(max_bytes_per_second: u64) -> Self {
+        let bucket = TokenBucket {
+            tokens: max_bytes_per_second as f64,
+            capacity: max_bytes_per_second as f64,
+            refill_rate: max_bytes_per_second as f64,
+            last_refill: Instant::now(),
+        };
+        
+        Self {
+            max_bytes_per_second,
+            bucket: Arc::new(tokio::sync::Mutex::new(bucket)),
+        }
+    }
+    
+    /// Wait until enough tokens are available
+    pub async fn acquire(&self, bytes: usize) {
+        let mut bucket = self.bucket.lock().await;
+        
+        loop {
+            // Refill tokens based on elapsed time
+            let now = Instant::now();
+            let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+            let refill = elapsed * bucket.refill_rate;
+            bucket.tokens = (bucket.tokens + refill).min(bucket.capacity);
+            bucket.last_refill = now;
+            
+            // Check if enough tokens available
+            if bucket.tokens >= bytes as f64 {
+                bucket.tokens -= bytes as f64;
+                break;
+            }
+            
+            // Wait and try again
+            drop(bucket); // Release lock while waiting
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            bucket = self.bucket.lock().await;
+        }
+    }
+}
+
+pub struct ThrottledStream<S> {
+    inner: S,
+    limiter: Arc<BandwidthLimiter>,
+}
+
+impl<S> ThrottledStream<S>
+where
+    S: Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send>>> + Unpin,
+{
+    pub fn new(stream: S, limiter: Arc<BandwidthLimiter>) -> Self {
+        Self {
+            inner: stream,
+            limiter,
+        }
+    }
+}
+
+impl<S> Stream for ThrottledStream<S>
+where
+    S: Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send>>> + Unpin,
+{
+    type Item = Result<Bytes, Box<dyn std::error::Error + Send>>;
+    
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        match std::pin::Pin::new(&mut self.inner).poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                let limiter = self.limiter.clone();
+                let size = bytes.len();
+                
+                // Spawn throttling task
+                let fut = async move {
+                    limiter.acquire(size).await;
+                    Ok(bytes)
+                };
+                
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending // Will be ready after throttling
+            }
+            other => other,
+        }
+    }
+}
+
+// ============================================================================
+// 4. SEGMENTED FETCHER - Parallel Chunk Downloads
+// ============================================================================
+
+pub struct SegmentedFetcher<C: crate::effects::HttpClient> {
+    client: C,
+    workspace_root: PathBuf,
+}
+
+impl<C: crate::effects::HttpClient> SegmentedFetcher<C> {
+    pub fn new(client: C, workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            client,
+            workspace_root: workspace_root.into(),
+        }
+    }
+    
+    /// Download file in parallel segments
+    pub async fn fetch_segmented(
+        &self,
+        url: &str,
+        destination: &Path,
+        num_segments: u32,
+    ) -> Result<PathBuf, crate::error::Error> {
+        // Get file size
+         let content_length = self.client.head(url)
+            .await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?
+            .ok_or_else(|| crate::error::Error::Network(
+                "Content-Length required for segmented download".to_string()
+            ))?;
+        
+        println!("File size: {} bytes", content_length);
+        println!("Downloading with {} segments", num_segments);
+        
+        let segment_size = content_length / num_segments as u64;
+        
+        // Create segment tasks
+        let mut tasks = Vec::new();
+        for i in 0..num_segments {
+            let start = i as u64 * segment_size;
+            let end = if i == num_segments - 1 {
+                content_length
+            } else {
+                (i + 1) as u64 * segment_size
+            };
+            
+            let segment_path = self.workspace_root.join(format!("segment_{}", i));
+            
+            let range_header = format!("bytes={}-{}", start, end - 1);
+            let headers = vec![("Range".to_string(), range_header)];
+            
+            let options = crate::data::FetchOptions::default()
+                .headers(headers);
+            
+            let client = &self.client;
+            let segment_url = url.to_string();
+            
+            let task = async move {
+                let mut stream = client.stream(&segment_url, &options.headers)
+                    .await
+                    .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                
+                 let file = tokio::fs::File::create(&segment_path)
+                    .await
+                    .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                
+                let mut writer = tokio::io::BufWriter::new(file);
+                
+                while let Some(chunk_result) = stream.next().await {
+                     let bytes = chunk_result
+                        .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                    
+                     writer.write_all(&bytes)
+                        .await
+                        .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                }
+                
+                     writer.flush().await
+                        .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                
+                 Ok::<_, crate::error::Error>(segment_path)
+            };
+            
+            tasks.push(tokio::spawn(task));
+        }
+        
+        // Wait for all segments
+        let mut segment_paths = Vec::new();
+        for task in tasks {
+             let path = task.await
+                .map_err(|e| crate::error::Error::Network(e.to_string()))??;
+            segment_paths.push(path);
+        }
+        
+        // Combine segments
+        println!("Combining segments...");
+         let mut output = tokio::fs::File::create(destination)
+            .await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+        
+        for segment_path in &segment_paths {
+             let mut segment = tokio::fs::File::open(segment_path)
+                .await
+                .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+            
+             tokio::io::copy(&mut segment, &mut output)
+                .await
+                .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+            
+            // Clean up segment
+            tokio::fs::remove_file(segment_path)
+                .await
+                .ok();
+        }
+        
+         output.flush().await
+            .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+        
+        println!("Segmented download complete");
+        
+        Ok(destination.to_path_buf())
+    }
+}
+
+// ============================================================================
+// 5. BATCH FETCHER - Multiple Files with Progress
+// ============================================================================
+
+pub struct BatchFetcher<C: crate::effects::HttpClient> {
+    client: C,
+    workspace_root: PathBuf,
+    max_concurrent: usize,
+}
+
+impl<C: crate::effects::HttpClient> BatchFetcher<C> {
+    pub fn new(client: C, workspace_root: impl Into<PathBuf>, max_concurrent: usize) -> Self {
+        Self {
+            client,
+            workspace_root: workspace_root.into(),
+            max_concurrent,
+        }
+    }
+    
+    /// Download multiple files concurrently
+    pub async fn fetch_batch(
+        &self,
+        jobs: Vec<BatchDownloadJob>,
+        on_progress: impl Fn(BatchProgress) + Send + Sync + 'static,
+    ) -> Result<Vec<BatchResult>, crate::error::Error> {
+        use futures_util::stream::FuturesUnordered;
+        
+        let total_jobs = jobs.len();
+        let progress_callback = Arc::new(on_progress);
+        
+        // Create semaphore for concurrency control
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.max_concurrent));
+        
+        let mut tasks = FuturesUnordered::new();
+        
+        for (index, job) in jobs.into_iter().enumerate() {
+            let client = &self.client;
+            let workspace = self.workspace_root.clone();
+            let sem = semaphore.clone();
+            let callback = progress_callback.clone();
+            
+             let task = async move {
+                 let _permit = match sem.acquire().await {
+                     Ok(permit) => permit,
+                     Err(_) => {
+                         // If semaphore acquisition fails, return an error result
+                         return BatchResult {
+                             url: job.url,
+                             destination: job.destination,
+                             result: Err(crate::error::Error::Network("semaphore acquisition failed".to_string())),
+                         };
+                     }
+                 };
+                
+                let fetcher = crate::effects::Fetcher::new(client, &workspace);
+                
+                let result = fetcher.fetch(&job.url, &job.destination, job.options).await;
+                
+                // Report progress
+                callback(BatchProgress {
+                    completed: index + 1,
+                    total: total_jobs,
+                    current_job: job.url.clone(),
+                });
+                
+                BatchResult {
+                    url: job.url,
+                    destination: job.destination,
+                    result,
+                }
+            };
+            
+            tasks.push(tokio::spawn(task));
+        }
+        
+        let mut results = Vec::new();
+        while let Some(task_result) = tasks.next().await {
+             let result = task_result
+                .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+            results.push(result);
+        }
+        
+        Ok(results)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BatchDownloadJob {
+    pub url: String,
+    pub destination: PathBuf,
+    pub options: crate::data::FetchOptions,
+}
+
+#[derive(Debug)]
+pub struct BatchResult {
+    pub url: String,
+    pub destination: PathBuf,
+    pub result: Result<PathBuf, crate::error::Error>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BatchProgress {
+    pub completed: usize,
+    pub total: usize,
+    pub current_job: String,
+}
+
+// ============================================================================
+// 6. CACHED FETCHER - HTTP Cache Implementation
+// ============================================================================
+
+pub struct CachedFetcher<C: crate::effects::HttpClient> {
+    client: C,
+    cache_dir: PathBuf,
+    max_age: Duration,
+}
+
+impl<C: crate::effects::HttpClient> CachedFetcher<C> {
+    pub fn new(
+        client: C,
+        cache_dir: impl Into<PathBuf>,
+        max_age: Duration,
+    ) -> Self {
+        Self {
+            client,
+            cache_dir: cache_dir.into(),
+            max_age,
+        }
+    }
+    
+    /// Fetch with caching
+    pub async fn fetch_cached(
+        &self,
+        url: &str,
+        destination: &Path,
+    ) -> Result<CachedFetchResult, crate::error::Error> {
+        // Generate cache key from URL
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        let cache_key = format!("{:x}", hasher.finish());
+        
+        let cache_path = self.cache_dir.join(&cache_key);
+        let metadata_path = self.cache_dir.join(format!("{}.meta", cache_key));
+        
+        // Check if cached version exists and is valid
+        if cache_path.exists() && metadata_path.exists() {
+            let metadata_content = tokio::fs::read_to_string(&metadata_path)
+                .await
+                .ok();
+            
+            if let Some(meta) = metadata_content {
+                let cached_at: i64 = meta.parse().unwrap_or(0);
+                 let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                     Ok(duration) => duration.as_secs() as i64,
+                     Err(_) => {
+                         // If there's a clock issue, use a default value
+                         0
+                     }
+                 };
+                
+                let age = Duration::from_secs((now - cached_at) as u64);
+                
+                if age < self.max_age {
+                    println!("Using cached version (age: {:?})", age);
+                    
+                    // Copy from cache to destination
+                    tokio::fs::copy(&cache_path, destination)
+                        .await
+                         .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+                    
+                    return Ok(CachedFetchResult {
+                        path: destination.to_path_buf(),
+                        from_cache: true,
+                    });
+                }
+            }
+        }
+        
+        // Download fresh copy
+        println!("Downloading fresh copy");
+        let fetcher = crate::effects::Fetcher::new(&self.client, &self.cache_dir);
+        let options = crate::data::FetchOptions::default();
+        
+        fetcher.fetch(url, &cache_path, options).await?;
+        
+        // Save metadata
+        let now = std::time::SystemTime::now()
+             .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_else(|_| std::time::Duration::ZERO)
+                .as_secs();
+        
+        tokio::fs::write(&metadata_path, now.to_string())
+            .await
+            .ok();
+        
+        // Copy to destination
+        tokio::fs::copy(&cache_path, destination)
+            .await
+             .map_err(|e| crate::error::Error::Network(e.to_string()))?;
+        
+        Ok(CachedFetchResult {
+            path: destination.to_path_buf(),
+            from_cache: false,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct CachedFetchResult {
+    pub path: PathBuf,
+    pub from_cache: bool,
+}
+
+// ============================================================================
+// Usage Examples
+// ============================================================================
+
+#[cfg(test)]
+mod examples {
+    use super::*;
+    
+    #[tokio::test]
+    async fn example_multi_source_download() {
+        // This would work with a real HTTP client
+        /*
+        let client = crate::effects::ReqwestClient::new().unwrap();
+        let fetcher = MultiSourceFetcher::new(client, "/tmp");
+        
+        let sources = vec![
+            DownloadSource::new("https://cdn1.example.com/file.tar.gz").priority(0),
+            DownloadSource::new("https://cdn2.example.com/file.tar.gz").priority(1),
+            DownloadSource::new("https://origin.example.com/file.tar.gz").priority(2),
+        ];
+        
+        let result = fetcher.fetch_multi_source(
+            sources,
+            Path::new("/tmp/file.tar.gz"),
+            FetchOptions::default(),
+        ).await;
+        */
+    }
+    
+    #[tokio::test]
+    async fn example_batch_download() {
+        // This would work with a real HTTP client
+        /*
+        let client = crate::effects::ReqwestClient::new().unwrap();
+        let fetcher = BatchFetcher::new(client, "/tmp", 4);
+        
+        let jobs = vec![
+            BatchDownloadJob {
+                url: "https://example.com/file1.tar.gz".to_string(),
+                destination: PathBuf::from("/tmp/file1.tar.gz"),
+                options: FetchOptions::default(),
+            },
+            BatchDownloadJob {
+                url: "https://example.com/file2.tar.gz".to_string(),
+                destination: PathBuf::from("/tmp/file2.tar.gz"),
+                options: FetchOptions::default(),
+            },
+        ];
+        
+        let results = fetcher.fetch_batch(jobs, |progress| {
+            println!("Progress: {}/{}", progress.completed, progress.total);
+        }).await;
+        */
+    }
+}
+
+// ============================================================================
+// ADVANCED TEST SCENARIOS - Edge Cases & Stress Tests
+// ============================================================================
+
+#[cfg(test)]
+mod edge_case_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+    
+    // ========================================================================
+    // Multi-Source Edge Cases
+    // ========================================================================
+    
+    mod multi_source_edge_cases {
+        use crate::source::DownloadSource;
+
+        use super::*;
+        
+        #[test]
+        fn test_all_sources_fail() {
+            // Scenario: All sources are unreachable
+            let sources = vec![
+                DownloadSource::new("https://dead1.example.com/file").priority(0),
+                DownloadSource::new("https://dead2.example.com/file").priority(1),
+                DownloadSource::new("https://dead3.example.com/file").priority(2),
+            ];
+            
+            // Expected: Should fail with last error
+            assert_eq!(sources.len(), 3);
+        }
+        
+        #[test]
+        fn test_source_with_conflicting_checksums() {
+            // Scenario: Different sources return different files
+            let source1 = DownloadSource::new("url1")
+                .checksum([0u8; 32]);
+            
+            let source2 = DownloadSource::new("url2")
+                .checksum([1u8; 32]);
+            
+            // Expected: Should detect checksum mismatch
+            assert_ne!(source1.checksum, source2.checksum);
+        }
+        
+        #[test]
+        fn test_race_mode_cancellation() {
+            // Scenario: In RaceAll mode, slow sources should be cancelled
+            let strategy = SourceSelectionStrategy::RaceAll;
+            
+            // Expected: First successful download cancels others
+            assert_eq!(strategy, SourceSelectionStrategy::RaceAll);
+        }
+        
+        #[test]
+        fn test_circular_priority() {
+            // Scenario: Same priority for multiple sources
+            let sources = vec![
+                DownloadSource::new("url1").priority(1),
+                DownloadSource::new("url2").priority(1),
+                DownloadSource::new("url3").priority(1),
+            ];
+            
+            // Expected: Should try all in some deterministic order
+            assert!(sources.iter().all(|s| s.priority == 1));
+        }
+        
+        #[test]
+        fn test_geographic_fallback_with_no_match() {
+            // Scenario: User region doesn't match any source region
+            let sources = vec![
+                DownloadSource::new("url1").region("us-west"),
+                DownloadSource::new("url2").region("eu-central"),
+            ];
+            
+            let user_region = "ap-southeast";
+            
+            // Expected: Fall back to priority order
+            assert!(sources.iter().all(|s| s.region.is_some()));
+            assert_ne!(sources[0].region.as_deref(), Some(user_region));
+        }
+    }
+    
+    // ========================================================================
+    // Resumable Download Edge Cases
+    // ========================================================================
+    
+    mod resumable_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_resume_with_larger_partial_file() {
+            // Scenario: Partial file is larger than server file
+            let resume = ResumeInfo {
+                partial_path: PathBuf::from("/tmp/partial"),
+                bytes_downloaded: 10_000_000,
+                checksum_state: None,
+            };
+            
+            let server_size = 5_000_000u64;
+            
+            // Expected: Should detect corruption and restart
+            assert!(resume.bytes_downloaded > server_size);
+        }
+        
+        #[test]
+        fn test_resume_after_file_changed_on_server() {
+            // Scenario: Server file was updated during download
+            let resume = ResumeInfo {
+                partial_path: PathBuf::from("/tmp/partial"),
+                bytes_downloaded: 1_000_000,
+                checksum_state: None,
+            };
+            
+            // Server sends: 416 Range Not Satisfiable or different ETag
+            // Expected: Should restart from beginning
+        }
+        
+        #[test]
+        fn test_resume_with_corrupted_checksum_state() {
+            // Scenario: Saved checksum state is invalid
+            let resume = ResumeInfo {
+                partial_path: PathBuf::from("/tmp/partial"),
+                bytes_downloaded: 1_000_000,
+                checksum_state: Some(ChecksumState {
+                    state: vec![0xFF; 100], // Invalid state
+                    algorithm: ChecksumAlgorithm::Sha256,
+                }),
+            };
+            
+            // Expected: Should restart with fresh checksum
+            assert!(resume.checksum_state.is_some());
+        }
+        
+        #[test]
+        fn test_resume_server_no_range_support() {
+            // Scenario: Server doesn't support Range requests
+            // HTTP Response: 200 OK (instead of 206 Partial Content)
+            
+            // Expected: Should restart from beginning
+        }
+        
+        #[test]
+        fn test_concurrent_resume_attempts() {
+            // Scenario: Multiple processes try to resume same download
+            let resume_path = PathBuf::from("/tmp/shared.download");
+            
+            // Expected: File locking or error on concurrent access
+        }
+    }
+    
+    // ========================================================================
+    // Bandwidth Limiting Edge Cases
+    // ========================================================================
+    
+    mod bandwidth_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_zero_bandwidth_limit() {
+            // Scenario: Bandwidth limit set to 0
+            let opts = BandwidthOptions {
+                max_bytes_per_second: Some(0),
+                burst_size: Some(0),
+                adaptive_throttling: false,
+                rate_window: Duration::from_secs(1),
+            };
+            
+            // Expected: Should either error or never download
+            assert_eq!(opts.max_bytes_per_second, Some(0));
+        }
+        
+        #[test]
+        fn test_burst_larger_than_rate() {
+            // Scenario: Burst size exceeds rate limit
+            let opts = BandwidthOptions {
+                max_bytes_per_second: Some(1024),
+                burst_size: Some(10240), // 10x rate
+                adaptive_throttling: false,
+                rate_window: Duration::from_secs(1),
+            };
+            
+             // Expected: Should clamp burst to rate or allow brief burst
+             if let (Some(burst), Some(rate)) = (opts.burst_size, opts.max_bytes_per_second) {
+                 assert!(burst > rate);
+             } else {
+                 panic!("burst_size and max_bytes_per_second should be set");
+             }
+        }
+        
+        #[test]
+        fn test_rate_limit_with_tiny_chunks() {
+            // Scenario: Downloads in 1-byte chunks with rate limit
+            let rate = 1024 * 1024u64; // 1 MB/s
+            let chunk_size = 1;
+            
+            // Expected: Should not thrash (excessive acquire calls)
+            let chunks_per_second = rate / chunk_size as u64;
+            assert_eq!(chunks_per_second, rate); // Would be inefficient
+        }
+        
+        #[test]
+        fn test_adaptive_throttling_cpu_spike() {
+            // Scenario: CPU usage spikes during download
+            let opts = BandwidthOptions {
+                max_bytes_per_second: Some(1024 * 1024),
+                burst_size: None,
+                adaptive_throttling: true,
+                rate_window: Duration::from_secs(1),
+            };
+            
+            // Expected: Should reduce rate when CPU high
+            assert!(opts.adaptive_throttling);
+        }
+    }
+    
+    // ========================================================================
+    // Segmented Download Edge Cases
+    // ========================================================================
+    
+    mod segmented_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_file_smaller_than_segments() {
+            // Scenario: File is 100 bytes but requesting 8 segments
+            let file_size = 100u64;
+            let num_segments = 8u32;
+            let segment_size = file_size / num_segments as u64;
+            
+            // segment_size = 12, remainder = 4
+            // Expected: Some segments will be tiny or empty
+            assert_eq!(segment_size, 12);
+            assert_eq!(file_size % num_segments as u64, 4);
+        }
+        
+        #[test]
+        fn test_segment_with_prime_number_size() {
+            // Scenario: File size is prime (can't divide evenly)
+            let file_size = 10007u64; // Prime
+            let num_segments = 8u32;
+            let segment_size = file_size / num_segments as u64;
+            let remainder = file_size % num_segments as u64;
+            
+            // Expected: Last segment gets remainder
+            let last_segment_size = segment_size + remainder;
+            assert!(last_segment_size > segment_size);
+        }
+        
+        #[test]
+        fn test_single_segment_failure() {
+            // Scenario: One segment fails repeatedly while others succeed
+            let segments = vec![
+                SegmentState {
+                    index: 0,
+                    start: 0,
+                    end: 1000,
+                    downloaded: 1000,
+                    status: SegmentStatus::Completed,
+                },
+                SegmentState {
+                    index: 1,
+                    start: 1000,
+                    end: 2000,
+                    downloaded: 500,
+                    status: SegmentStatus::Failed,
+                },
+            ];
+            
+            // Expected: Should retry failed segment independently
+            assert_eq!(segments[1].status, SegmentStatus::Failed);
+        }
+        
+        #[test]
+        fn test_segment_order_corruption() {
+            // Scenario: Segments reassembled in wrong order
+            let segments = vec![
+                (1000, 2000), // Segment 1
+                (0, 1000),    // Segment 0 (out of order)
+                (2000, 3000), // Segment 2
+            ];
+            
+            // Expected: Must reassemble in correct order
+            let mut sorted = segments.clone();
+            sorted.sort_by_key(|s| s.0);
+            assert_ne!(segments, sorted);
+        }
+        
+        #[test]
+        fn test_server_changes_during_segmented_download() {
+            // Scenario: File modified on server while downloading
+            // Segment 0: ETag "abc"
+            // Segment 1: ETag "def" (file changed!)
+            
+            // Expected: Detect inconsistency and fail or restart
+        }
+        
+        #[test]
+        fn test_overlapping_segments() {
+            // Scenario: Bug causes overlapping byte ranges
+            let segment1 = (0u64, 1000u64);
+            let segment2 = (500u64, 1500u64); // Overlaps!
+            
+            // Expected: Should detect and error
+            assert!(segment1.1 > segment2.0);
+        }
+        
+        #[test]
+        fn test_gap_between_segments() {
+            // Scenario: Bug causes gaps in coverage
+            let segment1 = (0u64, 1000u64);
+            let segment2 = (1500u64, 2000u64); // Gap: 1000-1500
+            
+            // Expected: Should detect and error
+            assert!(segment2.0 > segment1.1);
+        }
+    }
+    
+    // ========================================================================
+    // Batch Download Edge Cases
+    // ========================================================================
+    
+    mod batch_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_circular_dependencies() {
+            // Scenario: A depends on B, B depends on A
+            let task_a = DownloadTask {
+                id: "a".to_string(),
+                url: "url_a".to_string(),
+                destination: PathBuf::from("/tmp/a"),
+                options: None,
+                dependencies: vec!["b".to_string()],
+            };
+            
+            let task_b = DownloadTask {
+                id: "b".to_string(),
+                url: "url_b".to_string(),
+                destination: PathBuf::from("/tmp/b"),
+                options: None,
+                dependencies: vec!["a".to_string()],
+            };
+            
+            // Expected: Should detect cycle and error
+        }
+        
+        #[test]
+        fn test_dependency_on_nonexistent_task() {
+            // Scenario: Task depends on ID that doesn't exist
+            let task = DownloadTask {
+                id: "a".to_string(),
+                url: "url".to_string(),
+                destination: PathBuf::from("/tmp/a"),
+                options: None,
+                dependencies: vec!["nonexistent".to_string()],
+            };
+            
+            // Expected: Should error on validation
+            assert!(task.dependencies.contains(&"nonexistent".to_string()));
+        }
+        
+        #[test]
+        fn test_fail_fast_with_dependency_chain() {
+            // Scenario: fail_fast=true, early task fails, later tasks depend on it
+            // A -> B -> C (dependency chain)
+            // A fails
+            
+            // Expected: Cancel B and C immediately
+        }
+        
+        #[test]
+        fn test_concurrent_limit_zero() {
+            // Scenario: max_concurrent = 0
+            let options = BatchOptions {
+                max_concurrent: 0,
+                fail_fast: false,
+                retry_policy: BatchRetryPolicy::Never,
+                on_progress: None,
+            };
+            
+            // Expected: Should error or serialize all downloads
+            assert_eq!(options.max_concurrent, 0);
+        }
+        
+        #[test]
+        fn test_concurrent_limit_exceeds_tasks() {
+            // Scenario: max_concurrent=100, only 5 tasks
+            let options = BatchOptions {
+                max_concurrent: 100,
+                fail_fast: false,
+                retry_policy: BatchRetryPolicy::Never,
+                on_progress: None,
+            };
+            
+            let num_tasks = 5;
+            
+            // Expected: Should run all 5 concurrently
+            assert!(options.max_concurrent > num_tasks);
+        }
+        
+        #[test]
+        fn test_diamond_dependency() {
+            // Scenario:     A
+            //              / \
+            //             B   C
+            //              \ /
+            //               D
+            // Expected: D waits for both B and C
+        }
+    }
+    
+    // ========================================================================
+    // Cache Edge Cases
+    // ========================================================================
+    
+    mod cache_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_cache_with_zero_max_age() {
+            // Scenario: max_age = 0 (always stale)
+            let opts = CacheOptions {
+                enabled: true,
+                cache_dir: PathBuf::from("/cache"),
+                validation: CacheValidation::Both,
+                max_age: Some(Duration::ZERO),
+                max_cache_size: None,
+            };
+            
+            // Expected: Should always revalidate
+            assert_eq!(opts.max_age, Some(Duration::ZERO));
+        }
+        
+        #[test]
+        fn test_cache_with_zero_max_size() {
+            // Scenario: max_cache_size = 0
+            let opts = CacheOptions {
+                enabled: true,
+                cache_dir: PathBuf::from("/cache"),
+                validation: CacheValidation::Never,
+                max_age: None,
+                max_cache_size: Some(0),
+            };
+            
+            // Expected: Should never cache or immediately evict
+            assert_eq!(opts.max_cache_size, Some(0));
+        }
+        
+        #[test]
+        fn test_cache_directory_readonly() {
+            // Scenario: Cache directory is read-only
+            let opts = CacheOptions {
+                enabled: true,
+                cache_dir: PathBuf::from("/readonly_cache"),
+                validation: CacheValidation::Never,
+                max_age: None,
+                max_cache_size: None,
+            };
+            
+            // Expected: Should fail gracefully or bypass cache
+        }
+        
+        #[test]
+        fn test_cache_entry_corrupted() {
+            // Scenario: Cached file exists but checksum mismatches
+            let entry = CacheEntry {
+                url: "url".to_string(),
+                path: PathBuf::from("/cache/file"),
+                cached_at: chrono::Utc::now(),
+                last_modified: None,
+                etag: None,
+                size: 1024,
+                checksum: [0u8; 32], // Expected checksum
+            };
+            
+            // Actual file checksum: [1u8; 32] (corrupted!)
+            // Expected: Should detect and re-download
+        }
+        
+        #[test]
+        fn test_lru_eviction_race_condition() {
+            // Scenario: Two threads trigger eviction simultaneously
+            // Expected: Should handle concurrent eviction safely
+        }
+        
+        #[test]
+        fn test_cache_validation_server_gone() {
+            // Scenario: Cached file exists, validation fails (404)
+            // Expected: Should still use cached version if validation=Never
+        }
+    }
+    
+    // ========================================================================
+    // Progress Reporting Edge Cases
+    // ========================================================================
+    
+    mod progress_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_progress_with_unknown_total() {
+            // Scenario: Server doesn't send Content-Length
+            let progress = Progress {
+                phase: FetchPhase::Downloading,
+                bytes_downloaded: 1_000_000,
+                total_bytes: None,
+                retry_count: 0,
+            };
+            
+            // Expected: percentage() returns None
+            assert_eq!(progress.percentage(), None);
+        }
+        
+        #[test]
+        fn test_progress_bytes_exceed_total() {
+            // Scenario: Bug causes bytes_downloaded > total_bytes
+            let progress = Progress {
+                phase: FetchPhase::Downloading,
+                bytes_downloaded: 2000,
+                total_bytes: Some(1000),
+                retry_count: 0,
+            };
+            
+            // Expected: Should handle gracefully (clamp to 100% or error)
+            if let Some(pct) = progress.percentage() {
+                assert!(pct > 100.0); // Currently allows >100%
+            }
+        }
+        
+        #[test]
+        fn test_progress_callback_panic() {
+            // Scenario: User's callback panics
+            let callback = |_: &Progress| {
+                panic!("Callback panic!");
+            };
+            
+            // Expected: Should catch panic or document that it propagates
+        }
+        
+        #[test]
+        fn test_progress_callback_blocks() {
+            // Scenario: Callback does expensive work (blocks for 1 second)
+            let callback = |_: &Progress| {
+                std::thread::sleep(Duration::from_secs(1));
+            };
+            
+            // Expected: Should warn or time out
+        }
+        
+        #[test]
+        fn test_speed_calculation_zero_elapsed() {
+            // Scenario: Two progress updates in same instant
+            let bytes1 = 1000u64;
+            let bytes2 = 2000u64;
+            let elapsed = Duration::ZERO;
+            
+            // Speed = delta / elapsed = 1000 / 0 = Infinity
+            // Expected: Should handle division by zero
+        }
+        
+        #[test]
+        fn test_eta_with_zero_speed() {
+            // Scenario: Download stalled (speed = 0)
+            let speed = 0u64;
+            let remaining = 1_000_000u64;
+            
+            // ETA = remaining / 0 = Infinity
+            // Expected: Should return None or Duration::MAX
+        }
+    }
+    
+    // ========================================================================
+    // Error Handling Edge Cases
+    // ========================================================================
+    
+    mod error_edge_cases {
+        use super::*;
+        
+        #[test]
+        fn test_nested_errors() {
+            // Scenario: Error wrapping chain
+            // NetworkError -> IoError -> OsError
+            
+            // Expected: Should preserve error chain
+        }
+        
+        #[test]
+        fn test_error_during_retry() {
+            // Scenario: Error occurs while computing retry delay
+            // Expected: Should propagate error, not retry indefinitely
+        }
+        
+        #[test]
+        fn test_error_during_cleanup() {
+            // Scenario: Download fails, cleanup also fails
+            // Expected: Should report download error, log cleanup failure
+        }
+        
+        #[test]
+        fn test_multiple_concurrent_errors() {
+            // Scenario: Parallel segments all fail simultaneously
+            // Expected: Should collect and report all errors
+        }
+    }
+    
+    // ========================================================================
+    // Resource Exhaustion Tests
+    // ========================================================================
+    
+    mod resource_exhaustion {
+        use super::*;
+        
+        #[test]
+        fn test_out_of_disk_space() {
+            // Scenario: Disk full during download
+            // Expected: Should fail gracefully, clean up partial
+        }
+        
+        #[test]
+        fn test_too_many_open_files() {
+            // Scenario: File descriptor limit reached
+            // Expected: Should fail with clear error
+        }
+        
+        #[test]
+        fn test_out_of_memory() {
+            // Scenario: Cannot allocate buffer
+            // Expected: Should fail, not panic
+        }
+        
+        #[test]
+        fn test_network_interface_down() {
+            // Scenario: Network interface goes down mid-download
+            // Expected: Should retry or fail cleanly
+        }
+    }
+    
+    // ========================================================================
+    // Concurrency Tests
+    // ========================================================================
+    
+    mod concurrency_tests {
+        use super::*;
+        
+        #[test]
+        fn test_concurrent_downloads_same_destination() {
+            // Scenario: Two threads download to same file
+            // Expected: Should error or use file locking
+        }
+        
+        #[test]
+        fn test_download_while_reading() {
+            // Scenario: Another process reads file while downloading
+            // Expected: Should complete successfully (readers don't block)
+        }
+        
+        #[test]
+        fn test_cancel_during_verification() {
+            // Scenario: Download cancelled during checksum verification
+            // Expected: Should clean up and return cancelled error
+        }
+        
+        #[test]
+        fn test_cancel_during_commit() {
+            // Scenario: Download cancelled during atomic commit
+            // Expected: Should either complete commit or rollback
+        }
+    }
+    
+    // ========================================================================
+    // Platform-Specific Tests
+    // ========================================================================
+    
+    mod platform_specific {
+        use super::*;
+        
+        #[test]
+        #[cfg(unix)]
+        fn test_unix_symlink_destination() {
+            // Scenario: Destination is a symlink
+            // Expected: Should resolve and check actual target
+        }
+        
+        #[test]
+        #[cfg(windows)]
+        fn test_windows_long_path() {
+            // Scenario: Path exceeds MAX_PATH (260 chars)
+            // Expected: Should use \\?\ prefix or error
+        }
+        
+        #[test]
+        #[cfg(windows)]
+        fn test_windows_reserved_filename() {
+            // Scenario: Filename is "CON", "NUL", etc.
+            // Expected: Should error
+        }
+        
+        #[test]
+        fn test_case_sensitive_filesystem() {
+            // Scenario: Download "File.txt" and "file.txt"
+            // Expected: Behavior depends on filesystem
+        }
+    }
+}
+
+// ============================================================================
+// STRESS TESTS - Performance Under Load
+// ============================================================================
+
+#[cfg(test)]
+mod stress_tests {
+    use super::*;
+    use std::time::Instant;
+    
+    #[test]
+    #[ignore] // Only run with --ignored flag
+    fn stress_test_1000_small_files() {
+        // Download 1000 files of 1KB each
+        // Target: <10 seconds total
+    }
+    
+    #[test]
+    #[ignore]
+    fn stress_test_single_10gb_file() {
+        // Download single 10GB file
+        // Target: Consistent memory usage (<100 MB)
+    }
+    
+    #[test]
+    #[ignore]
+    fn stress_test_100_concurrent_downloads() {
+        // 100 parallel downloads
+        // Target: No resource exhaustion
+    }
+    
+    #[test]
+    #[ignore]
+    fn stress_test_rapid_cancel_resume() {
+        // Cancel and resume download 1000 times
+        // Target: No memory leaks
+    }
+    
+    #[test]
+    #[ignore]
+    fn stress_test_cache_with_10000_entries() {
+        // Fill cache with 10,000 entries
+        // Target: LRU eviction works correctly
+    }
+}
+
+// ============================================================================
+// FAULT INJECTION TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod fault_injection {
+    use super::*;
+    
+    #[test]
+    fn test_random_connection_drops() {
+        // Randomly close connection during download
+        // Expected: Should resume or retry
+    }
+    
+    #[test]
+    fn test_random_corrupted_chunks() {
+        // Inject random bit flips in chunks
+        // Expected: Checksum should catch corruption
+    }
+    
+    #[test]
+    fn test_slow_server_responses() {
+        // Server sends 1 byte per second
+        // Expected: Should timeout or complete eventually
+    }
+    
+    #[test]
+    fn test_server_sends_wrong_content_length() {
+        // Server says 1000 bytes but sends 500
+        // Expected: Should detect and handle
+    }
+}

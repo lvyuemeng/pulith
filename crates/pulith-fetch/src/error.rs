@@ -1,12 +1,14 @@
 use thiserror::Error;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug, Error)]
-pub enum FetchError {
+pub enum Error {
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
 
     #[error("HTTP error: {status} {message}")]
-    HttpError { status: u16, message: String },
+    Http { status: u16, message: String },
 
     #[error("checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: String, actual: String },
@@ -23,6 +25,9 @@ pub enum FetchError {
     #[error("destination is a directory")]
     DestinationIsDirectory,
 
+    #[error("invalid state: {0}")]
+    InvalidState(String),
+
     #[error(transparent)]
     Fs(#[from] pulith_fs::Error),
 
@@ -33,23 +38,30 @@ pub enum FetchError {
     Timeout(String),
 }
 
-impl From<std::io::Error> for FetchError {
+impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        FetchError::Network(e.to_string())
+        Error::Network(e.to_string())
     }
 }
 
-impl From<pulith_verify::VerifyError> for FetchError {
+impl From<pulith_verify::VerifyError> for Error {
     fn from(e: pulith_verify::VerifyError) -> Self {
         match e {
             pulith_verify::VerifyError::HashMismatch { expected, actual } => {
-                FetchError::ChecksumMismatch {
+                Error::ChecksumMismatch {
                     expected: hex::encode(expected),
                     actual: hex::encode(actual),
                 }
             }
-            pulith_verify::VerifyError::Io(e) => FetchError::Network(e.to_string()),
-            pulith_verify::VerifyError::HexDecode(e) => FetchError::Network(e.to_string()),
+            pulith_verify::VerifyError::Io(e) => Error::Network(e.to_string()),
+            pulith_verify::VerifyError::HexDecode(e) => Error::Network(e.to_string()),
         }
+    }
+}
+
+#[cfg(feature = "reqwest")]
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Error::Network(e.to_string())
     }
 }
