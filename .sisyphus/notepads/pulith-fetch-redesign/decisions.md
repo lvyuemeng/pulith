@@ -29,3 +29,101 @@ All changes will be verified with:
 - cargo check to ensure compilation
 - cargo test to ensure tests pass
 - Proper git commits with clear messages
+
+## 2025-01-30 - Final Architectural Decisions
+
+### 1. Module Structure Decision
+**Decision**: Adopt data/core/effects/transform module structure
+**Rationale**: 
+- Clear separation of concerns
+- Follows pulith ecosystem conventions
+- Enables independent testing of components
+- Facilitates future extensibility
+
+### 2. Error Handling Strategy
+**Decision**: Use Result<T> type alias consistently
+**Rationale**:
+- Provides clear error context
+- Enables proper error propagation
+- Follows Rust best practices
+- Integrates with pulith ecosystem
+
+### 3. Async Architecture
+**Decision**: Use async/await for all I/O operations
+**Rationale**:
+- Non-blocking operations essential for download performance
+- Enables concurrent downloads
+- Tokio provides mature async runtime
+- Simplifies error handling with ?
+
+### 4. Streaming Downloads
+**Decision**: Stream data directly to files instead of loading into memory
+**Rationale**:
+- Memory efficiency for large files
+- Enables progress reporting during download
+- Reduces memory pressure
+- Scales to any file size
+
+### 5. Checkpointing Strategy
+**Decision**: Use JSON-based checkpoint files for resumable downloads
+**Rationale**:
+- Human-readable for debugging
+- Easy to version and migrate
+- Sufficient for required metadata
+- Simple serialization with serde
+
+### 6. Bandwidth Limiting Algorithm
+**Decision**: Implement token bucket algorithm
+**Rationale**:
+- Proven algorithm for rate limiting
+- Smooths out bursty traffic
+- Configurable rate limits
+- Low overhead implementation
+
+### 7. HTTP Caching Approach
+**Decision**: ETag and Last-Modified based caching
+**Rationale**:
+- Leverages HTTP standard caching headers
+- Reduces server load
+- Improves performance for repeated downloads
+- Simple yet effective implementation
+
+### 8. Compression Support
+**Decision**: Stream-based decompression
+**Rationale**:
+- Memory efficient for large compressed files
+- Supports progressive decompression
+- Avoids loading entire file into memory
+- Works with streaming download architecture
+
+### 9. Multi-Source Strategy
+**Decision**: Priority-based source selection with fallback
+**Rationale**:
+- Enables reliable downloads from mirrors
+- Supports geographic optimization
+- Simple to implement and understand
+- Extensible for future strategies
+
+### 10. Testing Strategy
+**Decision**: Comprehensive unit and integration tests
+**Rationale**:
+- Ensures reliability of critical download functionality
+- Catches edge cases early
+- Provides documentation through examples
+- Enables confident refactoring
+
+### 11. Protocol Abstraction
+**Decision**: Trait-based protocol abstraction
+**Rationale**:
+- Future-proof for new protocols (FTP, S3, etc.)
+- Clean separation of protocol logic
+- Enables testing with mock implementations
+- Follows Rust trait system best practices
+
+### 12. Signature Verification Design
+**Decision**: Types-only implementation without actual cryptography
+**Rationale**:
+- Focus on fetch functionality, not cryptography
+- Provides interface for future implementation
+- Avoids dependency on heavy crypto libraries
+- Maintains clean separation of concerns

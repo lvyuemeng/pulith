@@ -12,8 +12,17 @@ mod resumable;
 mod segmented;
 mod batch;
 mod cache;
+mod throttled;
+mod conditional;
+mod protocol;
 
 pub use http::{HttpClient, BoxStream};
 pub use fetcher::Fetcher;
+pub use throttled::{ThrottledStream, AsyncThrottledStream};
+pub use conditional::{ConditionalFetcher, RemoteMetadata, ConditionalOptions};
+pub use protocol::{
+    Protocol, Direction, TransferMetadata, TransferOptions, TransferStream, ProtocolClient,
+    ProtocolRegistry, MockHttpClient, MockTransferStream,
+};
 #[cfg(feature = "reqwest")]
 pub use http::ReqwestClient;

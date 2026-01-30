@@ -36,6 +36,9 @@ pub enum Error {
 
     #[error("timeout: {0}")]
     Timeout(String),
+
+    #[error("transform error: {0}")]
+    Transform(#[from] crate::transform::TransformError),
 }
 
 impl From<std::io::Error> for Error {

@@ -7,7 +7,9 @@
 pub mod options;
 pub mod progress;
 pub mod sources;
+pub mod extended_progress;
 
 pub use options::{FetchOptions, FetchPhase};
 pub use progress::Progress;
 pub use sources::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy, SourceType};
+pub use extended_progress::{ExtendedProgress, ProgressReporter};

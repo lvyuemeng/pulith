@@ -11,7 +11,7 @@ use crate::effects::http::HttpClient;
 
 /// The main fetcher implementation that handles downloading files with verification.
 pub struct Fetcher<C: HttpClient> {
-    client: C,
+    pub(crate) client: C,
     workspace_root: PathBuf,
 }
 
@@ -22,6 +22,11 @@ impl<C: HttpClient> Fetcher<C> {
             client,
             workspace_root: workspace_root.into(),
         }
+    }
+
+    /// Get the total bytes from a HEAD request.
+    pub async fn head(&self, url: &str) -> Result<Option<u64>> {
+        self.client.head(url).await.map_err(|e| Error::Network(e.to_string()))
     }
 
     /// Fetch a file from the given URL and save it to the destination.
@@ -51,7 +56,8 @@ impl<C: HttpClient> Fetcher<C> {
         });
 
         let staging_dir = self.workspace_root.join("staging");
-        let workspace = Workspace::new(&staging_dir, destination.parent().unwrap_or_else(|| Path::new(".")))?;
+        let dest_dir = destination.parent().unwrap_or_else(|| Path::new("."));
+        let workspace = Workspace::new(&staging_dir, dest_dir)?;
         let staging_file_path = workspace.path().join(destination.file_name().unwrap_or_else(|| std::ffi::OsStr::new("download")));
         let mut stream = self.client.stream(url, &options.headers).await.map_err(|e| Error::Network(e.to_string()))?;
         let mut hasher = Sha256Hasher::new();
@@ -65,7 +71,7 @@ impl<C: HttpClient> Fetcher<C> {
         
         let mut bytes_downloaded = 0u64;
         use tokio::io::AsyncWriteExt;
-        let mut file: tokio::fs::File = tokio::fs::File::create(&staging_file_path).await.map_err(|e| Error::Network(e.to_string()))?;
+        let mut file = tokio::fs::File::create(&staging_file_path).await.map_err(|e| Error::Network(e.to_string()))?;
         
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| Error::Network(e.to_string()))?;
@@ -124,5 +130,20 @@ impl<C: HttpClient> Fetcher<C> {
         if let Some(ref callback) = options.on_progress {
             callback(&progress);
         }
+    }
+    
+    /// Try to fetch from a single source with verification.
+    pub async fn try_source(
+        &self,
+        source: &crate::data::DownloadSource,
+        destination: &Path,
+        options: &FetchOptions,
+    ) -> Result<PathBuf> {
+        // Create fetch options for this source
+        let mut fetch_options = options.clone();
+        fetch_options.checksum = source.checksum;
+
+        // Fetch using the base fetcher
+        self.fetch(&source.url, destination, fetch_options).await
     }
 }
