@@ -72,11 +72,8 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
         // Download segments in parallel
         let segment_files = self.download_segments(url, &segments, &workspace, &fetch_options, options.max_concurrent).await?;
         
-        // Reassemble segments
-        self.reassemble_segments(&segment_files, destination, &workspace, &fetch_options, total_bytes).await?;
-        
-        // Commit the workspace
-        workspace.commit().map_err(|e| Error::Network(e.to_string()))?;
+        // Reassemble segments and commit workspace
+        self.reassemble_segments(&segment_files, destination, workspace, &fetch_options, total_bytes).await?;
         
         Ok(destination.to_path_buf())
     }
@@ -153,7 +150,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
         &self,
         segment_files: &[PathBuf],
         destination: &Path,
-        workspace: &Workspace,
+        workspace: Workspace,
         options: &FetchOptions,
         total_bytes: Option<u64>,
     ) -> Result<()> {
@@ -168,6 +165,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
             bytes_downloaded: 0,
             total_bytes,
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // Copy segments in order
@@ -191,6 +189,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
                     bytes_downloaded,
                     total_bytes,
                     retry_count: 0,
+                    performance_metrics: None,
                 });
             }
             
@@ -205,6 +204,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
                 bytes_downloaded,
                 total_bytes,
                 retry_count: 0,
+                performance_metrics: None,
             });
             
             let actual_checksum = hasher.finalize();
@@ -217,11 +217,24 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
         }
         
         // Move to final destination
-        self.report_progress(options, Progress {
+self.report_progress(options, Progress {
             phase: FetchPhase::Committing,
             bytes_downloaded,
             total_bytes,
             retry_count: 0,
+            performance_metrics: None,
+        });
+        
+        // Move the file to the final destination
+        tokio::fs::rename(&staging_file_path, destination).await.map_err(|e| Error::Network(e.to_string()))?;
+        workspace.commit().map_err(|e| Error::Network(e.to_string()))?;
+        
+        self.report_progress(options, Progress {
+            phase: FetchPhase::Completed,
+            bytes_downloaded,
+            total_bytes,
+            retry_count: 0,
+            performance_metrics: None,
         });
         
         tokio::fs::rename(&staging_file_path, destination).await.map_err(|e| Error::Network(e.to_string()))?;
@@ -231,6 +244,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
             bytes_downloaded,
             total_bytes,
             retry_count: 0,
+            performance_metrics: None,
         });
         
         Ok(())

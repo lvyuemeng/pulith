@@ -7,6 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::collections::VecDeque;
 
 use crate::data::{FetchPhase, Progress};
+use crate::data::progress::{PerformanceMetrics, PhaseTimings};
 
 /// Extended progress information with detailed metrics.
 #[derive(Debug, Clone)]
@@ -28,6 +29,9 @@ pub struct ExtendedProgress {
     
     /// Last update time
     pub last_update: Instant,
+    
+    /// Performance metrics collection
+    pub performance_metrics: PerformanceMetrics,
 }
 
 /// A snapshot of progress at a specific point in time.
@@ -41,7 +45,7 @@ pub struct ProgressSnapshot {
 
 impl ExtendedProgress {
     /// Create a new extended progress tracker.
-    pub fn new(base: Progress) -> Self {
+    pub fn new(mut base: Progress) -> Self {
         let now = Instant::now();
         let mut history = VecDeque::with_capacity(100);
         
@@ -54,6 +58,8 @@ impl ExtendedProgress {
             bytes_downloaded: base.bytes_downloaded,
         });
         
+        let performance_metrics = base.performance_metrics.take().unwrap_or_default();
+        
         Self {
             base,
             rate_bps: None,
@@ -61,6 +67,7 @@ impl ExtendedProgress {
             history,
             start_time: now,
             last_update: now,
+            performance_metrics,
         }
     }
 
@@ -235,6 +242,7 @@ impl ProgressReporter {
             bytes_downloaded: total_bytes,
             total_bytes: total_estimated,
             retry_count: self.trackers.iter().map(|t| t.base.retry_count).max().unwrap_or(0),
+            performance_metrics: None,
         }
     }
 
@@ -294,6 +302,7 @@ mod tests {
             bytes_downloaded: 512,
             total_bytes: Some(1024),
             retry_count: 0,
+            performance_metrics: None,
         };
         
         let extended = ExtendedProgress::new(base);
@@ -312,6 +321,7 @@ mod tests {
             bytes_downloaded: 0,
             total_bytes: Some(1000),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // Simulate progress updates with controlled timing
@@ -326,6 +336,7 @@ mod tests {
             bytes_downloaded: 100,
             total_bytes: Some(1000),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // Add second snapshot after 1 second
@@ -335,6 +346,7 @@ mod tests {
             bytes_downloaded: 200,
             total_bytes: Some(1000),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // Should have a calculated rate
@@ -354,6 +366,7 @@ mod tests {
             bytes_downloaded: 0,
             total_bytes: Some(1000),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // Simulate progress updates
@@ -363,6 +376,7 @@ mod tests {
                 bytes_downloaded: (i + 1) * 200,
                 total_bytes: Some(1000),
                 retry_count: 0,
+                performance_metrics: None,
             };
             extended.update(progress);
             sleep(Duration::from_millis(100)).await;
@@ -383,6 +397,7 @@ mod tests {
             bytes_downloaded: 0,
             total_bytes: Some(1024),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // No rate yet
@@ -408,6 +423,7 @@ mod tests {
             bytes_downloaded: 0,
             total_bytes: Some(1024),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // No ETA yet
@@ -437,6 +453,7 @@ mod tests {
             bytes_downloaded: 0,
             total_bytes: Some(1024),
             retry_count: 0,
+            performance_metrics: None,
         });
         
         // Initially 0 seconds elapsed
@@ -465,12 +482,14 @@ mod tests {
             bytes_downloaded: 256,
             total_bytes: Some(512),
             retry_count: 0,
+            performance_metrics: None,
         };
         let progress2 = Progress {
             phase: FetchPhase::Downloading,
             bytes_downloaded: 128,
             total_bytes: Some(256),
             retry_count: 1,
+            performance_metrics: None,
         };
         
         let id1 = reporter.add_tracker(progress1);
@@ -486,6 +505,7 @@ mod tests {
             bytes_downloaded: 512,
             total_bytes: Some(512),
             retry_count: 0,
+            performance_metrics: None,
         };
         reporter.update_tracker(0, updated1);
         
@@ -507,12 +527,14 @@ mod tests {
             bytes_downloaded: 0,
             total_bytes: Some(1000),
             retry_count: 0,
+            performance_metrics: None,
         };
         let progress2 = Progress {
             phase: FetchPhase::Downloading,
             bytes_downloaded: 0,
             total_bytes: Some(2000),
             retry_count: 0,
+            performance_metrics: None,
         };
         
         reporter.add_tracker(progress1);
@@ -524,12 +546,14 @@ mod tests {
             bytes_downloaded: 500,
             total_bytes: Some(1000),
             retry_count: 0,
+            performance_metrics: None,
         };
         let updated2 = Progress {
             phase: FetchPhase::Downloading,
             bytes_downloaded: 1000,
             total_bytes: Some(2000),
             retry_count: 0,
+            performance_metrics: None,
         };
         
         reporter.update_tracker(0, updated1);
