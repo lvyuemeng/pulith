@@ -3,11 +3,11 @@
 //! This module provides enhanced progress reporting with detailed metrics,
 //! rate calculations, and historical tracking.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::collections::VecDeque;
 
 use crate::data::{FetchPhase, Progress};
-use crate::data::progress::{PerformanceMetrics, PhaseTimings};
+use crate::data::progress::PerformanceMetrics;
 
 /// Extended progress information with detailed metrics.
 #[derive(Debug, Clone)]

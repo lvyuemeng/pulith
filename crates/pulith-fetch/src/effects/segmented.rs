@@ -139,7 +139,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
         // Sort by segment index to ensure correct order
         segment_files.sort_by_key(|path| {
             let filename = path.file_name().unwrap().to_str().unwrap();
-            filename.split('_').last().unwrap().parse::<u32>().unwrap()
+            filename.split('_').next_back().unwrap().parse::<u32>().unwrap()
         });
         
         Ok(segment_files)
@@ -172,7 +172,7 @@ impl<C: HttpClient + 'static> SegmentedFetcher<C> {
         for segment_path in segment_files {
             let mut segment_file = tokio::fs::File::open(segment_path).await.map_err(|e| Error::Network(e.to_string()))?;
             
-            let mut buffer = vec![0u8; 8192];
+            let mut buffer = vec![0u8; 65536]; // 64KB buffer for better I/O performance
             loop {
                 let n = segment_file.read(&mut buffer).await.map_err(|e| Error::Network(e.to_string()))?;
                 if n == 0 {

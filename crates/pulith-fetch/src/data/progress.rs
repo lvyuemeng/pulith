@@ -29,6 +29,7 @@ pub struct Progress {
 
 /// Performance metrics for download operations.
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub struct PerformanceMetrics {
     /// Current download rate in bytes per second
     pub current_rate_bps: Option<f64>,
@@ -48,72 +49,37 @@ pub struct PerformanceMetrics {
     /// Number of times rate was adjusted by adaptive algorithm
     pub rate_adjustments: u32,
 
-    /// Network latency measurements (in milliseconds)
-    pub network_latency_ms: Option<f64>,
+    /// Network latency in milliseconds
+    pub network_latency_ms: Option<u64>,
 
-    /// Connection time (time to first byte, in milliseconds)
+    /// Time to establish connection in milliseconds
     pub connection_time_ms: Option<u64>,
 }
 
-/// Timing information for each download phase.
+/// Timing information for different phases of a download operation.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PhaseTimings {
-    /// Time spent connecting (ms)
+    /// Time spent connecting to the server (in milliseconds)
     pub connecting_ms: u64,
 
-    /// Time spent downloading (ms)
+    /// Time spent downloading data (in milliseconds)
     pub downloading_ms: u64,
 
-    /// Time spent verifying (ms)
+    /// Time spent verifying checksums (in milliseconds)
     pub verifying_ms: u64,
 
-    /// Time spent committing (ms)
+    /// Time spent committing the final file (in milliseconds)
     pub committing_ms: u64,
 }
 
 impl PhaseTimings {
-    /// Get total time across all phases.
+    /// Returns the total time spent across all phases (in milliseconds).
+    #[must_use]
     pub fn total_ms(&self) -> u64 {
         self.connecting_ms + self.downloading_ms + self.verifying_ms + self.committing_ms
     }
-
-    /// Get timing for a specific phase.
-    pub fn get_phase_timing(&self, phase: &FetchPhase) -> u64 {
-        match phase {
-            FetchPhase::Connecting => self.connecting_ms,
-            FetchPhase::Downloading => self.downloading_ms,
-            FetchPhase::Verifying => self.verifying_ms,
-            FetchPhase::Committing => self.committing_ms,
-            FetchPhase::Completed => self.total_ms(),
-        }
-    }
-
-    /// Set timing for a specific phase.
-    pub fn set_phase_timing(&mut self, phase: &FetchPhase, duration_ms: u64) {
-        match phase {
-            FetchPhase::Connecting => self.connecting_ms = duration_ms,
-            FetchPhase::Downloading => self.downloading_ms = duration_ms,
-            FetchPhase::Verifying => self.verifying_ms = duration_ms,
-            FetchPhase::Committing => self.committing_ms = duration_ms,
-            FetchPhase::Completed => {} // No-op for completed
-        }
-    }
 }
 
-impl Default for PerformanceMetrics {
-    fn default() -> Self {
-        Self {
-            current_rate_bps: None,
-            average_rate_bps: None,
-            bandwidth_limit_bps: None,
-            bandwidth_utilization: None,
-            phase_timings: PhaseTimings::default(),
-            rate_adjustments: 0,
-            network_latency_ms: None,
-            connection_time_ms: None,
-        }
-    }
-}
 
 impl Progress {
     /// Calculate the percentage of completion.
@@ -145,5 +111,130 @@ impl Progress {
     #[must_use]
     pub fn is_retrying(&self) -> bool {
         self.retry_count > 0
+    }
+}
+
+impl fmt::Display for Progress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.percentage() {
+            Some(pct) => write!(
+                f,
+                "{}: {:.1}% ({}/{} bytes, retry {})",
+                self.phase,
+                pct,
+                self.bytes_downloaded,
+                self.total_bytes.unwrap_or(0),
+                self.retry_count
+            ),
+            None => write!(
+                f,
+                "{}: {}/{} bytes (retry {})",
+                self.phase,
+                self.bytes_downloaded,
+                self.total_bytes.unwrap_or(0),
+                self.retry_count
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_progress_percentage() {
+        let progress = Progress {
+            phase: FetchPhase::Downloading,
+            bytes_downloaded: 50,
+            total_bytes: Some(100),
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert_eq!(progress.percentage(), Some(50.0));
+
+        // Test with zero total bytes
+        let progress = Progress {
+            phase: FetchPhase::Downloading,
+            bytes_downloaded: 0,
+            total_bytes: Some(0),
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert_eq!(progress.percentage(), Some(0.0));
+
+        // Test completed empty file
+        let progress = Progress {
+            phase: FetchPhase::Completed,
+            bytes_downloaded: 0,
+            total_bytes: Some(0),
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert_eq!(progress.percentage(), Some(100.0));
+
+        // Test with unknown total
+        let progress = Progress {
+            phase: FetchPhase::Downloading,
+            bytes_downloaded: 50,
+            total_bytes: None,
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert_eq!(progress.percentage(), None);
+    }
+
+    #[test]
+    fn test_is_completed() {
+        let progress = Progress {
+            phase: FetchPhase::Completed,
+            bytes_downloaded: 100,
+            total_bytes: Some(100),
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert!(progress.is_completed());
+
+        let progress = Progress {
+            phase: FetchPhase::Downloading,
+            bytes_downloaded: 100,
+            total_bytes: Some(100),
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert!(!progress.is_completed());
+    }
+
+    #[test]
+    fn test_is_retrying() {
+        let progress = Progress {
+            phase: FetchPhase::Downloading,
+            bytes_downloaded: 50,
+            total_bytes: Some(100),
+            retry_count: 1,
+            performance_metrics: None,
+        };
+        assert!(progress.is_retrying());
+
+        let progress = Progress {
+            phase: FetchPhase::Downloading,
+            bytes_downloaded: 50,
+            total_bytes: Some(100),
+            retry_count: 0,
+            performance_metrics: None,
+        };
+        assert!(!progress.is_retrying());
+    }
+
+    #[test]
+    fn test_performance_metrics_default() {
+        let metrics = PerformanceMetrics::default();
+        assert!(metrics.current_rate_bps.is_none());
+        assert!(metrics.average_rate_bps.is_none());
+        assert!(metrics.bandwidth_limit_bps.is_none());
+        assert!(metrics.bandwidth_utilization.is_none());
+        assert_eq!(metrics.rate_adjustments, 0);
+        assert!(metrics.network_latency_ms.is_none());
+        assert!(metrics.connection_time_ms.is_none());
     }
 }

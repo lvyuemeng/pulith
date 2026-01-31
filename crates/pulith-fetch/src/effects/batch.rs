@@ -245,18 +245,18 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
             // Start jobs that have no unmet dependencies
             let mut i = 0;
             while i < pending_jobs.len() {
-                let (index, job) = &pending_jobs[i];
+                let (_index, job) = &pending_jobs[i];
                 
                 // Check if all dependencies are satisfied
                 let deps_satisfied = job.dependencies.iter().all(|dep| {
-                    job_results.get(dep).map_or(false, |r: &BatchResult| r.success)
+                    job_results.get(dep).is_some_and(|r: &BatchResult| r.success)
                 });
 
                 if deps_satisfied {
                     let job = pending_jobs.remove(i).1;
                     let fetcher = Arc::clone(&self.fetcher);
                     let semaphore = Arc::clone(&semaphore);
-                    let fail_fast = options.fail_fast;
+                    let _fail_fast = options.fail_fast;
                     
                     let future = tokio::spawn(async move {
                         let _permit = semaphore.acquire().await.unwrap();

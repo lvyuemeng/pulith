@@ -1,12 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use bytes::Bytes;
 use futures_util::StreamExt;
 use pulith_fs::workflow::Workspace;
 use pulith_verify::{Hasher, Sha256Hasher};
 
 use crate::data::{FetchOptions, FetchPhase, Progress};
-use crate::data::progress::{PerformanceMetrics, PhaseTimings};
+use crate::data::progress::PerformanceMetrics;
 use crate::error::{Error, Result};
 use crate::effects::http::HttpClient;
 
@@ -145,8 +144,10 @@ impl<C: HttpClient> Fetcher<C> {
             }
         }
         
-        let verifying_duration = verifying_start.elapsed();
+let verifying_duration = verifying_start.elapsed();
         performance_metrics.phase_timings.verifying_ms = verifying_duration.as_millis() as u64;
+        
+        drop(file);
         
         // Committing phase
         let committing_start = std::time::Instant::now();
@@ -158,8 +159,6 @@ impl<C: HttpClient> Fetcher<C> {
             performance_metrics: Some(performance_metrics.clone()),
         });
         
-        // Move the file to the final destination
-        tokio::fs::rename(&staging_file_path, destination).await.map_err(|e| Error::Network(e.to_string()))?;
         workspace.commit().map_err(|e| Error::Network(e.to_string()))?;
         
         let committing_duration = committing_start.elapsed();

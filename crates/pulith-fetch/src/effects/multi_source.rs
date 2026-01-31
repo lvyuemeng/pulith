@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 use futures_util::stream::{StreamExt, FuturesUnordered};
-use pulith_verify::Hasher;
 
 use crate::data::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
 use crate::error::{Error, Result};
@@ -47,7 +46,7 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
         &self,
         mut sources: Vec<DownloadSource>,
         destination: &std::path::Path,
-        options: MultiSourceOptions,
+        _options: MultiSourceOptions,
     ) -> Result<std::path::PathBuf> {
         // Sort by priority (lower number = higher priority)
         sources.sort_by_key(|s| s.priority);
@@ -71,7 +70,7 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
         &self,
         sources: Vec<DownloadSource>,
         destination: &std::path::Path,
-        options: MultiSourceOptions,
+        _options: MultiSourceOptions,
     ) -> Result<std::path::PathBuf> {
         let mut futures = FuturesUnordered::new();
         let sources_count = sources.len() as u32;

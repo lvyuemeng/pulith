@@ -69,18 +69,16 @@ impl CacheEntry {
             .as_secs();
         
         // Check server-provided max-age first
-        if let Some(server_max_age) = self.max_age {
-            if self.cached_at + server_max_age < now {
+        if let Some(server_max_age) = self.max_age
+            && self.cached_at + server_max_age < now {
                 return true;
             }
-        }
         
         // Check configuration max-age
-        if let Some(config_max_age) = config_max_age {
-            if self.cached_at + config_max_age.as_secs() < now {
+        if let Some(config_max_age) = config_max_age
+            && self.cached_at + config_max_age.as_secs() < now {
                 return true;
             }
-        }
         
         false
     }
@@ -106,7 +104,7 @@ impl Cache {
             Error::Network(format!("Failed to create cache directory: {}", e))
         })?;
         
-        let mut cache = Self {
+        let cache = Self {
             entries: RwLock::new(HashMap::new()),
             current_size: RwLock::new(0),
             config,
@@ -217,18 +215,16 @@ impl Cache {
         
         if let Some(entry) = entries.get(url) {
             // Check ETag
-            if let (Some(cached_etag), Some(server_etag)) = (&entry.etag, server_etag) {
-                if cached_etag == server_etag {
+            if let (Some(cached_etag), Some(server_etag)) = (&entry.etag, server_etag)
+                && cached_etag == server_etag {
                     return Ok(true);
                 }
-            }
             
             // Check Last-Modified
-            if let (Some(cached_modified), Some(server_modified)) = (entry.last_modified, server_last_modified) {
-                if cached_modified >= server_modified {
+            if let (Some(cached_modified), Some(server_modified)) = (entry.last_modified, server_last_modified)
+                && cached_modified >= server_modified {
                     return Ok(true);
                 }
-            }
         }
         
         Ok(false)

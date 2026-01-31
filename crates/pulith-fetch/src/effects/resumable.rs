@@ -99,11 +99,10 @@ impl<C: HttpClient + 'static> ResumableFetcher<C> {
         let checkpoint_path = self.checkpoint_path(url, destination);
         
         // Try to load existing checkpoint
-        if let Ok(mut checkpoint) = self.load_checkpoint(&checkpoint_path).await {
-            if checkpoint.can_resume() {
+        if let Ok(checkpoint) = self.load_checkpoint(&checkpoint_path).await
+            && checkpoint.can_resume() {
                 return self.resume_download(&checkpoint, &checkpoint_path, options).await;
             }
-        }
 
         // Start new download
         self.start_new_download(url, destination, &checkpoint_path, options).await
@@ -122,7 +121,7 @@ impl<C: HttpClient + 'static> ResumableFetcher<C> {
             .map_err(|e| Error::Network(e.to_string()))?;
 
         // Create initial checkpoint
-        let mut checkpoint = DownloadCheckpoint::new(
+        let checkpoint = DownloadCheckpoint::new(
             url.to_string(),
             destination.to_path_buf(),
             total_bytes,
@@ -346,7 +345,7 @@ impl<C: HttpClient + 'static> ResumableFetcher<C> {
             
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
                 match self.load_checkpoint(&path).await {
-                    Ok(mut checkpoint) => {
+                    Ok(checkpoint) => {
                         if checkpoint.last_update < cutoff {
                             let _ = fs::remove_file(&path).await;
                             cleaned += 1;

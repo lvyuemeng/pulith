@@ -101,7 +101,7 @@ mod reqwest_impl {
             }
             
             let response = request.send().await?;
-            let stream = response.bytes_stream().map(|result| result.map(Bytes::from));
+            let stream = response.bytes_stream().map(|result| result);
             
             Ok(Box::pin(stream))
         }
@@ -122,3 +122,167 @@ mod reqwest_impl {
 
 #[cfg(feature = "reqwest")]
 pub use reqwest_impl::ReqwestClient;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use futures_util::stream::{self, Stream};
+
+    // Mock HTTP client for testing
+    struct MockHttpClient {
+        should_fail: bool,
+        content_length: Option<u64>,
+    }
+
+    impl MockHttpClient {
+        fn new() -> Self {
+            Self {
+                should_fail: false,
+                content_length: Some(1024),
+            }
+        }
+
+        fn with_error() -> Self {
+            Self {
+                should_fail: true,
+                content_length: None,
+            }
+        }
+
+        fn with_content_length(length: u64) -> Self {
+            Self {
+                should_fail: false,
+                content_length: Some(length),
+            }
+        }
+
+        fn without_content_length() -> Self {
+            Self {
+                should_fail: false,
+                content_length: None,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockError(String);
+
+    impl std::fmt::Display for MockError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for MockError {}
+
+    impl HttpClient for MockHttpClient {
+        type Error = MockError;
+
+        fn stream(
+            &self,
+            _url: &str,
+            _headers: &[(String, String)],
+        ) -> impl Future<Output = std::result::Result<BoxStream<'static, std::result::Result<Bytes, Self::Error>>, Self::Error>>
+               + Send {
+            async move {
+                if self.should_fail {
+                    Err(MockError("Stream failed".to_string()))
+                } else {
+                    let data = vec![Bytes::from("test data")];
+                    let stream = stream::iter(data).map(Ok);
+                    Ok(Box::pin(stream))
+                }
+            }
+        }
+
+        fn head(
+            &self,
+            _url: &str,
+        ) -> impl Future<Output = std::result::Result<Option<u64>, Self::Error>> + Send {
+            async move {
+                if self.should_fail {
+                    Err(MockError("HEAD request failed".to_string()))
+                } else {
+                    Ok(self.content_length)
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_http_client_stream_success() {
+        let client = MockHttpClient::new();
+        let result = client.stream("http://example.com", &[]).await;
+        assert!(result.is_ok());
+        
+        let stream = result.unwrap();
+        // The stream should yield one item
+        let pinned = Pin::new(&mut Box::pin(stream));
+        match futures_util::future::poll_next(pinned) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                assert_eq!(bytes, Bytes::from("test data"));
+            }
+            _ => panic!("Expected data"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_http_client_stream_error() {
+        let client = MockHttpClient::with_error();
+        let result = client.stream("http://example.com", &[]).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Stream failed");
+    }
+
+    #[tokio::test]
+    async fn test_mock_http_client_head_with_content_length() {
+        let client = MockHttpClient::with_content_length(2048);
+        let result = client.head("http://example.com").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(2048));
+    }
+
+    #[tokio::test]
+    async fn test_mock_http_client_head_without_content_length() {
+        let client = MockHttpClient::without_content_length();
+        let result = client.head("http://example.com").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn test_mock_http_client_head_error() {
+        let client = MockHttpClient::with_error();
+        let result = client.head("http://example.com").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "HEAD request failed");
+    }
+
+    #[test]
+    fn test_box_stream_type_alias() {
+        // Test that BoxStream is a valid type
+        fn _assert_send_sync<T: Send + Sync>(_: T) {}
+        
+        let _stream: BoxStream<'static, Result<Bytes, MockError>> = 
+            Box::pin(stream::empty());
+        
+        // This would fail to compile if BoxStream wasn't Send + Sync
+        // _assert_send_sync(_stream);
+    }
+
+    
+
+    #[cfg(feature = "reqwest")]
+    #[tokio::test]
+    async fn test_reqwest_client_creation() {
+        // Test that ReqwestClient can be created
+        let result = ReqwestClient::new();
+        assert!(result.is_ok());
+        
+        let client = result.unwrap();
+        // The client should be usable
+        let _client: ReqwestClient = client;
+    }
+}

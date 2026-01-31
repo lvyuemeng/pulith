@@ -251,3 +251,172 @@ impl FetchOptions {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn test_fetch_phase_display() {
+        assert_eq!(FetchPhase::Connecting.to_string(), "Connecting");
+        assert_eq!(FetchPhase::Downloading.to_string(), "Downloading");
+        assert_eq!(FetchPhase::Verifying.to_string(), "Verifying");
+        assert_eq!(FetchPhase::Committing.to_string(), "Committing");
+        assert_eq!(FetchPhase::Completed.to_string(), "Completed");
+    }
+
+    #[test]
+    fn test_fetch_phase_default() {
+        assert_eq!(FetchPhase::default(), FetchPhase::Connecting);
+    }
+
+    #[test]
+    fn test_fetch_options_default() {
+        let options = FetchOptions::default();
+        assert!(options.checksum.is_none());
+        assert_eq!(options.max_retries, 3);
+        assert_eq!(options.retry_backoff, Duration::from_millis(100));
+        assert!(options.headers.is_empty());
+        assert!(options.on_progress.is_none());
+    }
+
+    #[test]
+    fn test_fetch_options_checksum() {
+        let hash = [1u8; 32];
+        let options = FetchOptions::default().checksum(Some(hash));
+        assert_eq!(options.checksum, Some(hash));
+
+        let options = FetchOptions::default().checksum(None);
+        assert!(options.checksum.is_none());
+    }
+
+    #[test]
+    fn test_fetch_options_max_retries() {
+        let options = FetchOptions::default().max_retries(5);
+        assert_eq!(options.max_retries, 5);
+
+        let options = FetchOptions::default().max_retries(0);
+        assert_eq!(options.max_retries, 0);
+    }
+
+    #[test]
+    fn test_fetch_options_retry_backoff() {
+        let duration = Duration::from_secs(1);
+        let options = FetchOptions::default().retry_backoff(duration);
+        assert_eq!(options.retry_backoff, duration);
+    }
+
+    #[test]
+    fn test_fetch_options_header() {
+        let options = FetchOptions::default()
+            .header("Authorization", "Bearer token")
+            .header("User-Agent", "MyApp/1.0");
+
+        let headers: Vec<_> = options.headers.iter().cloned().collect();
+        assert_eq!(headers.len(), 2);
+        assert!(headers.contains(&("Authorization".to_string(), "Bearer token".to_string())));
+        assert!(headers.contains(&("User-Agent".to_string(), "MyApp/1.0".to_string())));
+    }
+
+    #[test]
+    fn test_fetch_options_headers() {
+        let headers = vec![
+            ("Authorization".to_string(), "Bearer token".to_string()),
+            ("User-Agent".to_string(), "MyApp/1.0".to_string()),
+        ];
+        let options = FetchOptions::default().headers(headers.clone());
+
+        let options_headers: Vec<_> = options.headers.iter().cloned().collect();
+        assert_eq!(options_headers, headers);
+    }
+
+    #[test]
+    fn test_fetch_options_headers_replace() {
+        let options = FetchOptions::default()
+            .header("Old", "value")
+            .headers(vec![("New".to_string(), "value".to_string())]);
+
+        let headers: Vec<_> = options.headers.iter().cloned().collect();
+        assert_eq!(headers.len(), 1);
+        assert!(headers.contains(&("New".to_string(), "value".to_string())));
+        assert!(!headers.iter().any(|(k, _)| k == "Old"));
+    }
+
+    #[test]
+    fn test_fetch_options_on_progress() {
+        let call_count = Arc::new(AtomicU32::new(0));
+        let call_count_clone = call_count.clone();
+
+        let options = FetchOptions::default().on_progress(Arc::new(move |_| {
+            call_count_clone.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        assert!(options.on_progress.is_some());
+
+        if let Some(callback) = &options.on_progress {
+            let progress = Progress {
+                phase: FetchPhase::Downloading,
+                bytes_downloaded: 100,
+                total_bytes: Some(1000),
+                retry_count: 0,
+                performance_metrics: None,
+            };
+            callback(&progress);
+            assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn test_fetch_options_debug() {
+        let options = FetchOptions::default()
+            .checksum(Some([1u8; 32]))
+            .max_retries(5)
+            .header("Test", "value");
+
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("FetchOptions"));
+        assert!(debug_str.contains("checksum: Some(["));
+        assert!(debug_str.contains("max_retries: 5"));
+        assert!(debug_str.contains("{ ... }"));
+    }
+
+    #[test]
+    fn test_fetch_options_builder_pattern() {
+        let hash = [2u8; 32];
+        let options = FetchOptions::default()
+            .checksum(Some(hash))
+            .max_retries(10)
+            .retry_backoff(Duration::from_millis(500))
+            .header("Custom", "header");
+
+        assert_eq!(options.checksum, Some(hash));
+        assert_eq!(options.max_retries, 10);
+        assert_eq!(options.retry_backoff, Duration::from_millis(500));
+        assert_eq!(options.headers.len(), 1);
+
+        // Test with headers() replacing
+        let options2 = FetchOptions::default()
+            .checksum(Some(hash))
+            .max_retries(10)
+            .retry_backoff(Duration::from_millis(500))
+            .headers(vec![("Another".to_string(), "header".to_string())]);
+
+        assert_eq!(options2.checksum, Some(hash));
+        assert_eq!(options2.max_retries, 10);
+        assert_eq!(options2.retry_backoff, Duration::from_millis(500));
+        assert_eq!(options2.headers.len(), 1);
+    }
+
+    #[test]
+    fn test_fetch_options_clone() {
+        let options = FetchOptions::default()
+            .checksum(Some([3u8; 32]))
+            .header("Test", "value");
+
+        let cloned = options.clone();
+        assert_eq!(cloned.checksum, options.checksum);
+        assert_eq!(cloned.max_retries, options.max_retries);
+        assert_eq!(cloned.headers.as_ptr(), options.headers.as_ptr()); // Same Arc
+    }
+}

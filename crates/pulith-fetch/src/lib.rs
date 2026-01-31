@@ -20,5 +20,6 @@ pub mod data;
 pub mod core;
 pub mod effects;
 pub mod transform;
+pub mod perf;
 
 pub use error::{Error, Result};

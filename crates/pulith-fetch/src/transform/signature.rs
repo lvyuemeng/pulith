@@ -344,11 +344,9 @@ impl SignatureConfig {
         // Check key ID match if both present
         if let (Some(key_key_id), Some(sig_key_id)) =
             (&self.public_key.key_id, &self.signature.key_id)
-        {
-            if key_key_id != sig_key_id {
+            && key_key_id != sig_key_id {
                 return Err(Error::InvalidState("Key ID mismatch".to_string()));
             }
-        }
 
         Ok(())
     }

@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::data::{FetchOptions, FetchPhase, Progress};
+use crate::data::FetchOptions;
 use crate::error::{Error, Result};
 use crate::effects::fetcher::Fetcher;
 use crate::effects::http::HttpClient;
@@ -73,13 +73,11 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
         let remote_metadata = self.get_remote_metadata(url).await?;
 
         // Check if we should skip download
-        if !conditional_options.force {
-            if let Some(local_metadata) = self.load_local_metadata(url, destination).await? {
-                if self.is_content_unchanged(&local_metadata, &remote_metadata) {
+        if !conditional_options.force
+            && let Some(local_metadata) = self.load_local_metadata(url, destination).await?
+                && self.is_content_unchanged(&local_metadata, &remote_metadata) {
                     return Ok(None); // Skip download
                 }
-            }
-        }
 
         // Perform the download
         let result = self.base_fetcher.fetch(url, destination, options).await;
@@ -183,7 +181,7 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
     /// Clean up old metadata files.
     pub async fn cleanup_old_metadata(&self, max_age_seconds: u64) -> Result<usize> {
         let mut cleaned = 0;
-        let cutoff = SystemTime::now()
+        let _cutoff = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() - max_age_seconds;
@@ -204,8 +202,8 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
                 let metadata = entry.metadata().await
                     .map_err(|e| Error::Network(e.to_string()))?;
                 
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                if let Ok(modified) = metadata.modified()
+                    && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
                         // File is old if its modification time is before the cutoff
                         // Since we're looking for files older than max_age_seconds,
                         // we want files where (now - file_time) > max_age_seconds
@@ -219,7 +217,6 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
                             cleaned += 1;
                         }
                     }
-                }
             }
         }
 

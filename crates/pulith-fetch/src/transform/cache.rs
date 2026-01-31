@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -23,6 +23,7 @@ pub enum CacheError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct CacheControl {
     pub max_age: Option<u64>,
     pub no_cache: bool,
@@ -34,20 +35,6 @@ pub struct CacheControl {
     pub s_maxage: Option<u64>,
 }
 
-impl Default for CacheControl {
-    fn default() -> Self {
-        Self {
-            max_age: None,
-            no_cache: false,
-            no_store: false,
-            must_revalidate: false,
-            private: false,
-            public: false,
-            proxy_revalidate: false,
-            s_maxage: None,
-        }
-    }
-}
 
 impl CacheControl {
     pub fn parse(header: &str) -> Self {
@@ -68,11 +55,10 @@ impl CacheControl {
                         if let Ok(seconds) = max_age.parse::<u64>() {
                             control.max_age = Some(seconds);
                         }
-                    } else if let Some(s_maxage) = directive.strip_prefix("s-maxage=") {
-                        if let Ok(seconds) = s_maxage.parse::<u64>() {
+                    } else if let Some(s_maxage) = directive.strip_prefix("s-maxage=")
+                        && let Ok(seconds) = s_maxage.parse::<u64>() {
                             control.s_maxage = Some(seconds);
                         }
-                    }
                 }
             }
         }
@@ -176,14 +162,13 @@ impl ConditionalHeaders {
             );
         }
 
-        if let Some(if_modified_since) = self.if_modified_since {
-            if let Ok(since_str) = httpdate::fmt_http_date(if_modified_since) {
+        if let Some(if_modified_since) = self.if_modified_since
+            && let Ok(since_str) = httpdate::fmt_http_date(if_modified_since) {
                 headers.insert(
                     reqwest::header::IF_MODIFIED_SINCE,
                     since_str.parse().unwrap(),
                 );
             }
-        }
 
         headers
     }
@@ -258,23 +243,21 @@ impl HttpCache {
             entry.etag = Some(etag.to_str().unwrap_or_default().to_string());
         }
 
-        if let Some(last_modified) = response.headers().get(reqwest::header::LAST_MODIFIED) {
-            if let Ok(parsed) =
+        if let Some(last_modified) = response.headers().get(reqwest::header::LAST_MODIFIED)
+            && let Ok(parsed) =
                 httpdate::parse_http_date(last_modified.to_str().unwrap_or_default())
             {
                 entry.last_modified = Some(parsed);
             }
-        }
 
         if let Some(cache_control) = response.headers().get(reqwest::header::CACHE_CONTROL) {
             entry.cache_control = CacheControl::parse(cache_control.to_str().unwrap_or_default());
         }
 
-        if let Some(content_length) = response.headers().get(reqwest::header::CONTENT_LENGTH) {
-            if let Ok(length) = content_length.to_str().unwrap_or_default().parse::<u64>() {
+        if let Some(content_length) = response.headers().get(reqwest::header::CONTENT_LENGTH)
+            && let Ok(length) = content_length.to_str().unwrap_or_default().parse::<u64>() {
                 entry.content_length = Some(length);
             }
-        }
 
         if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
             entry.content_type = Some(content_type.to_str().unwrap_or_default().to_string());
