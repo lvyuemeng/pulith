@@ -54,7 +54,7 @@ impl ExtendedProgress {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs(),
+                .as_millis() as u64,
             bytes_downloaded: base.bytes_downloaded,
         });
         
@@ -80,7 +80,7 @@ impl ExtendedProgress {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs(),
+                .as_millis() as u64,
             bytes_downloaded: progress.bytes_downloaded,
         });
         
@@ -118,7 +118,7 @@ impl ExtendedProgress {
         }
 
         let bytes_diff = recent.back().unwrap().bytes_downloaded - recent.front().unwrap().bytes_downloaded;
-        let rate = bytes_diff as f64 / time_diff as f64;
+        let rate = bytes_diff as f64 / (time_diff as f64 / 1000.0);
         
         // Apply smoothing to reduce variance
         Some(rate)
