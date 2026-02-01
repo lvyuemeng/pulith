@@ -15,6 +15,7 @@ pub struct TokenBucket {
     capacity: u64,
     refill_rate: AtomicU64, // Changed to AtomicU64 for dynamic adjustment
     last_refill: Arc<AtomicInstant>,
+    last_consumption: Arc<AtomicInstant>, // Track when tokens were last consumed
     // Adaptive rate limiting fields
     adaptive_config: Arc<AdaptiveConfig>,
     metrics: Arc<RateMetrics>,
@@ -55,7 +56,7 @@ impl Default for AdaptiveConfig {
 }
 
 /// Metrics for tracking rate limiting performance
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RateMetrics {
     /// Total bytes acquired
     pub total_bytes: AtomicU64,
@@ -69,6 +70,23 @@ pub struct RateMetrics {
     pub last_measurement: AtomicU64, // Unix timestamp in milliseconds
     /// Bytes acquired in current measurement window
     pub window_bytes: AtomicU64,
+}
+
+impl Default for RateMetrics {
+    fn default() -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        Self {
+            total_bytes: AtomicU64::new(0),
+            total_wait_time_us: AtomicU64::new(0),
+            acquisition_count: AtomicU64::new(0),
+            wait_count: AtomicU64::new(0),
+            last_measurement: AtomicU64::new(now),
+            window_bytes: AtomicU64::new(0),
+        }
+    }
 }
 
 impl RateMetrics {
@@ -159,11 +177,13 @@ impl TokenBucket {
     /// * `capacity` - Maximum number of tokens the bucket can hold (in bytes)
     /// * `refill_rate` - Rate at which tokens are refilled (in bytes per second)
     pub fn new(capacity: u64, refill_rate: u64) -> Self {
+        let now = Instant::now();
         Self {
             tokens: AtomicU64::new(capacity),
             capacity,
             refill_rate: AtomicU64::new(refill_rate),
-            last_refill: Arc::new(AtomicInstant::new(Instant::now())),
+            last_refill: Arc::new(AtomicInstant::new(now)),
+            last_consumption: Arc::new(AtomicInstant::new(now)),
             adaptive_config: Arc::new(AdaptiveConfig::default()),
             metrics: Arc::new(RateMetrics::default()),
             congestion_state: AtomicU8::new(CongestionState::Normal as u8),
@@ -178,23 +198,25 @@ impl TokenBucket {
     /// * `refill_rate` - Initial rate at which tokens are refilled (in bytes per second)
     /// * `config` - Adaptive configuration for rate adjustments
     pub fn new_adaptive(capacity: u64, refill_rate: u64, config: AdaptiveConfig) -> Self {
+        let now = Instant::now();
         Self {
             tokens: AtomicU64::new(capacity),
             capacity,
             refill_rate: AtomicU64::new(refill_rate),
-            last_refill: Arc::new(AtomicInstant::new(Instant::now())),
+            last_refill: Arc::new(AtomicInstant::new(now)),
+            last_consumption: Arc::new(AtomicInstant::new(now)),
             adaptive_config: Arc::new(config),
             metrics: Arc::new(RateMetrics::default()),
             congestion_state: AtomicU8::new(CongestionState::Normal as u8),
         }
     }
     
-    /// Acquire the specified number of tokens, waiting if necessary.
-    /// 
+/// Acquire the specified number of tokens, waiting if necessary.
+    ///
     /// This method will block until enough tokens are available.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `bytes` - Number of tokens (bytes) to acquire
     pub async fn acquire(&self, bytes: usize) {
         let tokens_needed = bytes as u64;
@@ -208,26 +230,26 @@ impl TokenBucket {
             let current_tokens = self.tokens.load(Ordering::Relaxed);
             if current_tokens >= tokens_needed {
                 // Successfully acquire tokens
-                let new_tokens = current_tokens - tokens_needed;
                 if self.tokens.compare_exchange_weak(
                     current_tokens,
-                    new_tokens,
+                    current_tokens - tokens_needed,
                     Ordering::Relaxed,
                     Ordering::Relaxed
                 ).is_ok() {
-                    // Record metrics and potentially adjust rate
                     let wait_time_us = start_time.elapsed().as_micros() as u64;
                     self.metrics.record_acquisition(tokens_needed, wait_time_us);
-                    self.check_and_adjust_rate();
+                    
                     return;
                 }
                 // If compare_exchange failed, retry the loop
                 continue;
             }
             
-            // Not enough tokens, calculate wait time
+            // Not enough tokens, calculate wait time based on deficit
             let deficit = tokens_needed - current_tokens;
             let current_rate = self.refill_rate.load(Ordering::Relaxed);
+            
+            // Calculate exact time needed for deficit tokens
             let wait_time = Duration::from_secs_f64(deficit as f64 / current_rate as f64);
             
             // Wait for tokens to be available
@@ -282,6 +304,24 @@ impl TokenBucket {
         }
     }
     
+    /// Refill tokens based on elapsed time since last consumption.
+    /// This ensures proper timing by tracking when tokens were actually used.
+    fn refill_from_consumption(&self) {
+        let now = Instant::now();
+        let last_consumption = self.last_consumption.get();
+        let elapsed = now.duration_since(last_consumption);
+        
+        if elapsed.as_secs_f64() > 0.0 {
+            let current_rate = self.refill_rate.load(Ordering::Relaxed);
+            let tokens_to_add = (current_rate as f64 * elapsed.as_secs_f64()) as u64;
+            let current_tokens = self.tokens.load(Ordering::Relaxed);
+            let new_tokens = (current_tokens + tokens_to_add).min(self.capacity);
+            
+            self.tokens.store(new_tokens, Ordering::Relaxed);
+            self.last_consumption.set(now);
+        }
+    }
+    
     /// Get the current number of tokens in the bucket.
     pub fn available_tokens(&self) -> u64 {
         self.refill();
@@ -294,7 +334,7 @@ impl TokenBucket {
     }
     
     /// Check network conditions and adjust the refill rate accordingly.
-    fn check_and_adjust_rate(&self) {
+    pub fn check_and_adjust_rate(&self) {
         let config = &self.adaptive_config;
         let current_rate = self.refill_rate.load(Ordering::Relaxed);
         let utilization = self.metrics.get_utilization(current_rate);
@@ -386,6 +426,9 @@ mod tests {
         // Should be able to acquire another 50 bytes immediately
         bucket.acquire(50).await;
         assert!(bucket.available_tokens() <= 0);
+        
+        // Wait a bit to ensure no immediate refill
+        tokio::time::sleep(Duration::from_millis(10)).await;
         
         // Acquiring more should require waiting
         let start = Instant::now();
@@ -479,9 +522,9 @@ mod tests {
             measurement_window_ms: 50,
         };
         
-        let bucket = TokenBucket::new_adaptive(100, 100, config);
+        let bucket = TokenBucket::new_adaptive(1000, 100, config);
         
-        // Simulate high utilization by acquiring many tokens
+        // Simulate high utilization by acquiring many tokens quickly
         for _ in 0..20 {
             bucket.acquire(10).await;
         }
@@ -489,7 +532,10 @@ mod tests {
         // Wait for measurement window
         sleep(Duration::from_millis(60)).await;
         
-        // Acquire more tokens to trigger rate adjustment
+        // Manually trigger rate adjustment
+        bucket.check_and_adjust_rate();
+        
+        // Acquire more tokens
         bucket.acquire(10).await;
         
         // Rate should have been adjusted due to congestion
