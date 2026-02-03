@@ -9,7 +9,7 @@ use std::time::Duration;
 
 // Mock stream for testing
 struct MockStream {
-    chunks: Vec<Result<Bytes, &'static str>>,
+    chunks: Vec<Bytes>,
     index: usize,
 }
 
@@ -17,20 +17,20 @@ impl MockStream {
     fn new(chunk_size: usize, num_chunks: usize) -> Self {
         let data = vec![0u8; chunk_size];
         let chunks: Vec<_> = (0..num_chunks)
-            .map(|_| Ok(Bytes::copy_from_slice(&data)))
+            .map(|_| Bytes::copy_from_slice(&data))
             .collect();
         Self { chunks, index: 0 }
     }
 }
 
 impl Stream for MockStream {
-    type Item = Result<Bytes, &'static str>;
+    type Item = Result<Bytes, Box<dyn std::error::Error + Send>>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.index < self.chunks.len() {
-            let result = Some(self.chunks[self.index].clone());
+            let chunk = self.chunks[self.index].clone();
             self.index += 1;
-            Poll::Ready(result)
+            Poll::Ready(Some(Ok(chunk)))
         } else {
             Poll::Ready(None)
         }
@@ -54,7 +54,7 @@ fn bench_throttled_stream_throughput(c: &mut Criterion) {
                 b.iter(|| {
                     rt.block_on(async {
                         let mock_stream = MockStream::new(64 * 1024, (total_bytes / (64 * 1024)) as usize);
-                        let throttled_stream = ThrottledStream::new(mock_stream, *bandwidth);
+                        let throttled_stream = ThrottledStream::new(mock_stream, bandwidth);
                         
                         let mut total_processed = 0;
                         let mut stream = Box::pin(throttled_stream);
@@ -91,7 +91,7 @@ fn bench_stream_processing_chunk_sizes(c: &mut Criterion) {
                     rt.block_on(async {
                         let bandwidth = 100 * 1024 * 1024; // High bandwidth
                         let num_chunks = (total_bytes / chunk_size) as usize;
-                        let mock_stream = MockStream::new(*chunk_size, num_chunks);
+                        let mock_stream = MockStream::new(chunk_size as usize, num_chunks);
                         let throttled_stream = ThrottledStream::new(mock_stream, bandwidth);
                         
                         let mut total_processed = 0;

@@ -126,9 +126,7 @@ pub use reqwest_impl::ReqwestClient;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
-    use futures_util::stream::{self, Stream};
+    use futures_util::stream::{self, StreamExt};
 
     // Mock HTTP client for testing
     struct MockHttpClient {
@@ -192,7 +190,7 @@ mod tests {
                 } else {
                     let data = vec![Bytes::from("test data")];
                     let stream = stream::iter(data).map(Ok);
-                    Ok(Box::pin(stream))
+                    Ok(Box::pin(stream) as BoxStream<'static, _>)
                 }
             }
         }
@@ -217,14 +215,12 @@ mod tests {
         let result = client.stream("http://example.com", &[]).await;
         assert!(result.is_ok());
         
-        let stream = result.unwrap();
+        let mut stream = result.unwrap();
         // The stream should yield one item
-        let pinned = Pin::new(&mut Box::pin(stream));
-        match futures_util::future::poll_next(pinned) {
-            Poll::Ready(Some(Ok(bytes))) => {
-                assert_eq!(bytes, Bytes::from("test data"));
-            }
-            _ => panic!("Expected data"),
+        if let Some(Ok(bytes)) = stream.next().await {
+            assert_eq!(bytes, Bytes::from("test data"));
+        } else {
+            panic!("Expected data");
         }
     }
 
@@ -233,7 +229,10 @@ mod tests {
         let client = MockHttpClient::with_error();
         let result = client.stream("http://example.com", &[]).await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Stream failed");
+        match result {
+            Err(e) => assert_eq!(e.to_string(), "Stream failed"),
+            _ => panic!("Expected error"),
+        }
     }
 
     #[tokio::test]
@@ -257,22 +256,18 @@ mod tests {
         let client = MockHttpClient::with_error();
         let result = client.head("http://example.com").await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "HEAD request failed");
+        match result {
+            Err(e) => assert_eq!(e.to_string(), "HEAD request failed"),
+            _ => panic!("Expected error"),
+        }
     }
 
     #[test]
     fn test_box_stream_type_alias() {
         // Test that BoxStream is a valid type
-        fn _assert_send_sync<T: Send + Sync>(_: T) {}
-        
-        let _stream: BoxStream<'static, Result<Bytes, MockError>> = 
+        let _stream: BoxStream<'static, std::result::Result<Bytes, MockError>> = 
             Box::pin(stream::empty());
-        
-        // This would fail to compile if BoxStream wasn't Send + Sync
-        // _assert_send_sync(_stream);
     }
-
-    
 
     #[cfg(feature = "reqwest")]
     #[tokio::test]

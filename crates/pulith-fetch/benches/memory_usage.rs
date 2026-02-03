@@ -1,7 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use pulith_fetch::core::segment::calculate_segments;
+use pulith_fetch::core::calculate_segments;
 use pulith_fetch::data::sources::DownloadSource;
-use pulith_fetch::effects::segmented::SegmentedDownloader;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,13 +58,10 @@ fn bench_segment_calculation_memory(c: &mut Criterion) {
                     ALLOCATED.store(0, Ordering::Relaxed);
 
                     let segment_size = 1024 * 1024; // 1MB segments
-                    let max_segments = 16;
+                    let num_segments = ((file_size / segment_size) as u32).max(1).min(16);
 
-                    let segments = calculate_segments(
-                        black_box(file_size),
-                        black_box(segment_size),
-                        black_box(max_segments),
-                    );
+                    let segments =
+                        calculate_segments(black_box(file_size), black_box(num_segments)).unwrap();
 
                     let memory_used = get_memory_usage();
                     (segments, memory_used)
@@ -81,7 +77,7 @@ fn bench_large_buffer_allocation(c: &mut Criterion) {
     let mut group = c.benchmark_group("large_buffer_allocation");
 
     for buffer_size in [1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024].iter() {
-        group.throughput(Throughput::Bytes(*buffer_size));
+        group.throughput(Throughput::Bytes(*buffer_size as u64));
         group.bench_with_input(
             BenchmarkId::new("allocate_buffer", buffer_size),
             buffer_size,
@@ -90,7 +86,7 @@ fn bench_large_buffer_allocation(c: &mut Criterion) {
                     // Reset memory counter
                     ALLOCATED.store(0, Ordering::Relaxed);
 
-                    let buffer = vec![0u8; buffer_size];
+                    let buffer = vec![0u8; buffer_size as usize];
                     black_box(buffer);
 
                     let memory_used = get_memory_usage();
@@ -138,7 +134,7 @@ fn bench_stream_processing_memory(c: &mut Criterion) {
     let mut group = c.benchmark_group("stream_processing_memory");
 
     for chunk_size in [1024, 4096, 16384, 65536].iter() {
-        group.throughput(Throughput::Bytes(*chunk_size));
+        group.throughput(Throughput::Bytes(*chunk_size as u64));
         group.bench_with_input(
             BenchmarkId::new("stream_chunk", chunk_size),
             chunk_size,
@@ -150,7 +146,7 @@ fn bench_stream_processing_memory(c: &mut Criterion) {
                     // Simulate processing multiple chunks
                     let mut chunks = Vec::new();
                     for _ in 0..100 {
-                        let chunk = vec![0u8; chunk_size];
+                        let chunk = vec![0u8; chunk_size as usize];
                         chunks.push(chunk);
                     }
 

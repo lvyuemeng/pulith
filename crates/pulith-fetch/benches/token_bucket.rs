@@ -95,12 +95,51 @@ fn bench_token_bucket_try_acquire(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_set_rate_dynamics(c: &mut Criterion) {
+    let mut group = c.benchmark_group("set_rate_dynamics");
+
+    group.bench_function("set_rate", |b| {
+        let bucket = TokenBucket::new(10 * 1024 * 1024, 10 * 1024 * 1024);
+        b.iter(|| {
+            bucket.set_rate(black_box(5 * 1024 * 1024));
+        });
+    });
+
+    group.bench_function("current_rate", |b| {
+        let bucket = TokenBucket::new(10 * 1024 * 1024, 10 * 1024 * 1024);
+        b.iter(|| {
+            black_box(bucket.current_rate());
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_metrics_collection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("metrics_collection");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    group.bench_function("get_metrics", |b| {
+        let bucket = TokenBucket::new(10 * 1024 * 1024, 10 * 1024 * 1024);
+        rt.block_on(async {
+            bucket.acquire(1024).await;
+        });
+        b.iter(|| {
+            black_box(bucket.get_metrics());
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     name = token_bucket_benches;
     config = Criterion::default()
         .measurement_time(Duration::from_secs(10))
         .sample_size(20);
-    targets = bench_token_bucket_throughput, bench_token_bucket_concurrent, bench_token_bucket_try_acquire
+    targets = bench_token_bucket_throughput, bench_token_bucket_concurrent, bench_token_bucket_try_acquire,
+              bench_set_rate_dynamics, bench_metrics_collection
 );
 
 criterion_main!(token_bucket_benches);
