@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::data::{FetchOptions, FetchPhase, Progress};
+use crate::config::{FetchOptions, FetchPhase};
+use crate::progress::Progress;
 use crate::error::{Error, Result};
-use crate::effects::fetcher::Fetcher;
-use crate::effects::http::HttpClient;
+use crate::fetch::fetcher::Fetcher;
+use crate::net::http::HttpClient;
 
 /// Checkpoint data for resumable downloads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,7 +372,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::sleep;
     use bytes::Bytes;
-    use crate::effects::BoxStream;
+    use crate::net::http::BoxStream;
     
     /// Simple mock HTTP client for testing
     #[derive(Debug)]

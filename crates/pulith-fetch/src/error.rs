@@ -38,7 +38,7 @@ pub enum Error {
     Timeout(String),
 
     #[error("transform error: {0}")]
-    Transform(#[from] crate::transform::TransformError),
+    Transform(#[from] crate::codec::decompress::TransformError),
 }
 
 impl From<std::io::Error> for Error {
@@ -211,7 +211,8 @@ mod tests {
 
     #[test]
     fn test_from_transform_error() {
-        let transform_err = crate::transform::TransformError::Transform("unsupported".to_string());
+        let transform_err =
+            crate::codec::decompress::TransformError::Transform("unsupported".to_string());
         let error: Error = transform_err.into();
         match error {
             Error::Transform(_) => (),

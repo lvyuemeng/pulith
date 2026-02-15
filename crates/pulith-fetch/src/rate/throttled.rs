@@ -10,7 +10,7 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
 
-use crate::core::TokenBucket;
+use crate::rate::bandwidth::TokenBucket;
 use crate::error::Error;
 
 /// A stream that throttles the rate of data transfer.

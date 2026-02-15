@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
-use pulith_fetch::data::{FetchOptions, FetchPhase, Progress};
-use pulith_fetch::effects::Fetcher;
+use pulith_fetch::{FetchOptions, FetchPhase, Progress};
+use pulith_fetch::Fetcher;
 
 fn create_temp_dir() -> PathBuf {
     let temp_dir = std::env::temp_dir().join(format!(
@@ -53,7 +53,7 @@ impl std::fmt::Display for TestError {
 impl std::error::Error for TestError {}
 
 #[async_trait::async_trait]
-impl pulith_fetch::effects::HttpClient for TestHttpClient {
+impl pulith_fetch::HttpClient for TestHttpClient {
     type Error = TestError;
     
     fn head(
@@ -72,7 +72,7 @@ impl pulith_fetch::effects::HttpClient for TestHttpClient {
         &self,
         _url: &str,
         _headers: &[(String, String)],
-    ) -> impl std::future::Future<Output = std::result::Result<pulith_fetch::effects::BoxStream<'static, std::result::Result<Bytes, Self::Error>>, Self::Error>> + Send {
+    ) -> impl std::future::Future<Output = std::result::Result<pulith_fetch::net::http::BoxStream<'static, std::result::Result<Bytes, Self::Error>>, Self::Error>> + Send {
         let data = self.data.clone();
         let delay = self.delay;
         async move {
@@ -85,7 +85,7 @@ impl pulith_fetch::effects::HttpClient for TestHttpClient {
                 .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
                 .collect();
             
-            let stream: pulith_fetch::effects::BoxStream<'static, std::result::Result<Bytes, Self::Error>> = 
+            let stream: pulith_fetch::net::http::BoxStream<'static, std::result::Result<Bytes, Self::Error>> = 
                 Box::pin(futures_util::stream::iter(chunks));
             Ok(stream)
         }

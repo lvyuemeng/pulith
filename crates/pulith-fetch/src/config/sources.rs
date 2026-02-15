@@ -1,4 +1,3 @@
-
 /// Represents a download source with priority and metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadSource {

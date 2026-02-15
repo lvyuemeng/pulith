@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use futures_util::stream::{StreamExt, FuturesUnordered};
 
-use crate::data::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
+use crate::config::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
 use crate::error::{Error, Result};
-use crate::effects::fetcher::Fetcher;
-use crate::effects::http::HttpClient;
+use crate::fetch::fetcher::Fetcher;
+use crate::net::http::HttpClient;
 
 /// Multi-source fetcher implementation.
 pub struct MultiSourceFetcher<C: HttpClient> {
@@ -49,7 +49,7 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
         _options: MultiSourceOptions,
     ) -> Result<std::path::PathBuf> {
         for source in sources.drain(..) {
-            match self.try_source(&source, destination, &crate::data::FetchOptions::default()).await {
+            match self.try_source(&source, destination, &crate::FetchOptions::default()).await {
                 Ok(path) => return Ok(path),
                 Err(_) => continue,
             }
@@ -70,7 +70,7 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
             let fetcher = self.fetcher.clone();
             let dest = destination.to_path_buf();
             let future = async move {
-                fetcher.fetch(&source.url, &dest, crate::data::FetchOptions::default()).await
+                fetcher.fetch(&source.url, &dest, crate::FetchOptions::default()).await
             };
             futures.push(Box::pin(future));
         }
@@ -113,7 +113,7 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
         &self,
         source: &DownloadSource,
         destination: &std::path::Path,
-        options: &crate::data::FetchOptions,
+        options: &crate::FetchOptions,
     ) -> Result<std::path::PathBuf> {
             // Create fetch options for this source
             let mut fetch_options = options.clone();
@@ -127,11 +127,11 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
+    use crate::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
     use crate::error::Error;
     use std::sync::Arc;
     use bytes::Bytes;
-    use crate::effects::http::BoxStream;
+    use crate::net::http::BoxStream;
 
     // Mock error type that implements std::error::Error
     #[derive(Debug)]

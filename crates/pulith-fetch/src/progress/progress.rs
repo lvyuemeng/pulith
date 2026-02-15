@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::data::options::FetchPhase;
+use crate::config::fetch_options::FetchPhase;
 
 /// Represents the current state of a download operation.
 ///
@@ -28,8 +28,7 @@ pub struct Progress {
 }
 
 /// Performance metrics for download operations.
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PerformanceMetrics {
     /// Current download rate in bytes per second
     pub current_rate_bps: Option<f64>,
@@ -79,7 +78,6 @@ impl PhaseTimings {
         self.connecting_ms + self.downloading_ms + self.verifying_ms + self.committing_ms
     }
 }
-
 
 impl Progress {
     /// Calculate the percentage of completion.

@@ -1,4 +1,3 @@
-
 /// Returns `true` if the HTTP status code indicates a redirect.
 ///
 /// # Recognized Redirect Codes
@@ -12,7 +11,7 @@
 /// # Examples
 ///
 /// ```
-/// use pulith_fetch::core::is_redirect;
+/// use pulith_fetch::is_redirect;
 ///
 /// assert!(is_redirect(301));
 /// assert!(is_redirect(302));

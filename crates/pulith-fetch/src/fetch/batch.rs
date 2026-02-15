@@ -10,9 +10,9 @@ use std::sync::Arc;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
 
-use crate::data::{FetchOptions, DownloadSource, SourceType};
+use crate::{FetchOptions, DownloadSource, SourceType};
 use crate::error::{Error, Result};
-use crate::effects::{Fetcher, HttpClient};
+use crate::{Fetcher, HttpClient};
 
 /// Configuration for batch downloads.
 #[derive(Debug, Clone)]

@@ -6,8 +6,9 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::collections::VecDeque;
 
-use crate::data::{FetchPhase, Progress};
-use crate::data::progress::PerformanceMetrics;
+use crate::config::{FetchPhase, FetchOptions};
+use crate::progress::Progress;
+use crate::progress::PerformanceMetrics;
 
 /// Extended progress information with detailed metrics.
 #[derive(Debug, Clone)]

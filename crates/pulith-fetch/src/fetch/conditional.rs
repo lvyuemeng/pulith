@@ -7,10 +7,10 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::data::FetchOptions;
+use crate::config::FetchOptions;
 use crate::error::{Error, Result};
-use crate::effects::fetcher::Fetcher;
-use crate::effects::http::HttpClient;
+use crate::fetch::fetcher::Fetcher;
+use crate::net::http::HttpClient;
 
 /// Metadata about a remote file for conditional requests.
 #[derive(Debug, Clone)]
@@ -259,10 +259,10 @@ mod tests {
             &self,
             _url: &str,
             _headers: &[(String, String)],
-        ) -> impl Future<Output = std::result::Result<crate::effects::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>>, Self::Error>>
+        ) -> impl Future<Output = std::result::Result<crate::net::http::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>>, Self::Error>>
                + Send {
             async move {
-                let empty: crate::effects::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>> = 
+                let empty: crate::net::http::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>> = 
                     Box::pin(futures_util::stream::empty());
                 Ok(empty)
             }

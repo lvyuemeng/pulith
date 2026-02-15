@@ -13,7 +13,7 @@ use std::time::Duration;
 ///
 /// ```
 /// use std::time::Duration;
-/// use pulith_fetch::core::retry_delay;
+/// use pulith_fetch::retry_delay;
 ///
 /// // No retries yet (first attempt) - no delay needed before calling this
 /// assert_eq!(retry_delay(0, Duration::from_millis(100)), Duration::from_millis(100));

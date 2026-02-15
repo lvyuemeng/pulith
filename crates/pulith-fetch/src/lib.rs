@@ -2,10 +2,15 @@
 //!
 //! # Architecture
 //!
-//! This crate follows the three-layer pattern:
-//! - [`data`] - Immutable configuration and types
-//! - [`core`] - Pure transformations
-//! - [`effects`] - I/O operations with trait abstraction
+//! This crate follows a functional group structure:
+//! - `rate` - Rate limiting, backoff, throttling
+//! - `segment` - File segmentation and validation
+//! - `fetch` - Download strategies
+//! - `config` - Configuration types
+//! - `progress` - Progress tracking
+//! - `cache` - Caching implementations
+//! - `codec` - Stream processing (decompress, verify, signature)
+//! - `net` - Network abstractions
 //!
 //! # Key Features
 //!
@@ -16,10 +21,23 @@
 
 mod error;
 
-pub mod data;
-pub mod core;
-pub mod effects;
-pub mod transform;
+pub mod rate;
+pub mod segment;
+pub mod fetch;
+pub mod config;
+pub mod progress;
+pub mod cache;
+pub mod codec;
+pub mod net;
 pub mod perf;
 
 pub use error::{Error, Result};
+
+pub use rate::{retry_delay, TokenBucket, ThrottledStream, AsyncThrottledStream};
+pub use segment::{calculate_segments, Segment, is_redirect};
+pub use config::{FetchOptions, FetchPhase, DownloadSource, MultiSourceOptions, SourceSelectionStrategy, SourceType};
+pub use progress::{Progress, ExtendedProgress, PerformanceMetrics, PhaseTimings, ProgressReporter};
+pub use net::{HttpClient, BoxStream, ReqwestClient, Protocol};
+pub use fetch::{Fetcher, SegmentedFetcher, SegmentedOptions, MultiSourceFetcher, ConditionalFetcher, RemoteMetadata, ConditionalOptions, BatchFetcher, BatchOptions, BatchDownloadJob, ResumableFetcher, DownloadCheckpoint};
+pub use cache::{Cache, HttpCache, CacheControl, CacheEntry, CacheError, CacheStats};
+pub use codec::{StreamTransform, TransformError, verify_checksum, verify_signature, ChecksumConfig, SignatureVerifier, MultiVerifier, StreamVerifier};

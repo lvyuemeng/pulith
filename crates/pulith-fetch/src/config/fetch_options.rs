@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::progress::Progress;
+use crate::progress::Progress;
 
 /// Phases of a download operation.
 ///
@@ -60,7 +60,7 @@ impl std::fmt::Display for FetchPhase {
 /// # Examples
 ///
 /// ```
-/// use pulith_fetch::data::FetchOptions;
+/// use pulith_fetch::FetchOptions;
 /// use std::time::Duration;
 ///
 /// let options = FetchOptions::default()
@@ -141,7 +141,7 @@ impl FetchOptions {
     /// # Examples
     ///
     /// ```
-    /// use pulith_fetch::data::FetchOptions;
+    /// use pulith_fetch::FetchOptions;
     ///
     /// let hash = [0u8; 32]; // Your expected SHA-256
     /// let options = FetchOptions::default().checksum(Some(hash));
@@ -157,7 +157,7 @@ impl FetchOptions {
     /// # Examples
     ///
     /// ```
-    /// use pulith_fetch::data::FetchOptions;
+    /// use pulith_fetch::FetchOptions;
     ///
     /// let options = FetchOptions::default().max_retries(5);
     /// ```
@@ -172,7 +172,7 @@ impl FetchOptions {
     /// # Examples
     ///
     /// ```
-    /// use pulith_fetch::data::FetchOptions;
+    /// use pulith_fetch::FetchOptions;
     /// use std::time::Duration;
     ///
     /// let options = FetchOptions::default()
@@ -189,7 +189,7 @@ impl FetchOptions {
     /// # Examples
     ///
     /// ```
-    /// use pulith_fetch::data::FetchOptions;
+    /// use pulith_fetch::FetchOptions;
     ///
     /// let options = FetchOptions::default()
     ///     .header("Authorization", "Bearer token")
@@ -210,7 +210,7 @@ impl FetchOptions {
     /// # Examples
     ///
     /// ```
-    /// use pulith_fetch::data::FetchOptions;
+    /// use pulith_fetch::FetchOptions;
     ///
     /// let headers = vec![
     ///     ("Authorization".to_string(), "Bearer token".to_string()),
@@ -229,7 +229,7 @@ impl FetchOptions {
     /// # Examples
     ///
     /// ```
-    /// use pulith_fetch::data::{FetchOptions, FetchPhase};
+    /// use pulith_fetch::{FetchOptions, FetchPhase};
     /// use std::sync::Arc;
     ///
     /// let options = FetchOptions::default()

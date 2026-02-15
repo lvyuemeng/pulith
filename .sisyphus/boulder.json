@@ -1,12 +1,9 @@
 {
-  "active_plan": "C:\\Users\\nostalgia\\proj\\dev\\pulith\\.sisyphus\\plans\\pulith-fetch-benchmarks-update.md",
-  "started_at": "2026-02-03T04:58:53.531Z",
-  "completed_at": "2026-02-03T05:15:00.000Z",
+  "active_plan": "C:\\Users\\nostalgia\\proj\\dev\\pulith\\.sisyphus\\plans\\pulith-fetch-reorganize.md",
+  "started_at": "2026-02-15T03:11:28.660Z",
   "session_ids": [
-    "ses_3de4dd924ffeZhb60ylWnNIs3a"
+    "ses_3a0bf3e57ffeTEt30n4bC3hAMQ"
   ],
-  "plan_name": "pulith-fetch-benchmarks-update",
-  "status": "completed",
-  "tasks_completed": 5,
-  "tasks_total": 5
+  "plan_name": "pulith-fetch-reorganize",
+  "agent": "atlas"
 }

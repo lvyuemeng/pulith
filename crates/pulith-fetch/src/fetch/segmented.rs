@@ -13,10 +13,11 @@ use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use tokio::sync::Semaphore;
 use futures_util::stream::FuturesUnordered;
 
-use crate::core::{Segment, calculate_segments};
-use crate::data::{FetchOptions, FetchPhase, Progress};
+use crate::segment::{Segment, calculate_segments};
+use crate::config::{FetchOptions, FetchPhase};
+use crate::progress::Progress;
 use crate::error::{Error, Result};
-use crate::effects::http::HttpClient;
+use crate::net::http::HttpClient;
 
 /// Configuration for segmented downloads.
 #[derive(Debug, Clone)]
@@ -261,7 +262,7 @@ self.report_progress(options, Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::calculate_segments;
+    use crate::calculate_segments;
 
     #[test]
     fn test_segment_calculation() {

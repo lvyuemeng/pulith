@@ -4,10 +4,11 @@ use futures_util::StreamExt;
 use pulith_fs::workflow::Workspace;
 use pulith_verify::{Hasher, Sha256Hasher};
 
-use crate::data::{FetchOptions, FetchPhase, Progress};
-use crate::data::progress::PerformanceMetrics;
+use crate::config::{FetchOptions, FetchPhase};
+use crate::progress::Progress;
+use crate::progress::PerformanceMetrics;
 use crate::error::{Error, Result};
-use crate::effects::http::HttpClient;
+use crate::net::http::HttpClient;
 
 /// The main fetcher implementation that handles downloading files with verification.
 pub struct Fetcher<C: HttpClient> {
@@ -185,7 +186,7 @@ let verifying_duration = verifying_start.elapsed();
     /// Try to fetch from a single source with verification.
     pub async fn try_source(
         &self,
-        source: &crate::data::DownloadSource,
+        source: &crate::DownloadSource,
         destination: &Path,
         options: &FetchOptions,
     ) -> Result<PathBuf> {
@@ -202,8 +203,9 @@ let verifying_duration = verifying_start.elapsed();
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use crate::data::{FetchOptions, FetchPhase, Progress};
-    use crate::effects::http::BoxStream;
+    use crate::config::{FetchOptions, FetchPhase};
+    use crate::progress::Progress;
+    use crate::net::http::BoxStream;
     use bytes::Bytes;
     use std::sync::Arc;
 
@@ -364,7 +366,7 @@ mod tests {
         let client = MockHttpClient::new();
         let fetcher = Fetcher::new(client, "/tmp");
         
-        let source = crate::data::DownloadSource::new("http://example.com".to_string());
+        let source = crate::DownloadSource::new("http://example.com".to_string());
         let destination = PathBuf::from("/tmp/test_file");
         let options = FetchOptions::default();
         
