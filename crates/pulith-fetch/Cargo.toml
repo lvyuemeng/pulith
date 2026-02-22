@@ -27,7 +27,7 @@ sha2 = "0.10"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 
-reqwest = { version = "0.13.1", features = [
+reqwest = { version = "0.13.2", features = [
 	"stream",
 	"default-tls",
 ], optional = true }
