@@ -25,7 +25,7 @@ tempfile.workspace = true
 sha2 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 blake3 = { version = "1", optional = true }
-tar = { version = "0.4.44", optional = true }
+tar = { version = "0.4.45", optional = true }
 xz2 = { version = "0.1.7", optional = true }
 zstd = { version = "0.13.3", optional = true }
 flate2 = { version = "1.1.9", optional = true }
