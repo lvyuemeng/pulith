@@ -57,7 +57,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
-        std::fs::create_dir_all(&src.join("subdir")).unwrap();
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
         std::fs::write(src.join("file.txt"), "data").unwrap();
         std::fs::write(src.join("subdir/nested.txt"), "nested").unwrap();
 

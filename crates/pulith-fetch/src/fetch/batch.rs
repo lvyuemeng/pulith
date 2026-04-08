@@ -7,11 +7,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use futures_util::{stream::FuturesUnordered, StreamExt};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::Semaphore;
 
-use crate::{FetchOptions, DownloadSource, SourceType};
 use crate::error::{Error, Result};
+use crate::{DownloadSource, FetchOptions, SourceType};
 use crate::{Fetcher, HttpClient};
 
 /// Configuration for batch downloads.
@@ -81,7 +81,7 @@ pub struct BatchResult {
 /// Batch fetcher implementation.
 pub struct BatchFetcher<C: HttpClient> {
     fetcher: Arc<Fetcher<C>>,
-    workspace_root: PathBuf,
+    _workspace_root: PathBuf,
 }
 
 impl<C: HttpClient + 'static> BatchFetcher<C> {
@@ -89,7 +89,7 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
     pub fn new(fetcher: Fetcher<C>, workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             fetcher: Arc::new(fetcher),
-            workspace_root: workspace_root.into(),
+            _workspace_root: workspace_root.into(),
         }
     }
 
@@ -246,10 +246,12 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
             let mut i = 0;
             while i < pending_jobs.len() {
                 let (_index, job) = &pending_jobs[i];
-                
+
                 // Check if all dependencies are satisfied
                 let deps_satisfied = job.dependencies.iter().all(|dep| {
-                    job_results.get(dep).is_some_and(|r: &BatchResult| r.success)
+                    job_results
+                        .get(dep)
+                        .is_some_and(|r: &BatchResult| r.success)
                 });
 
                 if deps_satisfied {
@@ -257,11 +259,11 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
                     let fetcher = Arc::clone(&self.fetcher);
                     let semaphore = Arc::clone(&semaphore);
                     let _fail_fast = options.fail_fast;
-                    
+
                     let future = tokio::spawn(async move {
                         let _permit = semaphore.acquire().await.unwrap();
                         let start = std::time::Instant::now();
-                        
+
                         let result = match Self::execute_single_job(&fetcher, &job).await {
                             Ok(path) => BatchResult {
                                 id: job.id.clone(),
@@ -281,7 +283,7 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
 
                         (job.id, result)
                     });
-                    
+
                     futures.push(future);
                 } else {
                     i += 1;
@@ -290,10 +292,9 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
 
             // Wait for at least one job to complete
             if let Some(result) = futures.next().await {
-                let (job_id, job_result): (String, BatchResult) = result.map_err(|e| {
-                    Error::Network(format!("Task join error: {}", e))
-                })?;
-                
+                let (job_id, job_result): (String, BatchResult) =
+                    result.map_err(|e| Error::Network(format!("Task join error: {}", e)))?;
+
                 job_results.insert(job_id.clone(), job_result.clone());
                 results.push(job_result.clone());
 
@@ -324,7 +325,7 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
         };
 
         let options = job.options.clone().unwrap_or_default();
-        
+
         fetcher
             .try_source(&source, &job.destination, &options)
             .await
@@ -341,7 +342,10 @@ mod tests {
         let options = BatchOptions::default();
         assert_eq!(options.max_concurrent, 4);
         assert!(!options.fail_fast);
-        assert!(matches!(options.retry_policy, BatchRetryPolicy::RetryCount(3)));
+        assert!(matches!(
+            options.retry_policy,
+            BatchRetryPolicy::RetryCount(3)
+        ));
     }
 
     #[test]
@@ -371,13 +375,16 @@ mod tests {
             fn validate_dependencies(&self, _jobs: &[BatchDownloadJob]) -> Result<()> {
                 Ok(())
             }
-            fn topological_sort(&self, _jobs: &[BatchDownloadJob]) -> Result<Vec<BatchDownloadJob>> {
+            fn topological_sort(
+                &self,
+                _jobs: &[BatchDownloadJob],
+            ) -> Result<Vec<BatchDownloadJob>> {
                 Ok(_jobs.to_vec())
             }
         }
-        
+
         let fetcher = MockFetcher;
-        
+
         // This should not panic
         assert!(fetcher.validate_dependencies(&jobs).is_ok());
     }
@@ -407,12 +414,14 @@ mod tests {
         struct MockFetcher;
         impl MockFetcher {
             fn validate_dependencies(&self, _jobs: &[BatchDownloadJob]) -> Result<()> {
-                Err(Error::InvalidState("Circular dependency detected".to_string()))
+                Err(Error::InvalidState(
+                    "Circular dependency detected".to_string(),
+                ))
             }
         }
-        
+
         let fetcher = MockFetcher;
-        
+
         // This should detect the circular dependency
         assert!(fetcher.validate_dependencies(&jobs).is_err());
     }
@@ -456,11 +465,11 @@ mod tests {
                 Ok(jobs.to_vec())
             }
         }
-        
+
         let fetcher = MockFetcher;
-        
+
         let sorted = fetcher.topological_sort(&jobs).unwrap();
-        
+
         // job1 should come first (no dependencies)
         assert_eq!(sorted[0].id, "job1");
         // job2 should come after job1

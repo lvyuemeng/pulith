@@ -76,7 +76,7 @@ impl ChecksumConfig {
                     return Err(Error::InvalidState(format!(
                         "Unsupported hash algorithm: {}",
                         algo
-                    )))
+                    )));
                 }
             };
 
@@ -119,7 +119,7 @@ impl StreamVerifier<Sha256Hasher> {
                 return Err(Error::InvalidState(format!(
                     "Hash algorithm {:?} not yet implemented",
                     config.algorithm
-                )))
+                )));
             }
         };
 

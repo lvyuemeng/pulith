@@ -124,18 +124,19 @@ mod tests {
     #[test]
     fn test_os_current_matches_cfg() {
         let os = OS::current();
-        match os {
-            OS::Windows => assert!(cfg!(target_os = "windows")),
-            OS::MacOS => assert!(cfg!(target_os = "macos")),
-            OS::Linux => assert!(cfg!(target_os = "linux")),
-            OS::FreeBSD => assert!(cfg!(target_os = "freebsd")),
-            OS::Unknown => assert!(!cfg!(any(
-                target_os = "windows",
-                target_os = "macos",
-                target_os = "linux",
-                target_os = "freebsd"
-            ))),
-        }
+        let expected = if cfg!(target_os = "windows") {
+            OS::Windows
+        } else if cfg!(target_os = "macos") {
+            OS::MacOS
+        } else if cfg!(target_os = "linux") {
+            OS::Linux
+        } else if cfg!(target_os = "freebsd") {
+            OS::FreeBSD
+        } else {
+            OS::Unknown
+        };
+
+        assert_eq!(os, expected);
     }
 
     #[test]

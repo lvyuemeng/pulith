@@ -1,5 +1,7 @@
-pub mod progress;
-pub mod extended_progress;
+#![allow(clippy::module_inception)]
 
-pub use progress::{Progress, PerformanceMetrics, PhaseTimings};
+pub mod extended_progress;
+pub mod progress;
+
 pub use extended_progress::{ExtendedProgress, ProgressReporter};
+pub use progress::{PerformanceMetrics, PhaseTimings, Progress};

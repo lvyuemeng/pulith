@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn test_path_modifier_new() {
         let modifier = PathModifier::new();
-        assert!(modifier.paths.is_empty() || !modifier.paths.is_empty());
+        assert_eq!(modifier.paths, path_env().unwrap_or_default());
     }
 
     #[test]
@@ -135,30 +135,28 @@ mod tests {
     #[test]
     fn test_path_modifier_contains() {
         let modifier = PathModifier::new();
-        assert!(
-            modifier.contains(PathBuf::from("/usr/bin").as_path())
-                || !modifier.contains(PathBuf::from("/usr/bin").as_path())
-        );
+        let path = PathBuf::from("/usr/bin");
+        assert_eq!(modifier.contains(path.as_path()), is_in_path(path));
     }
 
     #[test]
     fn test_path_env_returns_optional() {
         let path = path_env();
-        if let Some(paths) = &path {
-            assert!(paths.is_empty() || !paths.is_empty());
-        }
+        assert_eq!(path.is_some(), std::env::var_os("PATH").is_some());
     }
 
     #[test]
     fn test_is_in_path_with_existing_path() {
-        let result = is_in_path("/usr/bin");
-        assert!(result || !result);
+        if let Some(paths) = path_env()
+            && let Some(existing_path) = paths.first()
+        {
+            assert!(is_in_path(existing_path));
+        }
     }
 
     #[test]
     fn test_is_in_path_with_fake_path() {
-        let result = is_in_path("/fake/nonexistent/path/12345");
-        assert!(!result || result);
+        assert!(!is_in_path("/fake/nonexistent/path/12345"));
     }
 
     #[test]

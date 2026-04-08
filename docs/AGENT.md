@@ -258,7 +258,7 @@ use crate::module::Item;
 
 ## References
 
-- [README.md](./README.md) - Project overview and getting started
+- [README.md](../README.md) - Project overview and getting started
 - [design.md](./design.md) - Design specification and crate architecture
 - [docs/design/*.md](./design/) - Detailed design documents for each crate
 - [docs/design/verify.md](./design/verify.md) - Content verification design

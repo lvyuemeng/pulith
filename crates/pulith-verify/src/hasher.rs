@@ -52,13 +52,31 @@ impl Sha256Hasher {
 }
 
 #[cfg(feature = "blake3")]
-pub type Blake3Hasher = DigestHasher<blake3::Hasher>;
+pub struct Blake3Hasher(blake3::Hasher);
+
+#[cfg(feature = "blake3")]
+impl Default for Blake3Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(feature = "blake3")]
 impl Blake3Hasher {
     /// Create a new Blake3 hasher instance.
     pub fn new() -> Self {
-        DigestHasher::from_digest(blake3::Hasher::new())
+        Self(blake3::Hasher::new())
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl Hasher for Blake3Hasher {
+    fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    fn finalize(self) -> Vec<u8> {
+        self.0.finalize().as_bytes().to_vec()
     }
 }
 

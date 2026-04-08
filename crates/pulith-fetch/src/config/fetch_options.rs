@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use crate::progress::Progress;
 
+pub type ProgressCallback = Arc<dyn Fn(&Progress) + Send + Sync>;
+
 /// Phases of a download operation.
 ///
 /// Downloads progress through these phases in order:
@@ -108,7 +110,7 @@ pub struct FetchOptions {
     /// The callback receives a reference to avoid cloning on every invocation.
     ///
     /// Default: None
-    pub on_progress: Option<Arc<dyn Fn(&Progress) + Send + Sync>>,
+    pub on_progress: Option<ProgressCallback>,
 }
 
 impl fmt::Debug for FetchOptions {

@@ -1,7 +1,7 @@
 pub mod decompress;
-pub mod verify;
 pub mod signature;
+pub mod verify;
 
-pub use decompress::{StreamTransform, TransformError, CompressionType, create_decoder};
-pub use verify::{verify_checksum, ChecksumConfig, StreamVerifier, MultiVerifier};
-pub use signature::{verify_signature, SignatureVerifier, SignatureConfig};
+pub use decompress::{CompressionType, StreamTransform, TransformError, create_decoder};
+pub use signature::{SignatureConfig, SignatureVerifier, verify_signature};
+pub use verify::{ChecksumConfig, MultiVerifier, StreamVerifier, verify_checksum};

@@ -66,7 +66,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let staging = dir.path().join("staging");
         {
-            let workspace = Workspace::new(&staging, dir.path().join("dest")).unwrap();
+            let _workspace = Workspace::new(&staging, dir.path().join("dest")).unwrap();
             std::fs::write(staging.join("file.txt"), "data").unwrap();
             assert!(staging.exists());
         }

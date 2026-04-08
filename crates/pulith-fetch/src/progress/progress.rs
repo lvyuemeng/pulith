@@ -88,11 +88,7 @@ impl Progress {
         self.total_bytes.map(|total| {
             if total == 0 {
                 // For empty files, report 100% when completed, 0% otherwise
-                if self.is_completed() {
-                    100.0
-                } else {
-                    0.0
-                }
+                if self.is_completed() { 100.0 } else { 0.0 }
             } else {
                 (self.bytes_downloaded as f64 / total as f64) * 100.0
             }

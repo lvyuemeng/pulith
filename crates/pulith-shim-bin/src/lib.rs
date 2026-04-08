@@ -3,7 +3,7 @@
 //! # Usage
 //!
 //! Copy this file and customize the resolver type and construction.
-//! The key is to implement [`TargetResolver`] and call [`run()`] with it.
+//! The key is to implement [`TargetResolver`] and call [`try_run()`] with it.
 
 use pulith_shim::TargetResolver;
 use std::env;

@@ -75,7 +75,7 @@ mod tests {
         let expected = hasher.finalize();
 
         // Now test the verified reader with the computed hash
-        let mut reader = Cursor::new(data);
+        let reader = Cursor::new(data);
         let hasher = Sha256Hasher::new();
         let mut verified = VerifiedReader::new(reader, hasher);
 
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn test_verified_reader_hash_mismatch() {
         let data = b"test data";
-        let mut reader = Cursor::new(data);
+        let reader = Cursor::new(data);
         let hasher = Sha256Hasher::new();
         let mut verified = VerifiedReader::new(reader, hasher);
 

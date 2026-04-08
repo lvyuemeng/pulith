@@ -232,6 +232,107 @@ these areas require further design when needed:
 - in-place upgrade patterns
 - backup and restore
 
+## current assessment
+
+the project direction is still valid: pulith should remain a mechanism-first ecosystem for resource management primitives, especially around version selection, artifact fetching, verification, storage, extraction, and activation.
+
+the current design is suitable to proceed further, but it should be treated as a maturing foundation rather than a completed ecosystem.
+
+### what is working well
+
+- the crate split is still sensible: `version`, `fs`, `verify`, `archive`, `fetch`, `platform`, and `shim` cover the main primitive layers needed by version managers and tool installers.
+- the overall philosophy remains correct: pure-ish primitives, explicit effects, cross-platform behavior, and mechanism over policy.
+- the workspace is now close to a usable baseline for further work because formatting, tests, docs, and CI are in place.
+
+### current defects and design debt
+
+- some crate descriptions above overstate completeness, especially for `pulith-fs` and `pulith-fetch`.
+- `pulith-fs` currently exposes a smaller `workspace` and `transaction` API than this document describes; the design intent is ahead of the implementation.
+- `pulith-fetch` contains useful primitives, but several advanced capabilities are still partial or scaffold-level rather than production-complete:
+  - retry policy is not yet a first-class execution model
+  - multi-source behavior is not yet a trustworthy policy engine
+  - resumable and conditional fetching are not yet fully modeled end-to-end
+  - bench and extra-target hygiene still need cleanup before `clippy --all-targets` becomes the default gate
+- cross-platform support is improving, but the design should continue assuming Windows behavior is a first-class constraint rather than a later validation pass.
+- the docs need periodic reconciliation with the code so design intent and public API do not drift apart.
+
+### what can be extended next
+
+#### 1. strengthen the core primitives
+
+- expand `pulith-fs::workspace` into the richer transactional staging API described here (`write`, `create_dir`, `create_dir_all`, manifest/report helpers).
+- expand `pulith-fs::transaction` toward a true read-modify-write executor for opaque state files.
+- harden `pulith-archive` around creation APIs, metadata preservation, and more explicit symlink / permission policy.
+
+#### 2. turn fetch into a reliable resource pipeline
+
+- make retries explicit and composable instead of option-only.
+- make source selection a real planning layer with priority, race, mirror health, and consistency verification.
+- complete resumable and conditional fetching around persistent metadata, checkpoint validity, and append-safe writes.
+- separate transport concerns from fetch policy more clearly so `pulith-fetch` can support more backends over time.
+
+#### 3. add higher-level resource management crates
+
+the next meaningful expansion should not be more miscellaneous utilities. it should be a thin higher layer built on the current primitives.
+
+possible additions:
+
+- `pulith-store`: canonical local artifact store, content-addressed or version-addressed layouts, retention, and lookup.
+- `pulith-resource`: typed description of an external resource (identity, version, source, checksum, unpack policy, install policy).
+- `pulith-state`: persistent registries for installed resources, active versions, and provenance.
+- `pulith-install`: installation / activation transaction that composes `fetch + verify + archive + fs + shim`.
+- `pulith-source`: source abstractions for http releases, git-based artifacts, local files, and mirrors.
+
+#### 4. improve version-centric workflows
+
+because the project goal explicitly includes version-oriented resource management, the version layer should eventually support more than parsing.
+
+future direction:
+
+- version requirement matching and selection
+- preference rules (`latest`, `lts`, exact, compatible, pinned)
+- stable ordering across semver, calver, and partial versions
+- source-side resolution hooks for choosing a concrete artifact from a version query
+
+## proceed / no-go decision
+
+yes, the project can proceed further.
+
+however, the next phase should follow this order:
+
+1. align docs with the current public API and actual maturity level
+2. complete the missing core behavior in `pulith-fs`, `pulith-archive`, and `pulith-fetch`
+3. introduce one higher-level resource crate only after the primitives are stable enough to compose cleanly
+
+the main risk is not that the architecture is wrong. the main risk is expanding sideways before the core contracts are stable.
+
+## next design plan
+
+### phase 1 - stabilize primitives
+
+- keep `platform`, `version`, `verify`, and `shim` small and dependable
+- finish the intended `fs` transaction/workspace surface
+- narrow `fetch` to the features that are truly reliable, then complete them one by one
+- keep CI strict on the library surface
+
+### phase 2 - define resource model
+
+- design a shared resource identity model: name, source, version query, resolved version, checksum, storage key, install intent
+- define a store model for downloaded and extracted artifacts
+- define registry/state file conventions without binding callers to one policy
+
+### phase 3 - compose into installation flows
+
+- implement install / upgrade / rollback transactions on top of the primitive crates
+- connect version resolution, fetch, verify, extract, stage, commit, and shim activation into one coherent flow
+- expose this as reusable crates, not as one monolithic application framework
+
+### phase 4 - source and backend ecosystem
+
+- add source adapters and mirror strategies
+- add richer backend patterns for version managers, plugin managers, and config managers
+- keep package-format semantics out of pulith core unless a format is genuinely common and reusable
+
 ## Out of Scope
 
 - Package format definitions (let sources define)

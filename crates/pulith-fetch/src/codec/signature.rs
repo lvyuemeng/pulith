@@ -270,7 +270,7 @@ impl Signature {
         match self.format {
             SignatureFormat::Raw => Ok(self.data.clone()),
             SignatureFormat::Base64 => {
-                use base64::{engine::general_purpose, Engine as _};
+                use base64::{Engine as _, engine::general_purpose};
                 general_purpose::STANDARD
                     .decode(&self.data)
                     .map_err(|e| Error::InvalidState(format!("Invalid base64 signature: {}", e)))
@@ -344,9 +344,10 @@ impl SignatureConfig {
         // Check key ID match if both present
         if let (Some(key_key_id), Some(sig_key_id)) =
             (&self.public_key.key_id, &self.signature.key_id)
-            && key_key_id != sig_key_id {
-                return Err(Error::InvalidState("Key ID mismatch".to_string()));
-            }
+            && key_key_id != sig_key_id
+        {
+            return Err(Error::InvalidState("Key ID mismatch".to_string()));
+        }
 
         Ok(())
     }
@@ -622,7 +623,7 @@ mod tests {
 
         assert!(verifier.verify(b"data", &config).unwrap());
 
-        let mut verifier = MockVerifier::new(SignatureAlgorithm::RsaPkcs1v15, false);
+        let verifier = MockVerifier::new(SignatureAlgorithm::RsaPkcs1v15, false);
         assert!(!verifier.verify(b"data", &config).unwrap());
     }
 

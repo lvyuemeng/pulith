@@ -157,19 +157,19 @@ mod tests {
     #[test]
     fn test_arch_current_matches_cfg() {
         let arch = Arch::current();
-        match arch {
-            Arch::X86 => assert!(cfg!(any(target_arch = "x86",))),
-            Arch::X86_64 => assert!(cfg!(target_arch = "x86_64")),
-            Arch::ARM => assert!(cfg!(target_arch = "arm")),
-            Arch::ARM64 => assert!(cfg!(any(target_arch = "aarch64", target_arch = "arm64ec"))),
-            Arch::Unknown => assert!(!cfg!(any(
-                target_arch = "x86",
-                target_arch = "x86_64",
-                target_arch = "arm",
-                target_arch = "aarch64",
-                target_arch = "arm64ec"
-            ))),
-        }
+        let expected = if cfg!(target_arch = "x86") {
+            Arch::X86
+        } else if cfg!(target_arch = "x86_64") {
+            Arch::X86_64
+        } else if cfg!(target_arch = "arm") {
+            Arch::ARM
+        } else if cfg!(any(target_arch = "aarch64", target_arch = "arm64ec")) {
+            Arch::ARM64
+        } else {
+            Arch::Unknown
+        };
+
+        assert_eq!(arch, expected);
     }
 
     #[test]

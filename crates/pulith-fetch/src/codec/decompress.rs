@@ -4,7 +4,7 @@
 //! downloaded content on the fly.
 
 use crate::error::{Error, Result};
-use std::io::{Read, Write};
+use std::io::Read;
 
 /// Compression types supported by the fetcher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +75,12 @@ pub struct GzipDecoder {
     buffer: Vec<u8>,
 }
 
+impl Default for GzipDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GzipDecoder {
     /// Create a new Gzip decoder.
     pub fn new() -> Self {
@@ -127,6 +133,12 @@ pub struct DeflateDecoder {
     buffer: Vec<u8>,
 }
 
+impl Default for DeflateDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DeflateDecoder {
     /// Create a new Deflate decoder.
     pub fn new() -> Self {
@@ -176,18 +188,21 @@ impl StreamTransform for DeflateDecoder {
 /// Brotli decompressor implementation (feature-gated).
 #[cfg(feature = "brotli")]
 pub struct BrotliDecoder {
-    decoder: Option<brotli::DecompressorWriter<std::io::Cursor<Vec<u8>>>>,
     buffer: Vec<u8>,
+}
+
+#[cfg(feature = "brotli")]
+impl Default for BrotliDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(feature = "brotli")]
 impl BrotliDecoder {
     /// Create a new Brotli decoder.
     pub fn new() -> Self {
-        Self {
-            decoder: None,
-            buffer: Vec::new(),
-        }
+        Self { buffer: Vec::new() }
     }
 }
 
@@ -196,49 +211,24 @@ impl StreamTransform for BrotliDecoder {
     fn transform(&mut self, input: &[u8]) -> Result<Vec<u8>> {
         self.buffer.extend_from_slice(input);
 
-        if self.decoder.is_none() {
-            self.decoder = Some(brotli::DecompressorWriter::new(
-                std::io::Cursor::new(Vec::new()),
-                4096, // buffer size
-            ));
-        }
-
+        let mut decoder = brotli::Decompressor::new(std::io::Cursor::new(&self.buffer), 4096);
         let mut output = Vec::new();
-        if let Some(ref mut decoder) = self.decoder {
-            decoder
-                .write_all(input)
-                .map_err(|e| Error::Transform(TransformError::InvalidData(e.to_string())))?;
-            decoder
-                .flush()
-                .map_err(|e| Error::Transform(TransformError::InvalidData(e.to_string())))?;
-
-            // Get the decompressed data
-            if let Some(cursor) = decoder.get_mut() {
-                output = cursor.get_ref().clone();
-            }
-        }
+        decoder
+            .read_to_end(&mut output)
+            .map_err(|e| Error::Transform(TransformError::InvalidData(e.to_string())))?;
 
         Ok(output)
     }
 
     fn finalize(&mut self) -> Result<Vec<u8>> {
-        if let Some(ref mut decoder) = self.decoder {
-            decoder
-                .finish()
-                .map_err(|e| Error::Transform(TransformError::InvalidData(e.to_string())))?;
-
-            let mut output = Vec::new();
-            if let Some(cursor) = decoder.get_mut() {
-                output = cursor.get_ref().clone();
-            }
-            Ok(output)
-        } else {
+        if self.buffer.is_empty() {
             Ok(Vec::new())
+        } else {
+            self.transform(&[])
         }
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.decoder = None;
         self.buffer.clear();
         Ok(())
     }
@@ -274,7 +264,8 @@ pub fn decompress(data: &[u8], compression_type: CompressionType) -> Result<Vec<
 mod tests {
     use super::*;
     use flate2::write::DeflateEncoder;
-    use flate2::{write::GzEncoder, Compression as FlateCompression};
+    use flate2::{Compression as FlateCompression, write::GzEncoder};
+    use std::io::Write;
 
     fn create_gzip_data(data: &[u8]) -> Vec<u8> {
         let mut encoder = GzEncoder::new(Vec::new(), FlateCompression::default());

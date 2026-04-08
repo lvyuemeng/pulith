@@ -9,6 +9,7 @@
 //! and permission values are ignored. The API accepts permission-related options for API compatibility,
 //! but they are not applied on Windows platforms.
 
+use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
@@ -81,15 +82,18 @@ pub fn extract<S: EntrySource>(
         entry = entry.with_target_path(sanitized.resolved.clone());
 
         // Write the entry to disk
-        write_entry(&mut pending, &sanitized.resolved)?;
+        write_entry(
+            &mut pending,
+            &sanitized.resolved,
+            destination.as_ref(),
+            options,
+        )?;
 
-        // Compute hash if requested and we have a reader
-        if let Some(mut reader) = pending.reader
-            && options.hash_strategy != HashStrategy::None
-        {
+        // Compute hash from the extracted file contents
+        if entry.is_file() && options.hash_strategy != HashStrategy::None {
             let hash = options
                 .hash_strategy
-                .compute(&mut *reader as &mut dyn Read)?;
+                .compute(File::open(&sanitized.resolved)?)?;
             if let Some(hash_value) = hash {
                 entry = entry.with_hash(hash_value);
             }
@@ -129,11 +133,20 @@ pub fn extract<S: EntrySource>(
     })
 }
 
-fn write_entry(pending: &mut PendingEntry, target_path: &Path) -> Result<()> {
+fn write_entry(
+    pending: &mut PendingEntry,
+    target_path: &Path,
+    destination: &Path,
+    options: &ExtractOptions,
+) -> Result<()> {
     match &pending.kind {
         EntryKind::File => write_file(pending, target_path),
         EntryKind::Directory => ensure_directory(target_path),
-        EntryKind::Symlink { target } => write_symlink(target, target_path),
+        EntryKind::Symlink { target } => {
+            let sanitized_target =
+                options.sanitize_symlink_target(target, target_path, destination)?;
+            write_symlink(&sanitized_target, target_path)
+        }
     }
 }
 
@@ -171,6 +184,14 @@ fn ensure_directory(path: &Path) -> Result<()> {
 #[cfg(unix)]
 fn write_symlink(target: &Path, link: &Path) -> Result<()> {
     use std::os::unix::fs::symlink;
+    if let Some(parent) = link.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| Error::DirectoryCreationFailed {
+            path: parent.to_path_buf(),
+            source: e,
+        })?;
+    }
     symlink(target, link).map_err(|e| Error::SymlinkCreationFailed {
         target: target.to_path_buf(),
         link: link.to_path_buf(),
@@ -181,6 +202,14 @@ fn write_symlink(target: &Path, link: &Path) -> Result<()> {
 #[cfg(windows)]
 fn write_symlink(target: &Path, link: &Path) -> Result<()> {
     use std::os::windows::fs;
+    if let Some(parent) = link.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| Error::DirectoryCreationFailed {
+            path: parent.to_path_buf(),
+            source: e,
+        })?;
+    }
     let is_dir_target = target.is_dir() || target.to_string_lossy().ends_with('/');
     if is_dir_target {
         fs::symlink_dir(target, link).map_err(|e| Error::SymlinkCreationFailed {
@@ -201,7 +230,7 @@ fn write_symlink(target: &Path, link: &Path) -> Result<()> {
 ///
 /// This function detects the archive format from the reader, rewinds it,
 /// and then extracts all entries to the specified destination directory.
-pub fn extract_from_reader<R: Read + Seek>(
+pub fn extract_from_reader<R: Read + Seek + 'static>(
     mut reader: R,
     destination: &Path,
     options: &ExtractOptions,
@@ -247,7 +276,7 @@ pub fn extract_with_source<S: EntrySource>(
 }
 
 /// Extract to workspace for atomic commit.
-pub fn extract_to_workspace<R: Read + Seek>(
+pub fn extract_to_workspace<R: Read + Seek + 'static>(
     reader: R,
     destination: &Path,
     options: ExtractOptions,
@@ -264,11 +293,16 @@ pub fn extract_to_workspace<R: Read + Seek>(
 
     let report = extract_from_reader(reader, temp_dir.path(), &options)?;
 
-    Ok(WorkspaceExtraction { workspace, report })
+    Ok(WorkspaceExtraction {
+        workspace,
+        _temp_dir: temp_dir,
+        report,
+    })
 }
 
 pub struct WorkspaceExtraction {
     workspace: Workspace,
+    _temp_dir: tempfile::TempDir,
     report: ArchiveReport,
 }
 
@@ -291,8 +325,23 @@ impl WorkspaceExtraction {
 mod tests {
     use std::io::Cursor;
     use std::path::Path;
+    use std::path::PathBuf;
 
     use super::*;
+
+    struct TestSource {
+        entries: Vec<Result<PendingEntry>>,
+    }
+
+    impl EntrySource for TestSource {
+        fn entries(&mut self) -> Result<Box<dyn Iterator<Item = Result<PendingEntry>> + '_>> {
+            Ok(Box::new(self.entries.drain(..)))
+        }
+
+        fn format(&self) -> format::ArchiveFormat {
+            format::ArchiveFormat::Zip
+        }
+    }
 
     #[test]
     fn extract_from_reader_invalid_format() {
@@ -300,5 +349,55 @@ mod tests {
         let cursor = Cursor::new(data);
         let result = extract_from_reader(cursor, Path::new("/tmp"), &ExtractOptions::default());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_computes_hash_from_written_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut source = TestSource {
+            entries: vec![Ok(PendingEntry {
+                original_path: PathBuf::from("bin/tool"),
+                size: 5,
+                mode: Some(0o755),
+                kind: EntryKind::File,
+                reader: Some(Box::new(Cursor::new(b"hello".to_vec()))),
+            })],
+        };
+
+        let extracted = extract(
+            &mut source,
+            temp_dir.path(),
+            &ExtractOptions::default().hash_strategy(HashStrategy::Sha256),
+        )
+        .unwrap();
+
+        assert_eq!(
+            extracted.entries[0].hash.as_deref(),
+            Some("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        );
+    }
+
+    #[test]
+    fn extract_rejects_absolute_symlink_target() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let absolute_target = if cfg!(windows) {
+            PathBuf::from("C:/escape")
+        } else {
+            PathBuf::from("/escape")
+        };
+        let mut source = TestSource {
+            entries: vec![Ok(PendingEntry {
+                original_path: PathBuf::from("bin/tool-link"),
+                size: 0,
+                mode: None,
+                kind: EntryKind::Symlink {
+                    target: absolute_target,
+                },
+                reader: None,
+            })],
+        };
+
+        let result = extract(&mut source, temp_dir.path(), &ExtractOptions::default());
+        assert!(matches!(result, Err(Error::AbsoluteSymlinkTarget { .. })));
     }
 }

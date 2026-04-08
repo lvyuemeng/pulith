@@ -3,8 +3,8 @@
 //! This module provides tools for measuring and tracking performance metrics
 //! including memory usage, throughput, and timing measurements.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Memory usage tracker for monitoring allocation patterns.
@@ -84,6 +84,12 @@ pub struct ThroughputMeter {
     bytes_transferred: Arc<AtomicU64>,
 }
 
+impl Default for ThroughputMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ThroughputMeter {
     /// Create a new throughput meter.
     pub fn new() -> Self {
@@ -130,6 +136,12 @@ impl ThroughputMeter {
 pub struct Timer {
     start_time: Option<Instant>,
     total_duration: Arc<AtomicU64>,
+}
+
+impl Default for Timer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Timer {
@@ -181,6 +193,12 @@ pub struct Profiler {
     memory_tracker: Arc<MemoryTracker>,
     throughput_meter: Arc<ThroughputMeter>,
     timer: Arc<Timer>,
+}
+
+impl Default for Profiler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Profiler {

@@ -10,6 +10,7 @@ use crate::options::ExtractOptions;
 
 pub struct WorkspaceExtraction {
     workspace: Workspace,
+    _temp_dir: tempfile::TempDir,
     report: ArchiveReport,
 }
 
@@ -46,7 +47,11 @@ pub fn extract_to_workspace<R: Read + Seek + 'static>(
 
     let report = extract_from_reader(reader, temp_dir.path(), &options)?;
 
-    Ok(WorkspaceExtraction { workspace, report })
+    Ok(WorkspaceExtraction {
+        workspace,
+        _temp_dir: temp_dir,
+        report,
+    })
 }
 
 #[cfg(test)]
@@ -65,8 +70,15 @@ mod tests {
             entries: Vec::new(),
         };
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace = Workspace::new(temp_dir.path(), temp_dir.path()).unwrap();
-        let extraction = WorkspaceExtraction { workspace, report };
+        let staging = temp_dir.path().join("staging");
+        let dest = temp_dir.path().join("dest");
+        let workspace = Workspace::new(&staging, &dest).unwrap();
+        let temp_holder = tempfile::tempdir().unwrap();
+        let extraction = WorkspaceExtraction {
+            workspace,
+            _temp_dir: temp_holder,
+            report,
+        };
         let accessed_report = extraction.report();
         assert_eq!(accessed_report.entry_count, 0);
     }
@@ -82,9 +94,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let staging_path = temp_dir.path().to_path_buf();
         let workspace = Workspace::new(temp_dir.path(), temp_dir.path()).unwrap();
+        let temp_holder = tempfile::tempdir().unwrap();
 
         {
-            let _extraction = WorkspaceExtraction { workspace, report };
+            let _extraction = WorkspaceExtraction {
+                workspace,
+                _temp_dir: temp_holder,
+                report,
+            };
             assert!(staging_path.exists());
         }
         assert!(!staging_path.exists());
@@ -110,8 +127,16 @@ mod tests {
             entries: Vec::new(),
         };
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace = Workspace::new(temp_dir.path(), temp_dir.path()).unwrap();
-        let extraction = WorkspaceExtraction { workspace, report };
+        let staging = temp_dir.path().join("staging");
+        let dest = temp_dir.path().join("dest");
+        let workspace = Workspace::new(&staging, &dest).unwrap();
+        std::fs::write(staging.join("report.json"), b"ok").unwrap();
+        let temp_holder = tempfile::tempdir().unwrap();
+        let extraction = WorkspaceExtraction {
+            workspace,
+            _temp_dir: temp_holder,
+            report,
+        };
         let committed_report = extraction.commit().unwrap();
         assert_eq!(committed_report.entry_count, 5);
         assert_eq!(committed_report.total_bytes, 1024);

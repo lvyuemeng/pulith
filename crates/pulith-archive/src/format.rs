@@ -19,23 +19,18 @@ pub enum TarCompress {
 
 impl TarCompress {
     /// Create a decoder for this compression codec.
-    pub fn decoder<R: Read>(self, reader: R) -> Result<Decoder<R>, Error> {
+    pub fn decoder<R: Read + 'static>(self, reader: R) -> Result<Decoder, Error> {
         match self {
-            Self::None => Ok(Decoder::Passthrough(reader)),
-            Self::Gzip => Ok(Decoder::Gzip(Box::new(flate2::read::GzDecoder::new(
-                reader,
-            )))),
+            Self::None => Ok(Decoder::new(reader)),
+            Self::Gzip => Ok(Decoder::new(flate2::read::GzDecoder::new(reader))),
             #[cfg(feature = "xz")]
-            Self::Xz => Ok(Decoder::Xz(Box::new(xz2::read::XzDecoder::new(reader)))),
+            Self::Xz => Ok(Decoder::new(xz2::read::XzDecoder::new(reader))),
             #[cfg(not(feature = "xz"))]
             Self::Xz => Err(Error::UnsupportedFormat),
             #[cfg(feature = "zstd")]
             Self::Zstd => {
-                // zstd requires 'static for its decoder, so we require it only for zstd
-                let reader: Box<dyn Read + Send + Sync> = Box::new(reader);
-                let decoder =
-                    Box::new(zstd::stream::Decoder::new(reader).map_err(|_| Error::Corrupted)?);
-                Ok(Decoder::Zstd(decoder))
+                let decoder = zstd::stream::Decoder::new(reader).map_err(|_| Error::Corrupted)?;
+                Ok(Decoder::new(decoder))
             }
             #[cfg(not(feature = "zstd"))]
             Self::Zstd => Err(Error::UnsupportedFormat),
@@ -44,26 +39,27 @@ impl TarCompress {
 }
 
 /// Decoder wrapper for tar decompression.
-#[derive(Debug)]
-pub enum Decoder<R> {
-    Passthrough(R),
-    Gzip(Box<flate2::read::GzDecoder<R>>),
-    #[cfg(feature = "xz")]
-    Xz(Box<xz2::read::XzDecoder<R>>),
-    #[cfg(feature = "zstd")]
-    Zstd(Box<zstd::stream::Decoder<'static, Box<dyn Read + Send + Sync>>>),
+pub struct Decoder {
+    inner: Box<dyn Read>,
 }
 
-impl<R: Read> Read for Decoder<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Self::Passthrough(r) => r.read(buf),
-            Self::Gzip(d) => d.read(buf),
-            #[cfg(feature = "xz")]
-            Self::Xz(d) => d.read(buf),
-            #[cfg(feature = "zstd")]
-            Self::Zstd(d) => d.read(buf),
+impl Decoder {
+    fn new<R: Read + 'static>(reader: R) -> Self {
+        Self {
+            inner: Box::new(reader),
         }
+    }
+}
+
+impl std::fmt::Debug for Decoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Decoder(..)")
+    }
+}
+
+impl Read for Decoder {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
     }
 }
 pub fn detect_format(data: &[u8]) -> Option<ArchiveFormat> {
@@ -258,15 +254,18 @@ mod tests {
     #[test]
     fn compression_none_decoder() {
         let data = b"hello";
-        let decoder = TarCompress::None.decoder(Cursor::new(data)).unwrap();
-        assert!(matches!(decoder, Decoder::Passthrough(_)));
+        let mut decoder = TarCompress::None.decoder(Cursor::new(data)).unwrap();
+        let mut output = String::new();
+        decoder.read_to_string(&mut output).unwrap();
+        assert_eq!(output, "hello");
     }
 
     #[test]
     fn compression_gzip_decoder() {
         let data = vec![0x1f, 0x8b];
-        let decoder = TarCompress::Gzip.decoder(Cursor::new(data)).unwrap();
-        assert!(matches!(decoder, Decoder::Gzip(_)));
+        let mut decoder = TarCompress::Gzip.decoder(Cursor::new(data)).unwrap();
+        let mut output = [0u8; 1];
+        assert!(decoder.read(&mut output).is_err());
     }
 
     #[test]

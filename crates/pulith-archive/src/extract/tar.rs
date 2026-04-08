@@ -7,19 +7,19 @@ use crate::format::{Decoder, TarCompress};
 use crate::{Result, format};
 
 /// Tar archive entry source.
-pub struct TarSource<R: Read> {
-    archive: tar::Archive<Decoder<R>>,
+pub struct TarSource {
+    archive: tar::Archive<Decoder>,
 }
 
-impl<R: Read> TarSource<R> {
-    pub fn new(reader: R, codec: TarCompress) -> Result<Self> {
+impl TarSource {
+    pub fn new<R: Read + 'static>(reader: R, codec: TarCompress) -> Result<Self> {
         let decoder = codec.decoder(reader)?;
         let archive = tar::Archive::new(decoder);
         Ok(Self { archive })
     }
 }
 
-impl<R: Read> EntrySource for TarSource<R> {
+impl EntrySource for TarSource {
     fn entries(&mut self) -> Result<Box<dyn Iterator<Item = Result<PendingEntry>> + '_>> {
         let iter = self.archive.entries()?.map(move |result| {
             let mut entry = result.map_err(|_| Error::Corrupted)?;

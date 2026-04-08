@@ -47,17 +47,18 @@ pub fn replace_dir(src: impl AsRef<Path>, dest: impl AsRef<Path>, options: Optio
         let mut attempts = 0;
         loop {
             if dest.exists()
-                && let Err(e) = std::fs::remove_dir_all(dest) {
-                    attempts += 1;
-                    if attempts >= options.retry_count {
-                        return Err(Error::ReplaceDir {
-                            path: dest.to_path_buf(),
-                            source: e,
-                        });
-                    }
-                    thread::sleep(options.retry_delay * attempts);
-                    continue;
+                && let Err(e) = std::fs::remove_dir_all(dest)
+            {
+                attempts += 1;
+                if attempts >= options.retry_count {
+                    return Err(Error::ReplaceDir {
+                        path: dest.to_path_buf(),
+                        source: e,
+                    });
                 }
+                thread::sleep(options.retry_delay * attempts);
+                continue;
+            }
 
             match std::fs::rename(src, dest) {
                 Ok(_) => return Ok(()),

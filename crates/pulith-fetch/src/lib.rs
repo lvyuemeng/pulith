@@ -21,23 +21,35 @@
 
 mod error;
 
-pub mod rate;
-pub mod segment;
-pub mod fetch;
-pub mod config;
-pub mod progress;
 pub mod cache;
 pub mod codec;
+pub mod config;
+pub mod fetch;
 pub mod net;
 pub mod perf;
+pub mod progress;
+pub mod rate;
+pub mod segment;
 
 pub use error::{Error, Result};
 
-pub use rate::{retry_delay, TokenBucket, ThrottledStream, AsyncThrottledStream};
-pub use segment::{calculate_segments, Segment, is_redirect};
-pub use config::{FetchOptions, FetchPhase, DownloadSource, MultiSourceOptions, SourceSelectionStrategy, SourceType};
-pub use progress::{Progress, ExtendedProgress, PerformanceMetrics, PhaseTimings, ProgressReporter};
-pub use net::{HttpClient, BoxStream, ReqwestClient, Protocol};
-pub use fetch::{Fetcher, SegmentedFetcher, SegmentedOptions, MultiSourceFetcher, ConditionalFetcher, RemoteMetadata, ConditionalOptions, BatchFetcher, BatchOptions, BatchDownloadJob, ResumableFetcher, DownloadCheckpoint};
-pub use cache::{Cache, HttpCache, CacheControl, CacheEntry, CacheError, CacheStats};
-pub use codec::{StreamTransform, TransformError, verify_checksum, verify_signature, ChecksumConfig, SignatureVerifier, MultiVerifier, StreamVerifier};
+pub use cache::{Cache, CacheControl, CacheEntry, CacheError, CacheStats, HttpCache};
+pub use codec::{
+    ChecksumConfig, MultiVerifier, SignatureVerifier, StreamTransform, StreamVerifier,
+    TransformError, verify_checksum, verify_signature,
+};
+pub use config::{
+    DownloadSource, FetchOptions, FetchPhase, MultiSourceOptions, SourceSelectionStrategy,
+    SourceType,
+};
+pub use fetch::{
+    BatchDownloadJob, BatchFetcher, BatchOptions, ConditionalFetcher, ConditionalOptions,
+    DownloadCheckpoint, Fetcher, MultiSourceFetcher, RemoteMetadata, ResumableFetcher,
+    SegmentedFetcher, SegmentedOptions,
+};
+pub use net::{BoxStream, HttpClient, Protocol, ReqwestClient};
+pub use progress::{
+    ExtendedProgress, PerformanceMetrics, PhaseTimings, Progress, ProgressReporter,
+};
+pub use rate::{AsyncThrottledStream, ThrottledStream, TokenBucket, retry_delay};
+pub use segment::{Segment, calculate_segments, is_redirect};

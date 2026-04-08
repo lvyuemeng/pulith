@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use pulith_fetch::core::{calculate_segments, Segment};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use pulith_fetch::core::{Segment, calculate_segments};
 use std::time::Duration;
 
 fn bench_calculate_segments(c: &mut Criterion) {

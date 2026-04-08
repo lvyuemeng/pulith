@@ -46,8 +46,12 @@ pub trait HttpClient: Send + Sync {
         &self,
         url: &str,
         headers: &[(String, String)],
-    ) -> impl Future<Output = std::result::Result<BoxStream<'static, std::result::Result<Bytes, Self::Error>>, Self::Error>>
-           + Send;
+    ) -> impl Future<
+        Output = std::result::Result<
+            BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+            Self::Error,
+        >,
+    > + Send;
 
     /// Query the Content-Length header without downloading the body.
     ///
@@ -93,28 +97,30 @@ mod reqwest_impl {
             &self,
             url: &str,
             headers: &[(String, String)],
-        ) -> std::result::Result<BoxStream<'static, std::result::Result<Bytes, Self::Error>>, Self::Error> {
+        ) -> std::result::Result<
+            BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+            Self::Error,
+        > {
             let mut request = self.client.get(url);
-            
+
             for (key, value) in headers {
                 request = request.header(key, value);
             }
-            
+
             let response = request.send().await?;
             let stream = response.bytes_stream().map(|result| result);
-            
+
             Ok(Box::pin(stream))
         }
 
-        async fn head(
-            &self,
-            url: &str,
-        ) -> std::result::Result<Option<u64>, Self::Error> {
+        async fn head(&self, url: &str) -> std::result::Result<Option<u64>, Self::Error> {
             let response = self.client.head(url).send().await?;
-            let content_length = response.headers().get(reqwest::header::CONTENT_LENGTH)
+            let content_length = response
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok());
-            
+
             Ok(content_length)
         }
     }
@@ -182,8 +188,12 @@ mod tests {
             &self,
             _url: &str,
             _headers: &[(String, String)],
-        ) -> impl Future<Output = std::result::Result<BoxStream<'static, std::result::Result<Bytes, Self::Error>>, Self::Error>>
-               + Send {
+        ) -> impl Future<
+            Output = std::result::Result<
+                BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+                Self::Error,
+            >,
+        > + Send {
             async move {
                 if self.should_fail {
                     Err(MockError("Stream failed".to_string()))
@@ -214,7 +224,7 @@ mod tests {
         let client = MockHttpClient::new();
         let result = client.stream("http://example.com", &[]).await;
         assert!(result.is_ok());
-        
+
         let mut stream = result.unwrap();
         // The stream should yield one item
         if let Some(Ok(bytes)) = stream.next().await {
@@ -265,7 +275,7 @@ mod tests {
     #[test]
     fn test_box_stream_type_alias() {
         // Test that BoxStream is a valid type
-        let _stream: BoxStream<'static, std::result::Result<Bytes, MockError>> = 
+        let _stream: BoxStream<'static, std::result::Result<Bytes, MockError>> =
             Box::pin(stream::empty());
     }
 
@@ -275,7 +285,7 @@ mod tests {
         // Test that ReqwestClient can be created
         let result = ReqwestClient::new();
         assert!(result.is_ok());
-        
+
         let client = result.unwrap();
         // The client should be usable
         let _client: ReqwestClient = client;

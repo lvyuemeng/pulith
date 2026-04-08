@@ -5,7 +5,7 @@ use std::time::Duration;
 
 fn bench_token_bucket_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_bucket_throughput");
-    
+
     // Test different bandwidth limits (bytes per second)
     for bandwidth in [1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024].iter() {
         group.throughput(Throughput::Bytes(*bandwidth));
@@ -15,12 +15,12 @@ fn bench_token_bucket_throughput(c: &mut Criterion) {
             |b, &bandwidth| {
                 // Use a runtime for async benchmarks
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                
+
                 b.iter(|| {
                     rt.block_on(async {
                         let bucket = TokenBucket::new(bandwidth, bandwidth);
                         let chunk_size = 64 * 1024; // 64KB chunks
-                        
+
                         // Simulate acquiring tokens for multiple chunks
                         for _ in 0..100 {
                             bucket.acquire(black_box(chunk_size)).await;
@@ -30,13 +30,13 @@ fn bench_token_bucket_throughput(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_token_bucket_concurrent(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_bucket_concurrent");
-    
+
     for concurrent_tasks in [1, 2, 4, 8].iter() {
         group.bench_with_input(
             BenchmarkId::new("concurrent_acquire", concurrent_tasks),
@@ -44,12 +44,12 @@ fn bench_token_bucket_concurrent(c: &mut Criterion) {
             |b, &concurrent_tasks| {
                 // Use a runtime for async benchmarks
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                
+
                 b.iter(|| {
                     rt.block_on(async {
                         let bucket = Arc::new(TokenBucket::new(10 * 1024 * 1024, 10 * 1024 * 1024));
                         let mut handles = vec![];
-                        
+
                         for _ in 0..concurrent_tasks {
                             let bucket_clone: Arc<TokenBucket> = Arc::clone(&bucket);
                             let handle = tokio::spawn(async move {
@@ -59,7 +59,7 @@ fn bench_token_bucket_concurrent(c: &mut Criterion) {
                             });
                             handles.push(handle);
                         }
-                        
+
                         for handle in handles {
                             handle.await.unwrap();
                         }
@@ -68,20 +68,20 @@ fn bench_token_bucket_concurrent(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_token_bucket_try_acquire(c: &mut Criterion) {
     let mut group = c.benchmark_group("token_bucket_try_acquire");
-    
+
     for bucket_size in [1024, 10240, 102400].iter() {
         group.bench_with_input(
             BenchmarkId::new("try_acquire", bucket_size),
             bucket_size,
             |b, &bucket_size| {
                 let bucket = TokenBucket::new(bucket_size, bucket_size);
-                
+
                 b.iter(|| {
                     // Try to acquire tokens multiple times
                     for _ in 0..1000 {
@@ -91,7 +91,7 @@ fn bench_token_bucket_try_acquire(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 

@@ -66,7 +66,8 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
         conditional_options: ConditionalOptions,
     ) -> Result<Option<PathBuf>> {
         // Ensure metadata directory exists
-        tokio::fs::create_dir_all(&self.metadata_dir).await
+        tokio::fs::create_dir_all(&self.metadata_dir)
+            .await
             .map_err(|e| Error::Network(e.to_string()))?;
 
         // Get remote metadata
@@ -75,9 +76,10 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
         // Check if we should skip download
         if !conditional_options.force
             && let Some(local_metadata) = self.load_local_metadata(url, destination).await?
-                && self.is_content_unchanged(&local_metadata, &remote_metadata) {
-                    return Ok(None); // Skip download
-                }
+            && self.is_content_unchanged(&local_metadata, &remote_metadata)
+        {
+            return Ok(None); // Skip download
+        }
 
         // Perform the download
         let result = self.base_fetcher.fetch(url, destination, options).await;
@@ -86,7 +88,9 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
             Ok(path) => {
                 // Store metadata for future conditional requests
                 if conditional_options.store_metadata {
-                    let _ = self.store_metadata(url, destination, &remote_metadata).await;
+                    let _ = self
+                        .store_metadata(url, destination, &remote_metadata)
+                        .await;
                 }
                 Ok(Some(path))
             }
@@ -98,27 +102,35 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
     async fn get_remote_metadata(&self, url: &str) -> Result<RemoteMetadata> {
         // This would need to be implemented in the HttpClient trait
         // For now, we'll simulate with a basic implementation
-        let total_bytes = self.base_fetcher.head(url).await
+        let total_bytes = self
+            .base_fetcher
+            .head(url)
+            .await
             .map_err(|e| Error::Network(e.to_string()))?;
 
         Ok(RemoteMetadata {
-            etag: None, // Would be parsed from HEAD response
+            etag: None,          // Would be parsed from HEAD response
             last_modified: None, // Would be parsed from HEAD response
             content_length: total_bytes,
         })
     }
 
     /// Load stored metadata for a URL/destination pair.
-    async fn load_local_metadata(&self, url: &str, destination: &Path) -> Result<Option<RemoteMetadata>> {
+    async fn load_local_metadata(
+        &self,
+        url: &str,
+        destination: &Path,
+    ) -> Result<Option<RemoteMetadata>> {
         let metadata_path = self.metadata_path(url, destination);
-        
+
         if !metadata_path.exists() {
             return Ok(None);
         }
 
-        let content = tokio::fs::read_to_string(&metadata_path).await
+        let content = tokio::fs::read_to_string(&metadata_path)
+            .await
             .map_err(|e| Error::Network(e.to_string()))?;
-        
+
         // Parse metadata (simplified - would use proper serialization)
         Ok(Some(RemoteMetadata {
             etag: None,
@@ -128,19 +140,26 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
     }
 
     /// Store metadata for future conditional requests.
-    async fn store_metadata(&self, url: &str, destination: &Path, metadata: &RemoteMetadata) -> Result<()> {
+    async fn store_metadata(
+        &self,
+        url: &str,
+        destination: &Path,
+        metadata: &RemoteMetadata,
+    ) -> Result<()> {
         let metadata_path = self.metadata_path(url, destination);
-        
+
         // Ensure metadata directory exists
-        tokio::fs::create_dir_all(&self.metadata_dir).await
+        tokio::fs::create_dir_all(&self.metadata_dir)
+            .await
             .map_err(|e| Error::Network(e.to_string()))?;
-        
+
         // Store content length as simple text (would use proper serialization)
         if let Some(content_length) = metadata.content_length {
-            tokio::fs::write(&metadata_path, content_length.to_string()).await
+            tokio::fs::write(&metadata_path, content_length.to_string())
+                .await
                 .map_err(|e| Error::Network(e.to_string()))?;
         }
-        
+
         Ok(())
     }
 
@@ -150,17 +169,21 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
         if let (Some(local_etag), Some(remote_etag)) = (&local.etag, &remote.etag) {
             return local_etag == remote_etag;
         }
-        
+
         // Fall back to Last-Modified
-        if let (Some(local_modified), Some(remote_modified)) = (&local.last_modified, &remote.last_modified) {
+        if let (Some(local_modified), Some(remote_modified)) =
+            (&local.last_modified, &remote.last_modified)
+        {
             return local_modified == remote_modified;
         }
-        
+
         // Fall back to Content-Length (least reliable)
-        if let (Some(local_length), Some(remote_length)) = (local.content_length, remote.content_length) {
+        if let (Some(local_length), Some(remote_length)) =
+            (local.content_length, remote.content_length)
+        {
             return local_length == remote_length;
         }
-        
+
         false // Default to downloading if we can't determine
     }
 
@@ -168,14 +191,15 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
     fn metadata_path(&self, url: &str, destination: &Path) -> PathBuf {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         // Create a unique filename from URL and destination
         let mut hasher = DefaultHasher::new();
         url.hash(&mut hasher);
         destination.hash(&mut hasher);
         let hash = hasher.finish();
-        
-        self.metadata_dir.join(format!("metadata_{:016x}.txt", hash))
+
+        self.metadata_dir
+            .join(format!("metadata_{:016x}.txt", hash))
     }
 
     /// Clean up old metadata files.
@@ -184,39 +208,47 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
         let _cutoff = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() - max_age_seconds;
+            .as_secs()
+            - max_age_seconds;
 
         // Check if metadata directory exists
         if !self.metadata_dir.exists() {
             return Ok(0);
         }
 
-        let mut entries = tokio::fs::read_dir(&self.metadata_dir).await
+        let mut entries = tokio::fs::read_dir(&self.metadata_dir)
+            .await
             .map_err(|e| Error::Network(e.to_string()))?;
 
-        while let Some(entry) = entries.next_entry().await
-            .map_err(|e| Error::Network(e.to_string()))? {
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?
+        {
             let path = entry.path();
-            
+
             if path.extension().and_then(|s| s.to_str()) == Some("txt") {
-                let metadata = entry.metadata().await
+                let metadata = entry
+                    .metadata()
+                    .await
                     .map_err(|e| Error::Network(e.to_string()))?;
-                
+
                 if let Ok(modified) = metadata.modified()
-                    && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
-                        // File is old if its modification time is before the cutoff
-                        // Since we're looking for files older than max_age_seconds,
-                        // we want files where (now - file_time) > max_age_seconds
-                        // Which means file_time < (now - max_age_seconds)
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        if duration.as_secs() < (now - max_age_seconds) {
-                            let _ = tokio::fs::remove_file(&path).await;
-                            cleaned += 1;
-                        }
+                    && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
+                {
+                    // File is old if its modification time is before the cutoff
+                    // Since we're looking for files older than max_age_seconds,
+                    // we want files where (now - file_time) > max_age_seconds
+                    // Which means file_time < (now - max_age_seconds)
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    if duration.as_secs() < (now - max_age_seconds) {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        cleaned += 1;
                     }
+                }
             }
         }
 
@@ -230,51 +262,58 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::time::sleep;
-    
+
     /// Simple mock HTTP client for testing
     #[derive(Debug)]
     struct MockClient;
-    
+
     impl MockClient {
         fn new() -> Self {
             Self
         }
     }
-    
+
     #[derive(Debug)]
     struct MockError(String);
-    
+
     impl std::fmt::Display for MockError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{}", self.0)
         }
     }
-    
+
     impl std::error::Error for MockError {}
-    
+
     impl HttpClient for MockClient {
         type Error = MockError;
-        
+
         fn stream(
             &self,
             _url: &str,
             _headers: &[(String, String)],
-        ) -> impl Future<Output = std::result::Result<crate::net::http::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>>, Self::Error>>
-               + Send {
+        ) -> impl Future<
+            Output = std::result::Result<
+                crate::net::http::BoxStream<
+                    'static,
+                    std::result::Result<bytes::Bytes, Self::Error>,
+                >,
+                Self::Error,
+            >,
+        > + Send {
             async move {
-                let empty: crate::net::http::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>> = 
-                    Box::pin(futures_util::stream::empty());
+                let empty: crate::net::http::BoxStream<
+                    'static,
+                    std::result::Result<bytes::Bytes, Self::Error>,
+                > = Box::pin(futures_util::stream::empty());
                 Ok(empty)
             }
         }
-        
+
         fn head(
             &self,
             _url: &str,
         ) -> impl Future<Output = std::result::Result<Option<u64>, Self::Error>> + Send {
-            async move {
-                Ok(Some(1024))
-            }
+            async move { Ok(Some(1024)) }
         }
     }
 
@@ -285,9 +324,12 @@ mod tests {
             last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string()),
             content_length: Some(1024),
         };
-        
+
         assert_eq!(metadata.etag, Some("\"abc123\"".to_string()));
-        assert_eq!(metadata.last_modified, Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string()));
+        assert_eq!(
+            metadata.last_modified,
+            Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string())
+        );
         assert_eq!(metadata.content_length, Some(1024));
     }
 
@@ -304,7 +346,7 @@ mod tests {
             MockClient::new(),
             TempDir::new().unwrap().path(),
         );
-        
+
         // Test ETag comparison
         let local = RemoteMetadata {
             etag: Some("\"abc123\"".to_string()),
@@ -321,10 +363,10 @@ mod tests {
             last_modified: None,
             content_length: None,
         };
-        
+
         assert!(fetcher.is_content_unchanged(&local, &remote_same));
         assert!(!fetcher.is_content_unchanged(&local, &remote_different));
-        
+
         // Test Last-Modified comparison
         let local = RemoteMetadata {
             etag: None,
@@ -341,10 +383,10 @@ mod tests {
             last_modified: Some("Thu, 22 Oct 2015 07:28:00 GMT".to_string()),
             content_length: None,
         };
-        
+
         assert!(fetcher.is_content_unchanged(&local, &remote_same));
         assert!(!fetcher.is_content_unchanged(&local, &remote_different));
-        
+
         // Test Content-Length comparison
         let local = RemoteMetadata {
             etag: None,
@@ -361,7 +403,7 @@ mod tests {
             last_modified: None,
             content_length: Some(2048),
         };
-        
+
         assert!(fetcher.is_content_unchanged(&local, &remote_same));
         assert!(!fetcher.is_content_unchanged(&local, &remote_different));
     }
@@ -369,37 +411,39 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_path() {
         let temp_dir = TempDir::new().unwrap();
-        let fetcher = ConditionalFetcher::<MockClient>::new(
-            MockClient::new(),
-            temp_dir.path(),
-        );
-        
+        let fetcher = ConditionalFetcher::<MockClient>::new(MockClient::new(), temp_dir.path());
+
         let url = "https://example.com/file.txt";
         let destination = Path::new("/tmp/file.txt");
-        
+
         let path1 = fetcher.metadata_path(url, destination);
         let path2 = fetcher.metadata_path(url, destination);
         let path3 = fetcher.metadata_path("https://example.com/other.txt", destination);
-        
+
         // Same URL/destination should produce same path
         assert_eq!(path1, path2);
-        
+
         // Different URL should produce different path
         assert_ne!(path1, path3);
-        
+
         // Path should be in metadata directory
         assert!(path1.starts_with(&temp_dir.path().join(".metadata")));
-        assert!(path1.file_name().unwrap().to_str().unwrap().starts_with("metadata_"));
+        assert!(
+            path1
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("metadata_")
+        );
     }
 
     #[tokio::test]
     async fn test_store_and_load_metadata() {
         let temp_dir = TempDir::new().unwrap();
-        let fetcher: ConditionalFetcher<MockClient> = ConditionalFetcher::new(
-            MockClient::new(),
-            temp_dir.path(),
-        );
-        
+        let fetcher: ConditionalFetcher<MockClient> =
+            ConditionalFetcher::new(MockClient::new(), temp_dir.path());
+
         let url = "https://example.com/file.txt";
         let destination = Path::new("/tmp/file.txt");
         let metadata = RemoteMetadata {
@@ -407,14 +451,17 @@ mod tests {
             last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string()),
             content_length: Some(1024),
         };
-        
+
         // Store metadata
-        fetcher.store_metadata(url, destination, &metadata).await.unwrap();
-        
+        fetcher
+            .store_metadata(url, destination, &metadata)
+            .await
+            .unwrap();
+
         // Load metadata
         let loaded = fetcher.load_local_metadata(url, destination).await.unwrap();
         assert!(loaded.is_some());
-        
+
         // Note: In real implementation, this would preserve all fields
         // For now, we're only storing content_length
         assert_eq!(loaded.unwrap().content_length, Some(1024));
@@ -423,11 +470,9 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_old_metadata() {
         let temp_dir = TempDir::new().unwrap();
-        let fetcher: ConditionalFetcher<MockClient> = ConditionalFetcher::new(
-            MockClient::new(),
-            temp_dir.path(),
-        );
-        
+        let fetcher: ConditionalFetcher<MockClient> =
+            ConditionalFetcher::new(MockClient::new(), temp_dir.path());
+
         let url = "https://example.com/file.txt";
         let destination = Path::new("/tmp/file.txt");
         let metadata = RemoteMetadata {
@@ -435,16 +480,19 @@ mod tests {
             last_modified: None,
             content_length: Some(1024),
         };
-        
+
         // Store metadata
-        fetcher.store_metadata(url, destination, &metadata).await.unwrap();
-        
+        fetcher
+            .store_metadata(url, destination, &metadata)
+            .await
+            .unwrap();
+
         // Wait a bit to ensure time difference
         sleep(Duration::from_millis(10)).await;
-        
+
         // Clean up with max age of 0 seconds (should clean up all files)
         let cleaned = fetcher.cleanup_old_metadata(0).await.unwrap();
-        
+
         // Should have cleaned up the file
         assert!(cleaned >= 0);
     }
