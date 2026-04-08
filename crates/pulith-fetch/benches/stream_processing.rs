@@ -1,8 +1,7 @@
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use futures_util::{Stream, StreamExt};
-use pulith_fetch::core::TokenBucket;
-use pulith_fetch::effects::ThrottledStream;
+use pulith_fetch::ThrottledStream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -61,6 +60,7 @@ fn bench_throttled_stream_throughput(c: &mut Criterion) {
                         let mut stream = Box::pin(throttled_stream);
 
                         while let Some(chunk) = stream.next().await {
+                            let chunk: pulith_fetch::Result<Bytes> = chunk;
                             total_processed += black_box(chunk.unwrap().len());
                         }
 
@@ -99,6 +99,7 @@ fn bench_stream_processing_chunk_sizes(c: &mut Criterion) {
                         let mut stream = Box::pin(throttled_stream);
 
                         while let Some(chunk) = stream.next().await {
+                            let chunk: pulith_fetch::Result<Bytes> = chunk;
                             total_processed += black_box(chunk.unwrap().len());
                         }
 
@@ -134,6 +135,7 @@ fn bench_unthrottled_stream(c: &mut Criterion) {
                         let mut stream = Box::pin(mock_stream);
 
                         while let Some(chunk) = stream.next().await {
+                            let chunk: Result<Bytes, Box<dyn std::error::Error + Send>> = chunk;
                             total_processed += black_box(chunk.unwrap().len());
                         }
 

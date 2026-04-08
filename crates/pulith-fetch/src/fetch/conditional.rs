@@ -228,6 +228,12 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("txt") {
+                if max_age_seconds == 0 {
+                    let _ = tokio::fs::remove_file(&path).await;
+                    cleaned += 1;
+                    continue;
+                }
+
                 let metadata = entry
                     .metadata()
                     .await
@@ -287,33 +293,23 @@ mod tests {
     impl HttpClient for MockClient {
         type Error = MockError;
 
-        fn stream(
+        async fn stream(
             &self,
             _url: &str,
             _headers: &[(String, String)],
-        ) -> impl Future<
-            Output = std::result::Result<
-                crate::net::http::BoxStream<
-                    'static,
-                    std::result::Result<bytes::Bytes, Self::Error>,
-                >,
-                Self::Error,
-            >,
-        > + Send {
-            async move {
-                let empty: crate::net::http::BoxStream<
-                    'static,
-                    std::result::Result<bytes::Bytes, Self::Error>,
-                > = Box::pin(futures_util::stream::empty());
-                Ok(empty)
-            }
+        ) -> std::result::Result<
+            crate::net::http::BoxStream<'static, std::result::Result<bytes::Bytes, Self::Error>>,
+            Self::Error,
+        > {
+            let empty: crate::net::http::BoxStream<
+                'static,
+                std::result::Result<bytes::Bytes, Self::Error>,
+            > = Box::pin(futures_util::stream::empty());
+            Ok(empty)
         }
 
-        fn head(
-            &self,
-            _url: &str,
-        ) -> impl Future<Output = std::result::Result<Option<u64>, Self::Error>> + Send {
-            async move { Ok(Some(1024)) }
+        async fn head(&self, _url: &str) -> std::result::Result<Option<u64>, Self::Error> {
+            Ok(Some(1024))
         }
     }
 
@@ -427,7 +423,7 @@ mod tests {
         assert_ne!(path1, path3);
 
         // Path should be in metadata directory
-        assert!(path1.starts_with(&temp_dir.path().join(".metadata")));
+        assert!(path1.starts_with(temp_dir.path().join(".metadata")));
         assert!(
             path1
                 .file_name()
@@ -493,7 +489,6 @@ mod tests {
         // Clean up with max age of 0 seconds (should clean up all files)
         let cleaned = fetcher.cleanup_old_metadata(0).await.unwrap();
 
-        // Should have cleaned up the file
-        assert!(cleaned >= 0);
+        assert_eq!(cleaned, 1);
     }
 }

@@ -1,0 +1,15 @@
+[package]
+name = "pulith-install"
+version = "0.1.0"
+edition = "2024"
+description = "Composable installation workflow primitives for Pulith"
+
+[dependencies]
+pulith-fs = { path = "../pulith-fs" }
+pulith-resource = { path = "../pulith-resource" }
+pulith-state = { path = "../pulith-state" }
+pulith-store = { path = "../pulith-store" }
+
+thiserror.workspace = true
+tempfile.workspace = true
+serde.workspace = true

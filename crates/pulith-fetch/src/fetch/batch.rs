@@ -375,12 +375,6 @@ mod tests {
             fn validate_dependencies(&self, _jobs: &[BatchDownloadJob]) -> Result<()> {
                 Ok(())
             }
-            fn topological_sort(
-                &self,
-                _jobs: &[BatchDownloadJob],
-            ) -> Result<Vec<BatchDownloadJob>> {
-                Ok(_jobs.to_vec())
-            }
         }
 
         let fetcher = MockFetcher;
@@ -458,9 +452,6 @@ mod tests {
         // Create a mock fetcher for testing
         struct MockFetcher;
         impl MockFetcher {
-            fn validate_dependencies(&self, _jobs: &[BatchDownloadJob]) -> Result<()> {
-                Ok(())
-            }
             fn topological_sort(&self, jobs: &[BatchDownloadJob]) -> Result<Vec<BatchDownloadJob>> {
                 Ok(jobs.to_vec())
             }

@@ -169,10 +169,6 @@ mod tests {
         fn new() -> Self {
             Self { should_fail: false }
         }
-
-        fn with_error() -> Self {
-            Self { should_fail: true }
-        }
     }
 
     impl HttpClient for MockHttpClient {

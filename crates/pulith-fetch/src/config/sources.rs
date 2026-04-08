@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_source_selection_strategies() {
-        let strategies = vec![
+        let strategies = [
             SourceSelectionStrategy::Priority,
             SourceSelectionStrategy::FastestFirst,
             SourceSelectionStrategy::Geographic,

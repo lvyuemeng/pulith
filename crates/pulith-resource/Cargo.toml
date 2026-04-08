@@ -1,0 +1,11 @@
+[package]
+name = "pulith-resource"
+version = "0.1.0"
+edition = "2024"
+description = "Composable resource description types for Pulith"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+url.workspace = true
+hex.workspace = true

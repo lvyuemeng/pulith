@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use pulith_fetch::core::TokenBucket;
+use pulith_fetch::TokenBucket;
 use std::sync::Arc;
 use std::time::Duration;
 

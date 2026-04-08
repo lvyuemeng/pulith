@@ -372,8 +372,10 @@ mod tests {
 
     #[test]
     fn test_cache_control_freshness() {
-        let mut control = CacheControl::default();
-        control.max_age = Some(3600);
+        let control = CacheControl {
+            max_age: Some(3600),
+            ..Default::default()
+        };
 
         let past_time = SystemTime::now() - Duration::from_secs(1800);
         assert!(control.is_fresh(past_time));

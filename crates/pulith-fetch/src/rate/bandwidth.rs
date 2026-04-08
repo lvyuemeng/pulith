@@ -424,7 +424,7 @@ mod tests {
 
         // Should be able to acquire another 50 bytes immediately
         bucket.acquire(50).await;
-        assert!(bucket.available_tokens() <= 0);
+        assert_eq!(bucket.available_tokens(), 0);
 
         // Wait a bit to ensure no immediate refill
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -445,7 +445,7 @@ mod tests {
 
         // Acquire all tokens
         bucket.acquire(100).await;
-        assert!(bucket.available_tokens() <= 0);
+        assert_eq!(bucket.available_tokens(), 0);
 
         // Wait for refill
         sleep(Duration::from_millis(100)).await;
@@ -476,7 +476,7 @@ mod tests {
         }
 
         // All tokens should be consumed
-        assert!(bucket.available_tokens() <= 0);
+        assert_eq!(bucket.available_tokens(), 0);
     }
 
     #[tokio::test]

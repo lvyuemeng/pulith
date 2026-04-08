@@ -1,39 +1,144 @@
 # Pulith Roadmap
 
-## Current State
+## Goal
 
-- Workspace crates in `crates/` are the active codebase; `archive/` contains legacy non-workspace code.
-- The project direction in `docs/design.md` is coherent, but several design docs currently overstate implementation completeness.
-- The main release blockers are correctness issues in `pulith-archive`, CI-blocking lint failures in tests, formatting drift, and incomplete cross-platform CI coverage.
+Tighten Pulith into a cohesive, efficient, mechanism-first resource-management ecosystem.
 
-## Priority Plan
+The foundational crates now exist. The roadmap is no longer about adding missing layers. It is about making the existing layers integrate cleanly, stay policy-light, and hold up under real end-to-end workloads.
 
-### P0 - Correctness and Security
+## Current Position
 
-1. Fix `pulith-archive` extraction hashing so hashes are computed from actual extracted file contents.
-2. Apply symlink target sanitization during archive extraction instead of writing raw archive targets.
-3. Fix Windows-specific workspace commit failure in `pulith-archive` tests.
+- the architecture is broadly correct
+- the crate split is mostly right and should remain
+- the main remaining gap is integration quality between crates, especially in advanced flows
+- the next work should prioritize typed bridges, end-to-end tests, and performance evidence over adding more crate surface
 
-### P1 - CI Baseline
+## Current Priorities
 
-1. Remove `clippy -D warnings` failures in `pulith-fs` and `pulith-platform` tests.
-2. Apply `cargo fmt` across the workspace.
-3. Replace the current CI workflow with a stricter workflow that checks formatting, clippy, docs, tests, and dependency policy.
+### 1. Tighten Integration Between Existing Crates
 
-### P2 - Cross-Platform Confidence
+- make `pulith-source` feed planned candidates directly into `pulith-fetch`
+- make `pulith-fetch` outputs convert cleanly into store handles
+- reduce path-level glue between `pulith-fetch`, `pulith-store`, `pulith-archive`, and `pulith-install`
+- standardize receipts and handoff types across pipeline stages
 
-1. Add a GitHub Actions OS matrix for Linux, Windows, and macOS.
-2. Add an MSRV check aligned with Rust 2024 edition support and then reconcile `docs/AGENT.md`.
-3. Run tests with `--all-features` so optional code paths are covered.
+### 2. Harden Advanced Execution Paths
 
-### P3 - Design / Implementation Alignment
+- make `pulith-fetch` advanced modes explicit and trustworthy:
+  - retry policy
+  - resumable fetch
+  - conditional fetch
+  - multi-source execution
+- add replace / upgrade / rollback semantics to `pulith-install`
+- deepen shim-oriented activation through adapters, not embedded policy
 
-1. Reconcile `docs/design/fs.md` with the actual `pulith-fs` API.
-2. Reconcile `docs/design/fetch.md` with the current modular `pulith-fetch` codebase.
-3. Review stale dependencies and partial implementations in `pulith-fetch` and `pulith-platform`.
+### 3. Improve Version-Centric Resource Selection
 
-## Execution Notes
+- extend `pulith-version` with requirement matching
+- add preference selection (`latest`, `lts`, exact, compatible, pinned)
+- connect those semantics to `pulith-resource` and `pulith-source`
 
-- Apply fixes in priority order so the repository reaches a stable CI baseline before broader feature work.
-- Prefer targeted fixes that improve correctness first, then enforce them through CI.
-- Keep the docs updated as APIs and workflows are corrected.
+### 4. Add Integrated Testing
+
+- end-to-end pipeline tests across crates
+- cross-platform contract tests
+- persistence and recovery tests
+- activation idempotence tests
+- source/fetch/store/install integration tests
+
+### 5. Add Performance Validation
+
+- benchmark state growth and snapshot rewriting
+- benchmark large artifact fetch/extract/install flows
+- benchmark advanced fetch strategies under realistic workloads
+- measure copy-heavy transitions and reduce them where possible
+
+## Keep / Change Decisions
+
+### Keep Separate
+
+- `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`
+- `pulith-resource`, `pulith-store`, `pulith-state`
+- `pulith-install`, `pulith-source`
+
+### Improve Without Merging
+
+- `pulith-source` <-> `pulith-fetch`
+- `pulith-fetch` <-> `pulith-store`
+- `pulith-store` <-> `pulith-install`
+- `pulith-install` <-> `pulith-shim`
+- `pulith-resource` <-> `pulith-version`
+
+The roadmap assumes integration tightening, not crate collapse.
+
+## Ordered Backlog
+
+### Near-Term
+
+1. Connect `pulith-source` planning directly into `pulith-fetch`.
+2. Define shared receipts and handoff types across fetch, store, archive, and install.
+3. Add rollback / replace / upgrade semantics to `pulith-install`.
+4. Extend `pulith-version` with requirement matching and preference selection.
+5. Add end-to-end workspace integration tests.
+
+### Mid-Term
+
+1. Add store lookup, provenance, and pruning without forcing install policy into `pulith-store`.
+2. Improve lifecycle persistence ergonomics in `pulith-state`.
+3. Add shim-oriented activator adapters for `pulith-install`.
+4. Benchmark and optimize copy-heavy pipeline transitions.
+
+### Later
+
+1. Add thin backend example crates to validate the adapter-first architecture.
+2. Revisit state storage structure only if benchmarks show snapshot rewriting is a real bottleneck.
+3. Add optional migration / backup / trust-policy extensions once the core pipeline is stable.
+
+## Integrated Test Plan
+
+### End-to-End
+
+- resource -> source -> fetch -> store -> install -> activate
+- resource -> source -> fetch -> archive -> store -> install
+- reinstall and active-version switching
+- interrupted install and recovery
+
+### Cross-Platform
+
+- windows replace and cleanup behavior
+- symlink / junction activation behavior
+- path and archive sanitization behavior
+
+### Persistence
+
+- repeated state updates through install flows
+- restart from partial state
+- repeated activation idempotence
+
+### Performance
+
+- large artifact fetch/extract/install
+- state growth behavior
+- store import and extract registration cost
+- advanced fetch strategy overhead vs benefit
+
+## Risks
+
+- broadening the API surface faster than integration quality improves
+- keeping advanced fetch modes exposed before they are fully trustworthy
+- letting cross-crate glue become path-heavy and ad hoc
+- optimizing too early without end-to-end benchmarks
+
+## Success Criteria
+
+Pulith is successful when a caller can compose a full resource-management flow with low glue overhead:
+
+- describe a resource semantically
+- plan sources
+- fetch and verify bytes
+- store and extract artifacts
+- install and activate safely
+- persist lifecycle state atomically
+- recover from interruption or failure
+
+And can do so without adopting a monolithic framework or a rigid package model.

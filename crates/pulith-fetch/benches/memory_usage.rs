@@ -1,10 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use pulith_fetch::core::calculate_segments;
-use pulith_fetch::data::sources::DownloadSource;
-use std::path::PathBuf;
-use std::sync::Arc;
+use pulith_fetch::calculate_segments;
 use std::time::Duration;
-use tempfile::TempDir;
 
 // Simple memory tracking using std::alloc
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -16,7 +12,7 @@ struct MemoryTracker;
 
 unsafe impl GlobalAlloc for MemoryTracker {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ptr = System.alloc(layout);
+        let ptr = unsafe { System.alloc(layout) };
         if !ptr.is_null() {
             ALLOCATED.fetch_add(layout.size() as u64, Ordering::Relaxed);
         }
@@ -24,7 +20,7 @@ unsafe impl GlobalAlloc for MemoryTracker {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout);
+        unsafe { System.dealloc(ptr, layout) };
         ALLOCATED.fetch_sub(layout.size() as u64, Ordering::Relaxed);
     }
 }
@@ -58,7 +54,7 @@ fn bench_segment_calculation_memory(c: &mut Criterion) {
                     ALLOCATED.store(0, Ordering::Relaxed);
 
                     let segment_size = 1024 * 1024; // 1MB segments
-                    let num_segments = ((file_size / segment_size) as u32).max(1).min(16);
+                    let num_segments = ((file_size / segment_size) as u32).clamp(1, 16);
 
                     let segments =
                         calculate_segments(black_box(file_size), black_box(num_segments)).unwrap();
@@ -89,8 +85,7 @@ fn bench_large_buffer_allocation(c: &mut Criterion) {
                     let buffer = vec![0u8; buffer_size as usize];
                     black_box(buffer);
 
-                    let memory_used = get_memory_usage();
-                    memory_used
+                    get_memory_usage()
                 });
             },
         );
@@ -120,8 +115,7 @@ fn bench_concurrent_downloads_memory(c: &mut Criterion) {
 
                     black_box(buffers);
 
-                    let memory_used = get_memory_usage();
-                    memory_used
+                    get_memory_usage()
                 });
             },
         );
@@ -152,8 +146,7 @@ fn bench_stream_processing_memory(c: &mut Criterion) {
 
                     black_box(chunks);
 
-                    let memory_used = get_memory_usage();
-                    memory_used
+                    get_memory_usage()
                 });
             },
         );

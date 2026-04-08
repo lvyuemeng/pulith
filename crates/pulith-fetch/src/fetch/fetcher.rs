@@ -404,7 +404,7 @@ mod tests {
         let _result = fetcher.fetch(url, &destination, options).await;
         // The callback might be called depending on how far the fetch gets
         // We're just testing that the option is accepted
-        assert!(true);
+        let _ = progress_called.load(std::sync::atomic::Ordering::Relaxed);
     }
 
     #[tokio::test]

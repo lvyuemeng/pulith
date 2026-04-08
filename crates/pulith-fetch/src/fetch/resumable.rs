@@ -428,28 +428,21 @@ mod tests {
     impl HttpClient for MockClient {
         type Error = MockError;
 
-        fn stream(
+        async fn stream(
             &self,
             _url: &str,
             _headers: &[(String, String)],
-        ) -> impl Future<
-            Output = std::result::Result<
-                BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
-                Self::Error,
-            >,
-        > + Send {
-            async move {
-                let empty: BoxStream<'static, std::result::Result<Bytes, Self::Error>> =
-                    Box::pin(futures_util::stream::empty());
-                Ok(empty)
-            }
+        ) -> std::result::Result<
+            BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+            Self::Error,
+        > {
+            let empty: BoxStream<'static, std::result::Result<Bytes, Self::Error>> =
+                Box::pin(futures_util::stream::empty());
+            Ok(empty)
         }
 
-        fn head(
-            &self,
-            _url: &str,
-        ) -> impl Future<Output = std::result::Result<Option<u64>, Self::Error>> + Send {
-            async move { Ok(Some(1024)) }
+        async fn head(&self, _url: &str) -> std::result::Result<Option<u64>, Self::Error> {
+            Ok(Some(1024))
         }
     }
 

@@ -35,6 +35,9 @@ pub enum Error {
     #[error("retry limit exceeded after {0} attempts")]
     RetryLimitExceeded(u32),
 
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("cross-device hardlink not supported")]
     CrossDeviceHardlink,
 

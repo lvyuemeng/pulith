@@ -1,0 +1,11 @@
+[package]
+name = "pulith-source"
+version = "0.1.0"
+edition = "2024"
+description = "Composable source abstractions and planning for Pulith"
+
+[dependencies]
+pulith-resource = { path = "../pulith-resource" }
+
+serde.workspace = true
+thiserror.workspace = true

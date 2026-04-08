@@ -1,0 +1,14 @@
+[package]
+name = "pulith-store"
+version = "0.1.0"
+edition = "2024"
+description = "Composable local artifact storage for Pulith"
+
+[dependencies]
+pulith-fs = { path = "../pulith-fs" }
+pulith-resource = { path = "../pulith-resource" }
+
+serde.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+tempfile.workspace = true

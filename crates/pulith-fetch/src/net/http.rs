@@ -184,37 +184,28 @@ mod tests {
     impl HttpClient for MockHttpClient {
         type Error = MockError;
 
-        fn stream(
+        async fn stream(
             &self,
             _url: &str,
             _headers: &[(String, String)],
-        ) -> impl Future<
-            Output = std::result::Result<
-                BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
-                Self::Error,
-            >,
-        > + Send {
-            async move {
-                if self.should_fail {
-                    Err(MockError("Stream failed".to_string()))
-                } else {
-                    let data = vec![Bytes::from("test data")];
-                    let stream = stream::iter(data).map(Ok);
-                    Ok(Box::pin(stream) as BoxStream<'static, _>)
-                }
+        ) -> std::result::Result<
+            BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+            Self::Error,
+        > {
+            if self.should_fail {
+                Err(MockError("Stream failed".to_string()))
+            } else {
+                let data = vec![Bytes::from("test data")];
+                let stream = stream::iter(data).map(Ok);
+                Ok(Box::pin(stream) as BoxStream<'static, _>)
             }
         }
 
-        fn head(
-            &self,
-            _url: &str,
-        ) -> impl Future<Output = std::result::Result<Option<u64>, Self::Error>> + Send {
-            async move {
-                if self.should_fail {
-                    Err(MockError("HEAD request failed".to_string()))
-                } else {
-                    Ok(self.content_length)
-                }
+        async fn head(&self, _url: &str) -> std::result::Result<Option<u64>, Self::Error> {
+            if self.should_fail {
+                Err(MockError("HEAD request failed".to_string()))
+            } else {
+                Ok(self.content_length)
             }
         }
     }

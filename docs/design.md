@@ -1,354 +1,230 @@
 # Pulith Design Document
 
-## vision
+## Vision
 
-**resource management primitives for rust**
+Pulith is a Rust ecosystem for resource management primitives: version selection, source planning, fetching, verification, storage, extraction, installation, activation, and persistent state.
 
-a crate ecosystem providing everything a rust tool needs to fetch, verify, store, and track external resources - packages, config files, tools, plugins, or any versioned artifacts.
+The project is mechanism-first. It should give tool authors reliable building blocks without forcing one package format, backend, or manager model.
 
-> "everything a rust tool needs to manage versioned external resources - built with best practices."
+## Why It Exists
 
-## why this exists
+Most tools that manage external resources end up rebuilding the same layers:
 
-80% of tools that manage external resources reinvent the same primitives:
-- version parsing and comparison
-- http downloads with progress and verification
-- atomic file operations and staging
-- state tracking with rollback
-- cross-platform correctness
+- version parsing and selection
+- source planning and fetching
+- content verification
+- atomic filesystem updates
+- persistent state and activation
+- cross-platform behavior
 
-this ecosystem provides battle-tested building blocks so developers can focus on their unique value proposition.
+Pulith exists to make those layers reusable, composable, and correct.
 
-## target use cases
+## Design Principles
 
-- **version managers**: rustup, nvm, pyenv, goenv
-- **config managers**: dotfiles, config sync, .env managers
-- **plugin managers**: vim-plug, neovim plugins, ide extensions
-- **registry servers**: npm registry mirrors, pypi caches, internal registries
-- **tool managers**: sdk managers, cli tool installers
-- **artifact repositories**: container image caches, binary caches
+1. atomicity first
+2. composability over framework-style policy
+3. cross-platform behavior as a primary constraint
+4. semantic APIs over raw stringly glue
+5. type-driven correctness where workflow ordering matters
+6. proof-carrying validation where repeated checks would spread through the codebase
+7. thin integration surfaces between crates instead of monolithic abstraction
 
-## design principles
+## Current Architecture
 
-1. **atomicity**: all state-changing operations are atomic with rollback
-2. **composability**: crates can be used independently or together
-3. **cross-platform**: consistent behavior across windows, macos, linux
-4. **extensibility**: higher-layer patterns (sources, backends) designed later
-5. **best practices**: security, verification, and correctness baked in
-6. **mechanism-only**: provide primitives to fetch, store, stage, and track external resources.
+Pulith now has four logical layers:
 
-## completed crates
+### 1. Primitive Layer
 
-| crate | status | purpose | key features |
-|-------|--------|---------|--------------|
-| `pulith-platform` | ✅ | cross-platform helpers | os/arch detection, shell detection, path manipulation |
-| `pulith-version` | ✅ | version parsing | semver, calver, partial versions with comparison |
-| `pulith-shim` | ✅ | shim generation | targetresolver trait, composable resolvers |
-| `pulith-fs` | ✅ | atomic filesystem | atomic_write, workspace, transaction, replace_dir |
-| `pulith-verify` | ✅ | content verification | hasher trait, verifiedreader, sha256/blake3 |
-| `pulith-archive` | ✅ | archive handling | format detection, streaming extraction, zip-slip protection |
-| `pulith-fetch` | ✅ | http downloading | tee-reader streaming, atomic placement, progress callbacks |
+- `pulith-platform`: small cross-platform helpers
+- `pulith-version`: version parsing and comparison
+- `pulith-fs`: atomic file and workspace primitives
+- `pulith-verify`: verification primitives
+- `pulith-archive`: archive extraction primitives
+- `pulith-fetch`: transfer execution primitives
+- `pulith-shim`: shim resolution primitives
 
-## crate relationships
+### 2. Semantic Model Layer
 
-**dependency matrix:**
+- `pulith-resource`: shared resource semantics
+- `pulith-store`: local artifact and extract storage
+- `pulith-state`: persistent resource lifecycle state
 
-| crate | dependencies |
-|-------|--------------|
-| `pulith-fetch` | `pulith-fs`, `pulith-verify` |
-| `pulith-archive` | `pulith-fs` (optional: `pulith-verify`) |
-| `pulith-verify` | none (standalone) |
-| `pulith-fs` | none (standalone) |
-| `pulith-platform` | none (standalone) |
-| `pulith-version` | none (standalone) |
-| `pulith-shim` | none (standalone) |
+### 3. Workflow Layer
 
-## crate descriptions
+- `pulith-install`: typed installation and activation workflow
 
-### pulith-platform ✅
-cross-platform helpers:
-- os and distribution detection (windows, macos, linux distros)
-- architecture detection (x86, x64, arm variants)
-- shell detection and invocation
-- path manipulation
-- home and temp directory resolution
+### 4. Source Layer
 
-**design**: `docs/design/platform.md`
+- `pulith-source`: source definitions, planning, and expansion
 
-### pulith-version ✅
-version parsing and comparison for multiple formats:
-- **semver**: semantic versioning (1.2.3, 1.2.3-alpha+build)
-- **calver**: calendar versioning (2024.01, 2024.01.15)
-- **partial**: partial versions (18, 3.11, lts)
+## Active Crates
 
-**design**: `docs/design/version.md`
+| crate | maturity | role |
+|-------|----------|------|
+| `pulith-platform` | stable core | cross-platform helpers |
+| `pulith-version` | stable core | version parsing |
+| `pulith-shim` | stable core | shim resolution |
+| `pulith-fs` | maturing core | atomic filesystem and workspace primitives |
+| `pulith-verify` | stable core | content verification |
+| `pulith-archive` | maturing core | archive extraction |
+| `pulith-fetch` | maturing core | transfer execution |
+| `pulith-resource` | emerging core | resource semantics |
+| `pulith-store` | emerging core | artifact storage |
+| `pulith-state` | emerging core | persistent lifecycle state |
+| `pulith-install` | emerging core | installation workflow |
+| `pulith-source` | emerging core | source planning |
 
-### pulith-shim ✅
-shim generation for version switching:
-- targetresolver trait for custom resolution policies
-- pairresolver and tripleresolver for fallback/chain patterns
-- compile-time generic resolution (zero-cost abstraction)
+## Dependency Shape
 
-**design**: `docs/design/shim.md`
+The dependency shape is intentionally layered:
 
-### pulith-fs ✅
+- primitives should stay independently usable
+- semantic crates should stay policy-light
+- workflow crates should compose lower layers rather than absorb them
 
-role: cross-platform atomic filesystem primitives. mechanism only: it does not know what a "tool" is. it only knows how to move bytes safely.
+Current high-level relationships:
 
-**core primitives:**
+- `pulith-fetch` depends on `pulith-fs` and `pulith-verify`
+- `pulith-archive` depends on `pulith-fs`
+- `pulith-store` depends on `pulith-fs` and `pulith-resource`
+- `pulith-state` depends on `pulith-fs`, `pulith-resource`, and `pulith-store`
+- `pulith-install` depends on `pulith-fs`, `pulith-resource`, `pulith-store`, and `pulith-state`
+- `pulith-source` depends on `pulith-resource`
 
-- `atomic_write(path, content)`: writes to a temp file, fsyncs, then renames.
+## Current Assessment
 
-- `atomic_symlink(target, link_path)`: creates a new link, then renames over the old one.
+The architecture is broadly correct.
 
-- `replace_dir(src, dest)`: atomic directory replacement. On Windows, handles the complex retry/rename dance required when files are locked.
+The main issue is no longer missing layers. The main issue is integration maturity between the newer crates.
 
-- `hardlink_or_copy(src, dest)`: optimization primitive.
+### What Is Working
 
-**workspace** (formerly stage)
+- the crate split still maps well to real resource-management concerns
+- the philosophy is still consistent across the workspace
+- type-state is used in the right places so far: resource resolution, source planning, and install flow
+- proof-carrying validation is present where it matters most today (`ValidUrl`, `ValidDigest`)
+- the engineering baseline is strong: formatting, tests, docs, and CI all work across the workspace
 
-role: a transactional workspace for preparing resources. philosophy: installation is a transaction. it either happens completely or not at all. mechanism only: no policy, no format enforcement.
+### Main Design Debt
 
-example:
+- `pulith-fetch` still mixes a dependable simple path with less mature advanced policy surfaces
+- the bridge between `pulith-source`, `pulith-fetch`, `pulith-store`, and `pulith-install` is thinner than it should be
+- some lifecycle transitions still require too much caller-side record construction and path-level glue
+- `pulith-version` is still stronger at parsing than at selection and requirement matching
+- `pulith-state` is intentionally simple, but snapshot rewriting may become expensive for larger registries
 
-```rust
-let workspace = workspace::new(temp_dir)?;
+## Crate Re-evaluation
 
-workspace.write("bin/tool", bytes)?;
-workspace.create_dir("lib")?;
-workspace.create_dir_all("nested/deep")?;
+### Keep As Separate Crates
 
-// this atomically moves the staged directory to the final destination.
-// if this fails, the workspace is dropped and the temp dir is cleaned up.
-workspace.commit(final_destination_path)?;
-```
+These boundaries are still good and should remain:
 
-**transaction** (formerly state)
+- `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`
+- `pulith-resource`, `pulith-store`, `pulith-state`
+- `pulith-install`, `pulith-source`
 
-role: concurrent-safe read-modify-write on a persistent file, without enforcing a schema. concrete-independent: it deals in opaque bytes only.
+Merging these would reduce composability and make the shared model more rigid.
 
-example:
+### Tighten Integration Without Merging
 
-```rust
-let tx = transaction::open("registry.json")?;
+- `pulith-source` should feed planned candidates directly into `pulith-fetch`
+- `pulith-fetch` should emit receipts that convert naturally into store handles
+- `pulith-store` and `pulith-install` should share clearer handoff types
+- `pulith-install` should gain shim-oriented activators without embedding shim policy into `pulith-shim`
+- `pulith-resource` should integrate more strongly with future `pulith-version` requirement semantics
 
-// blocks other processes, reads current content, allows modification,
-// and atomically writes back.
-tx.execute(|bytes| {
-    let data: MyCustomSchema = MyCustomSchema::from(bytes);
-    data.last_update = now();
-    Ok(data.to_bytes())
-})?;
-```
+### Crates That Need the Most Refactor Attention
 
-mechanism: handles file locking (flock/lockfile), read-modify-write cycles, and atomic replacement. it prevents two instances of your tool from corrupting the registry.
+- `pulith-fetch`: make advanced execution modes explicit and trustworthy
+- `pulith-install`: add upgrade and rollback semantics
+- `pulith-version`: add requirement matching and preference selection
+- `pulith-state`: monitor snapshot scaling and avoid premature complexity until benchmarks justify change
 
-**design**: `docs/design/fs.md`
+## Practicality and Ergonomics
 
-### pulith-verify ✅
+The current crate layout is practical for internal composition, but still slightly too verbose for end users.
 
-content verification primitives for downloaded artifacts:
-- **zero-copy verification**: cpu cache touches bytes only once (hashing + i/o)
-- **hasher trait**: minimal interface for custom implementations (hardware accelerators, etc.)
-- **verifiedreader**: streaming verification wrapper for any `read` source
-- **built-in hashers**: sha256 (default via `sha2` crate), blake3 (optional via feature flag)
+The next ergonomics step should be better typed bridges, not fewer crates.
 
-example:
+Focus areas:
 
-```rust
-use pulith_verify::{VerifiedReader, Sha256Hasher};
+- standardize receipts across fetch, store, extract, install, and activate
+- reduce ad hoc path conversion between layers
+- add ready-made adapters for common end-to-end flows
+- make lifecycle persistence less repetitive for callers
+- improve end-to-end examples that span multiple crates
 
-let expected_hash = hex::decode("...")?;
-let hasher = Sha256Hasher::new();
-let mut reader = VerifiedReader::new(file, hasher);
+## Efficiency Direction
 
-std::io::copy(&mut reader, &mut dest)?;
-reader.finish(&expected_hash)?;
-```
+The main efficiency risks are in composition, not in the small primitive crates.
 
-**design**: `docs/design/verify.md`
+Priority areas:
 
-### pulith-archive ✅
+- reduce repeated copying across fetch -> store -> install flows
+- prefer hardlink, rename, or direct registration where semantics allow it
+- benchmark state snapshot rewriting under realistic registry sizes
+- benchmark advanced fetch modes instead of assuming concurrency helps
+- avoid rematerializing extracted trees when store ownership is already sufficient
 
-archive extraction and creation primitives:
-- **format detection**: magic number inspection (zip, tar.gz, xz, zstd)
-- **single-pass extraction**: streams entries without loading entire archive into memory
-- **path sanitization**: lexical normalization prevents zip-slip attacks
-- **transaction-aware**: works with `pulith-fs::workspace` for atomic extraction
+## Integrated Testing Direction
 
-example:
+The next quality step is more integrated testing, not more crate surface.
 
-```rust
-use pulith_archive::{ArchiveFormat, Compression, unpacker};
+Required test layers:
 
-let format = unpacker::detect_format_from_file(archive_path)?;
+- end-to-end pipeline tests:
+  - resource -> source -> fetch -> store -> install -> activate
+  - resource -> source -> fetch -> archive -> store -> install
+- cross-platform contract tests:
+  - windows replace behavior
+  - symlink/junction activation differences
+  - path sanitization behavior
+- persistence and recovery tests:
+  - interrupted install recovery
+  - partial state recovery
+  - repeated activation idempotence
+- performance tests:
+  - large artifact fetch/extract/install
+  - store registration of large trees
+  - state growth behavior
 
-match format {
-    ArchiveFormat::Tar(Compression::Gzip) => {
-        let decoder = flate2::read::GzDecoder::new(file);
-        unpacker::extract_tar_gz(decoder, destination)?;
-    }
-    _ => return Err(Error::UnsupportedFormat),
-}
-```
+## Refactor Priorities
 
-**design**: `docs/design/archive.md`
+1. connect `pulith-source` planning directly to `pulith-fetch`
+2. define shared receipts and handoff types across fetch, store, archive, and install
+3. add replace / upgrade / rollback semantics to `pulith-install`
+4. extend `pulith-version` with requirement matching and preference selection
+5. add workspace-level end-to-end integration tests
 
-### pulith-fetch ✅
+## Architectural Conclusion
 
-http downloading with streaming verification and atomic placement:
-- **tee-reader pattern**: single-pass streaming from network → filesystem with concurrent sha256 hashing
-- **atomic placement**: uses `pulith-fs::workspace` for guaranteed cleanup on error
-- **httpclient trait**: abstraction for testability (reqwest implementation via feature flag)
-- **progress callbacks**: mechanism-only, caller handles ui/throttling
+Pulith does not need fewer crates right now.
 
-example:
+It needs stronger typed bridges between the crates it already has.
 
-```rust
-use pulith_fetch::{Fetcher, ReqwestClient, FetchOptions};
-
-let client = ReqwestClient::new()?;
-let fetcher = Fetcher::new(client, "/tmp");
-
-let options = FetchOptions::default()
-    .checksum(Some(expected_hash));
-
-let path = fetcher.fetch(url, destination, options).await?;
-```
-
-**design**: `docs/design/fetch.md`
-
-## design directions (deferred)
-
-these areas require further design when needed:
-
-### backend abstractions
-- trait for package managers
-- multi-manager orchestration
-- flag resolution patterns
-
-### migration and upgrades
-- schema migration for registries
-- in-place upgrade patterns
-- backup and restore
-
-## current assessment
-
-the project direction is still valid: pulith should remain a mechanism-first ecosystem for resource management primitives, especially around version selection, artifact fetching, verification, storage, extraction, and activation.
-
-the current design is suitable to proceed further, but it should be treated as a maturing foundation rather than a completed ecosystem.
-
-### what is working well
-
-- the crate split is still sensible: `version`, `fs`, `verify`, `archive`, `fetch`, `platform`, and `shim` cover the main primitive layers needed by version managers and tool installers.
-- the overall philosophy remains correct: pure-ish primitives, explicit effects, cross-platform behavior, and mechanism over policy.
-- the workspace is now close to a usable baseline for further work because formatting, tests, docs, and CI are in place.
-
-### current defects and design debt
-
-- some crate descriptions above overstate completeness, especially for `pulith-fs` and `pulith-fetch`.
-- `pulith-fs` currently exposes a smaller `workspace` and `transaction` API than this document describes; the design intent is ahead of the implementation.
-- `pulith-fetch` contains useful primitives, but several advanced capabilities are still partial or scaffold-level rather than production-complete:
-  - retry policy is not yet a first-class execution model
-  - multi-source behavior is not yet a trustworthy policy engine
-  - resumable and conditional fetching are not yet fully modeled end-to-end
-  - bench and extra-target hygiene still need cleanup before `clippy --all-targets` becomes the default gate
-- cross-platform support is improving, but the design should continue assuming Windows behavior is a first-class constraint rather than a later validation pass.
-- the docs need periodic reconciliation with the code so design intent and public API do not drift apart.
-
-### what can be extended next
-
-#### 1. strengthen the core primitives
-
-- expand `pulith-fs::workspace` into the richer transactional staging API described here (`write`, `create_dir`, `create_dir_all`, manifest/report helpers).
-- expand `pulith-fs::transaction` toward a true read-modify-write executor for opaque state files.
-- harden `pulith-archive` around creation APIs, metadata preservation, and more explicit symlink / permission policy.
-
-#### 2. turn fetch into a reliable resource pipeline
-
-- make retries explicit and composable instead of option-only.
-- make source selection a real planning layer with priority, race, mirror health, and consistency verification.
-- complete resumable and conditional fetching around persistent metadata, checkpoint validity, and append-safe writes.
-- separate transport concerns from fetch policy more clearly so `pulith-fetch` can support more backends over time.
-
-#### 3. add higher-level resource management crates
-
-the next meaningful expansion should not be more miscellaneous utilities. it should be a thin higher layer built on the current primitives.
-
-possible additions:
-
-- `pulith-store`: canonical local artifact store, content-addressed or version-addressed layouts, retention, and lookup.
-- `pulith-resource`: typed description of an external resource (identity, version, source, checksum, unpack policy, install policy).
-- `pulith-state`: persistent registries for installed resources, active versions, and provenance.
-- `pulith-install`: installation / activation transaction that composes `fetch + verify + archive + fs + shim`.
-- `pulith-source`: source abstractions for http releases, git-based artifacts, local files, and mirrors.
-
-#### 4. improve version-centric workflows
-
-because the project goal explicitly includes version-oriented resource management, the version layer should eventually support more than parsing.
-
-future direction:
-
-- version requirement matching and selection
-- preference rules (`latest`, `lts`, exact, compatible, pinned)
-- stable ordering across semver, calver, and partial versions
-- source-side resolution hooks for choosing a concrete artifact from a version query
-
-## proceed / no-go decision
-
-yes, the project can proceed further.
-
-however, the next phase should follow this order:
-
-1. align docs with the current public API and actual maturity level
-2. complete the missing core behavior in `pulith-fs`, `pulith-archive`, and `pulith-fetch`
-3. introduce one higher-level resource crate only after the primitives are stable enough to compose cleanly
-
-the main risk is not that the architecture is wrong. the main risk is expanding sideways before the core contracts are stable.
-
-## next design plan
-
-### phase 1 - stabilize primitives
-
-- keep `platform`, `version`, `verify`, and `shim` small and dependable
-- finish the intended `fs` transaction/workspace surface
-- narrow `fetch` to the features that are truly reliable, then complete them one by one
-- keep CI strict on the library surface
-
-### phase 2 - define resource model
-
-- design a shared resource identity model: name, source, version query, resolved version, checksum, storage key, install intent
-- define a store model for downloaded and extracted artifacts
-- define registry/state file conventions without binding callers to one policy
-
-### phase 3 - compose into installation flows
-
-- implement install / upgrade / rollback transactions on top of the primitive crates
-- connect version resolution, fetch, verify, extract, stage, commit, and shim activation into one coherent flow
-- expose this as reusable crates, not as one monolithic application framework
-
-### phase 4 - source and backend ecosystem
-
-- add source adapters and mirror strategies
-- add richer backend patterns for version managers, plugin managers, and config managers
-- keep package-format semantics out of pulith core unless a format is genuinely common and reusable
+The split is mostly correct. The next phase should therefore focus on integration tightening, better end-to-end ergonomics, stronger advanced-path guarantees, and performance evidence for the composed system.
 
 ## Out of Scope
 
-- Package format definitions (let sources define)
-- Repository hosting
-- Authentication servers
-- License management
-- Dependency resolution
+- package format definitions unless they are broadly reusable
+- repository hosting
+- authentication servers
+- license management
+- dependency resolution
 
 ## References
 
-- [README.md](./README.md) - Project overview and getting started
-- [docs/AGENT.md](./AGENT.md) - Coding specifications and development guidelines
-- [docs/design/verify.md](./design/verify.md) - Content verification primitives design
-- [docs/design/fetch.md](./design/fetch.md) - HTTP fetching design
-- [docs/design/fs.md](./design/fs.md) - Filesystem primitives design
-- [docs/design/archive.md](./design/archive.md) - Archive handling design
-- [docs/design/version.md](./design/version.md) - Version parsing design
-- [docs/design/platform.md](./design/platform.md) - Platform utilities design
-- [docs/design/shim.md](./design/shim.md) - Shim generation design
+- `README.md`
+- `docs/AGENT.md`
+- `docs/design/platform.md`
+- `docs/design/version.md`
+- `docs/design/shim.md`
+- `docs/design/fs.md`
+- `docs/design/verify.md`
+- `docs/design/archive.md`
+- `docs/design/fetch.md`
+- `docs/design/resource.md`
+- `docs/design/store.md`
+- `docs/design/state.md`
+- `docs/design/install.md`
+- `docs/design/source.md`

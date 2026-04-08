@@ -1488,6 +1488,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulith-install"
+version = "0.1.0"
+dependencies = [
+ "pulith-fs",
+ "pulith-resource",
+ "pulith-state",
+ "pulith-store",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pulith-platform"
 version = "0.1.0"
 dependencies = [
@@ -1496,6 +1509,16 @@ dependencies = [
  "pulith-fs",
  "query-shell",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pulith-resource"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
@@ -1510,6 +1533,40 @@ name = "pulith-shim-bin"
 version = "0.1.0"
 dependencies = [
  "pulith-shim",
+]
+
+[[package]]
+name = "pulith-source"
+version = "0.1.0"
+dependencies = [
+ "pulith-resource",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pulith-state"
+version = "0.1.0"
+dependencies = [
+ "pulith-fs",
+ "pulith-resource",
+ "pulith-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "pulith-store"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "pulith-fs",
+ "pulith-resource",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2416,6 +2473,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

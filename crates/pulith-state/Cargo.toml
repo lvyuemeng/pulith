@@ -1,0 +1,15 @@
+[package]
+name = "pulith-state"
+version = "0.1.0"
+edition = "2024"
+description = "Transaction-backed persistent state for Pulith resources"
+
+[dependencies]
+pulith-fs = { path = "../pulith-fs" }
+pulith-resource = { path = "../pulith-resource" }
+pulith-store = { path = "../pulith-store" }
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
