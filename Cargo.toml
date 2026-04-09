@@ -15,4 +15,4 @@ sha2 = "0.10"
 thiserror = "2.0.18"
 tempfile = "3"
 url = { version = "2.5", features = ["serde"] }
-zip = "8.4.0"
+zip = "8.5.1"
