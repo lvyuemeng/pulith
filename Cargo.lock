@@ -1395,6 +1395,7 @@ dependencies = [
  "pulith-install",
  "pulith-resource",
  "pulith-source",
+ "pulith-version",
  "thiserror 2.0.18",
 ]
 

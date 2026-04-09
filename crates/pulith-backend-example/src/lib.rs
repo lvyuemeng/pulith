@@ -6,12 +6,15 @@
 
 use std::path::PathBuf;
 
-use pulith_install::{ActivationTarget, InstallInput, InstallSpec, ShimCommand, ShimLinkActivator};
+use pulith_install::{
+    ActivationTarget, InstallInput, InstallSpec, ShimCommand, ShimCopyActivator, ShimLinkActivator,
+};
 use pulith_resource::{
     Metadata, RequestedResource, ResolvedResource, ResourceId, ResourceLocator, ResourceSpec,
     Result as ResourceResult, VersionSelector,
 };
-use pulith_source::{Result as SourceResult, SourceSpec};
+use pulith_source::{PlannedSources, Result as SourceResult, SelectionStrategy, SourceSpec};
+use pulith_version::SelectionPolicy;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, BackendError>;
@@ -74,8 +77,24 @@ impl ManagedBinarySpec {
         RequestedResource::new(self.resource_spec())
     }
 
+    pub fn version_selection_policy(&self) -> ResourceResult<SelectionPolicy> {
+        self.requested_resource().version_selection_policy()
+    }
+
+    pub fn select_preferred_resolved<'a>(
+        &self,
+        candidates: &'a [ResolvedResource],
+    ) -> ResourceResult<Option<&'a ResolvedResource>> {
+        self.requested_resource()
+            .select_preferred_resolved(candidates)
+    }
+
     pub fn source_spec(&self) -> SourceResult<SourceSpec> {
         SourceSpec::from_locator(&self.locator)
+    }
+
+    pub fn planned_sources(&self, strategy: SelectionStrategy) -> SourceResult<PlannedSources> {
+        PlannedSources::from_locator(&self.locator, strategy)
     }
 
     pub fn install_spec(&self, resource: ResolvedResource, input: InstallInput) -> InstallSpec {
@@ -93,6 +112,10 @@ impl ManagedBinarySpec {
 
     pub fn shim_activator(&self, command: impl Into<String>) -> Result<ShimLinkActivator> {
         Ok(ShimLinkActivator::new(self.shim_command(command)?))
+    }
+
+    pub fn shim_copy_activator(&self, command: impl Into<String>) -> Result<ShimCopyActivator> {
+        Ok(ShimCopyActivator::new(self.shim_command(command)?))
     }
 }
 
@@ -140,6 +163,74 @@ mod tests {
     }
 
     #[test]
+    fn managed_binary_produces_planned_sources_directly() {
+        let spec = managed_binary(
+            "example/runtime",
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+            VersionSelector::exact("1.0.0").unwrap(),
+            "/installs/runtime",
+            "bin/runtime",
+        )
+        .unwrap();
+
+        let planned = spec
+            .planned_sources(SelectionStrategy::OrderedFallback)
+            .unwrap();
+
+        assert_eq!(planned.candidates().len(), 1);
+        assert_eq!(planned.strategy(), &SelectionStrategy::OrderedFallback);
+    }
+
+    #[test]
+    fn managed_binary_exposes_version_selection_policy() {
+        let spec = managed_binary(
+            "example/runtime",
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+            VersionSelector::alias("lts").unwrap(),
+            "/installs/runtime",
+            "bin/runtime",
+        )
+        .unwrap();
+
+        let policy = spec.version_selection_policy().unwrap();
+        assert_eq!(policy.preference, pulith_version::VersionPreference::Lts);
+    }
+
+    #[test]
+    fn managed_binary_can_select_preferred_resolved_candidate() {
+        let spec = managed_binary(
+            "example/runtime",
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+            VersionSelector::alias("stable").unwrap(),
+            "/installs/runtime",
+            "bin/runtime",
+        )
+        .unwrap();
+        let candidates = vec![
+            spec.requested_resource().clone().resolve(
+                ResolvedVersion::new("1.2.0-alpha.1").unwrap(),
+                ResolvedLocator::Url(
+                    ValidUrl::parse("https://example.com/runtime-alpha.zip").unwrap(),
+                ),
+                None,
+            ),
+            spec.requested_resource().clone().resolve(
+                ResolvedVersion::new("1.1.0").unwrap(),
+                ResolvedLocator::Url(
+                    ValidUrl::parse("https://example.com/runtime-1.1.0.zip").unwrap(),
+                ),
+                None,
+            ),
+        ];
+
+        let selected = spec
+            .select_preferred_resolved(&candidates)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.version().as_str(), "1.1.0");
+    }
+
+    #[test]
     fn managed_binary_builds_install_spec_and_shim_activator() {
         let spec = managed_binary(
             "example/runtime",
@@ -175,5 +266,7 @@ mod tests {
             spec.shim_command("runtime").unwrap().relative_target,
             PathBuf::from("bin/runtime")
         );
+        let _link_activator = spec.shim_activator("runtime").unwrap();
+        let _copy_activator = spec.shim_copy_activator("runtime").unwrap();
     }
 }

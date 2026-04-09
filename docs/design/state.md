@@ -34,6 +34,14 @@ It guarantees the backing file exists and can be used through `pulith-fs::Transa
 - transaction-backed load/save/update operations
 - caller-facing records remain semantic and composable
 - ergonomic helpers for ensure / lookup / patch / lifecycle updates
+- semantic upsert helpers from `ResolvedResource` reduce repeated record reconstruction in workflow crates
+- per-resource state capture/restore helpers support recovery composition without pushing rollback logic into every workflow caller
+- per-resource inspection helpers support initial detect/explain behavior against filesystem and store reality
+- per-resource repair plans allow explicit cleanup of stale state facts without silently choosing broader reconciliation policy
+- activation conflict inspection helps managers detect shared-target ownership problems before destructive cleanup logic is introduced
+- store-key reference inspection helps managers protect referenced store entries before prune/cleanup behavior widens
+- lifecycle-based store retention helpers help callers derive protected prune sets from semantic state instead of reconstructing retention lists manually
+- state-driven metadata retention planning helps callers combine retention policy with store orphan inspection into one explicit cleanup plan
 
 ## Design Boundary
 

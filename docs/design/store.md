@@ -39,7 +39,12 @@ Creation ensures required directories exist before callers can write artifacts o
 - extracted directory registration
 - deterministic relative naming from semantic keys
 - metadata-backed provenance lookup
+- key-derivation-based lookup from `ResolvedResource` into artifacts, extracts, and metadata records when callers already have semantic resource identity
 - orphaned metadata pruning
+- orphaned metadata inspection before prune so callers can explain or preview cleanup behavior
+- protected prune planning so callers can preserve metadata for store keys still referenced by semantic state
+- protected prune planning composes naturally with lifecycle-based retention helpers from `pulith-state`
+- store orphan inspection also composes with state-driven metadata retention planning so callers can build cleanup plans without re-deriving protection sets by hand
 - hardlink-or-copy artifact import to reduce unnecessary copying on the same filesystem
 
 Future policies like retention and pruning stay outside the core type model until they are better understood.

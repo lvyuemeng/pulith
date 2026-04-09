@@ -33,12 +33,8 @@ pub struct MirrorSource {
 impl MirrorSource {
     pub fn new(mirrors: Vec<ValidUrl>, path: impl Into<String>) -> Result<Self> {
         let path = path.into();
-        if mirrors.is_empty() {
-            return Err(SourceError::EmptyMirrorSet);
-        }
-        if path.is_empty() {
-            return Err(SourceError::EmptyPath);
-        }
+        ensure_non_empty_slice(&mirrors, SourceError::EmptyMirrorSet)?;
+        ensure_non_empty_string(&path, SourceError::EmptyPath)?;
         Ok(Self { mirrors, path })
     }
 }
@@ -77,9 +73,7 @@ pub struct SourceSet {
 
 impl SourceSet {
     pub fn new(entries: Vec<SourceDefinition>) -> Result<Self> {
-        if entries.is_empty() {
-            return Err(SourceError::EmptySourceSet);
-        }
+        ensure_non_empty_slice(&entries, SourceError::EmptySourceSet)?;
         Ok(Self { entries })
     }
 
@@ -115,32 +109,7 @@ impl SourceSpec {
     }
 
     pub fn from_locator(locator: &ResourceLocator) -> Result<Self> {
-        let set = match locator {
-            ResourceLocator::Url(url) => {
-                SourceSet::new(vec![SourceDefinition::HttpAsset(HttpAssetSource {
-                    url: url.clone(),
-                    file_name: None,
-                })])?
-            }
-            ResourceLocator::Alternatives(urls) => SourceSet::new(
-                urls.iter()
-                    .cloned()
-                    .map(|url| {
-                        SourceDefinition::HttpAsset(HttpAssetSource {
-                            url,
-                            file_name: None,
-                        })
-                    })
-                    .collect(),
-            )?,
-            ResourceLocator::LocalPath(path) => {
-                SourceSet::new(vec![SourceDefinition::Local(LocalSource {
-                    path: path.clone(),
-                })])?
-            }
-        };
-
-        Ok(Self::new(set))
+        Ok(Self::new(source_set_from_locator(locator)?))
     }
 
     pub fn from_requested_resource(resource: &RequestedResource) -> Result<Self> {
@@ -152,20 +121,11 @@ impl SourceSpec {
     }
 
     pub fn plan(self, strategy: SelectionStrategy) -> PlannedSources {
-        let candidates = self
-            .set
-            .entries
-            .iter()
-            .flat_map(ResolvedSourceCandidate::from_definition)
-            .collect();
+        planned_sources(self.set, strategy)
+    }
 
-        SourcePlan {
-            set: self.set,
-            state: Planned {
-                strategy,
-                candidates,
-            },
-        }
+    pub fn into_planned(self, strategy: SelectionStrategy) -> PlannedSources {
+        self.plan(strategy)
     }
 }
 
@@ -176,6 +136,24 @@ impl<S> SourcePlan<S> {
 }
 
 impl PlannedSources {
+    pub fn from_locator(locator: &ResourceLocator, strategy: SelectionStrategy) -> Result<Self> {
+        Ok(planned_sources(source_set_from_locator(locator)?, strategy))
+    }
+
+    pub fn from_requested_resource(
+        resource: &RequestedResource,
+        strategy: SelectionStrategy,
+    ) -> Result<Self> {
+        Ok(SourceSpec::from_requested_resource(resource)?.plan(strategy))
+    }
+
+    pub fn from_resolved_resource(
+        resource: &ResolvedResource,
+        strategy: SelectionStrategy,
+    ) -> Result<Self> {
+        Ok(SourceSpec::from_resolved_resource(resource)?.plan(strategy))
+    }
+
     pub fn strategy(&self) -> &SelectionStrategy {
         &self.state.strategy
     }
@@ -219,6 +197,55 @@ impl ResolvedSourceCandidate {
             }],
         }
     }
+}
+
+fn source_set_from_locator(locator: &ResourceLocator) -> Result<SourceSet> {
+    match locator {
+        ResourceLocator::Url(url) => SourceSet::new(vec![http_asset(url.clone())]),
+        ResourceLocator::Alternatives(urls) => {
+            SourceSet::new(urls.iter().cloned().map(http_asset).collect())
+        }
+        ResourceLocator::LocalPath(path) => {
+            SourceSet::new(vec![SourceDefinition::Local(LocalSource {
+                path: path.clone(),
+            })])
+        }
+    }
+}
+
+fn planned_sources(set: SourceSet, strategy: SelectionStrategy) -> PlannedSources {
+    let candidates = set
+        .entries
+        .iter()
+        .flat_map(ResolvedSourceCandidate::from_definition)
+        .collect();
+
+    SourcePlan {
+        set,
+        state: Planned {
+            strategy,
+            candidates,
+        },
+    }
+}
+
+fn http_asset(url: ValidUrl) -> SourceDefinition {
+    SourceDefinition::HttpAsset(HttpAssetSource {
+        url,
+        file_name: None,
+    })
+}
+
+fn ensure_non_empty_slice<T>(values: &[T], error: SourceError) -> Result<()> {
+    if values.is_empty() {
+        Err(error)
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_non_empty_string(value: &str, error: SourceError) -> Result<()> {
+    if value.is_empty() { Err(error) } else { Ok(()) }
 }
 
 pub trait SourceAdapter {
@@ -276,6 +303,21 @@ mod tests {
     }
 
     #[test]
+    fn planned_sources_can_be_built_from_requested_resource() {
+        let requested = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+        ));
+
+        let planned =
+            PlannedSources::from_requested_resource(&requested, SelectionStrategy::OrderedFallback)
+                .unwrap();
+
+        assert_eq!(planned.candidates().len(), 1);
+        assert_eq!(planned.strategy(), &SelectionStrategy::OrderedFallback);
+    }
+
+    #[test]
     fn source_spec_can_be_built_from_resolved_resource() {
         let resolved = RequestedResource::new(ResourceSpec::new(
             ResourceId::parse("example/runtime").unwrap(),
@@ -292,6 +334,26 @@ mod tests {
             .plan(SelectionStrategy::OrderedFallback);
 
         assert_eq!(planned.candidates().len(), 1);
+    }
+
+    #[test]
+    fn planned_sources_can_be_built_from_resolved_resource() {
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::LocalPath(PathBuf::from("/tmp/runtime.bin")),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::LocalPath(PathBuf::from("/tmp/runtime.bin")),
+            None,
+        );
+
+        let planned =
+            PlannedSources::from_resolved_resource(&resolved, SelectionStrategy::OrderedFallback)
+                .unwrap();
+
+        assert_eq!(planned.candidates().len(), 1);
+        assert_eq!(planned.strategy(), &SelectionStrategy::OrderedFallback);
     }
 
     #[test]

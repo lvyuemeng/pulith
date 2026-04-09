@@ -8,6 +8,7 @@ description = "Thin backend example crate for Pulith's adapter-first architectur
 pulith-install = { path = "../pulith-install" }
 pulith-resource = { path = "../pulith-resource" }
 pulith-source = { path = "../pulith-source" }
+pulith-version = { path = "../pulith-version" }
 
 thiserror.workspace = true
 

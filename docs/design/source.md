@@ -41,6 +41,8 @@ It does not fetch data. It describes and expands candidate sources for later lay
 
 This keeps the ordering explicit without baking transfer or caching behavior into the crate.
 
+Callers can enter that boundary either explicitly (`SourceSpec::...().plan(...)`) or through direct typed helpers such as `PlannedSources::from_locator(...)`, `PlannedSources::from_requested_resource(...)`, and `PlannedSources::from_resolved_resource(...)` when they already know the planning strategy they want.
+
 ## Backend Philosophy
 
 Backend patterns should remain thin adapters over:

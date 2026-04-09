@@ -53,6 +53,14 @@ let selected = select_preferred(
 assert_eq!(selected.to_string(), "2.0.0");
 ```
 
+`pulith-resource::VersionSelector` now maps common resource-facing selectors into these same policies:
+
+- exact version -> pinned selection
+- requirement -> requirement + highest-stable preference
+- aliases: `latest`, `lowest`, `stable`, `lts`
+
+Those policies now also flow into resource/example-level preferred candidate selection helpers, so adapters can reuse the same version intent instead of reimplementing preference logic locally.
+
 ## Dependencies
 
 ```text

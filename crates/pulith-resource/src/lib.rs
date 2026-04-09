@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use pulith_version::{VersionKind, VersionRequirement};
+use pulith_version::{
+    SelectionPolicy, VersionKind, VersionPreference, VersionRequirement, select_preferred,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
@@ -43,6 +45,8 @@ pub enum ResourceError {
     InvalidResolvedVersion(String),
     #[error("resolved version `{version}` does not satisfy selector `{selector}`")]
     ResolvedVersionMismatch { selector: String, version: String },
+    #[error("version alias `{0}` is not recognized")]
+    UnknownVersionAlias(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -114,32 +118,33 @@ pub enum VersionSelector {
 
 impl VersionSelector {
     pub fn exact(value: impl Into<String>) -> Result<Self> {
-        let value = value.into();
-        ensure_non_empty(&value)?;
-        Ok(Self::Exact(
-            VersionKind::parse(&value).map_err(|_| ResourceError::EmptyValue)?,
-        ))
+        Ok(Self::Exact(parse_non_empty_value(
+            value,
+            VersionKind::parse,
+        )?))
     }
 
     pub fn alias(value: impl Into<String>) -> Result<Self> {
-        let value = value.into();
-        ensure_non_empty(&value)?;
-        Ok(Self::Alias(value))
+        Ok(Self::Alias(non_empty_string(value)?))
     }
 
     pub fn requirement(value: impl Into<String>) -> Result<Self> {
-        let value = value.into();
-        ensure_non_empty(&value)?;
-        Ok(Self::Requirement(
-            VersionRequirement::parse(&value).map_err(|_| ResourceError::EmptyValue)?,
-        ))
+        Ok(Self::Requirement(parse_non_empty_value(
+            value,
+            VersionRequirement::parse,
+        )?))
     }
 
     pub fn matches_resolved_version(&self, version: &ResolvedVersion) -> Result<bool> {
+        let resolved = match self {
+            Self::Exact(_) | Self::Requirement(_) => Some(parse_resolved_version(version)?),
+            Self::Alias(_) | Self::Unspecified => None,
+        };
+
         match self {
-            Self::Exact(expected) => Ok(expected == &parse_resolved_version(version)?),
+            Self::Exact(expected) => Ok(Some(expected) == resolved.as_ref()),
             Self::Requirement(requirement) => {
-                Ok(requirement.matches(&parse_resolved_version(version)?))
+                Ok(resolved.is_some_and(|resolved| requirement.matches(&resolved)))
             }
             Self::Alias(_) | Self::Unspecified => Ok(true),
         }
@@ -151,6 +156,21 @@ impl VersionSelector {
             Self::Alias(alias) => alias.clone(),
             Self::Requirement(requirement) => format!("{requirement:?}"),
             Self::Unspecified => "*".to_string(),
+        }
+    }
+
+    pub fn selection_policy(&self) -> Result<SelectionPolicy> {
+        match self {
+            Self::Exact(version) => Ok(selection_policy(
+                VersionRequirement::Exact(version.clone()),
+                VersionPreference::Pinned(version.clone()),
+            )),
+            Self::Alias(alias) => alias_selection_policy(alias),
+            Self::Requirement(requirement) => Ok(selection_policy(
+                requirement.clone(),
+                VersionPreference::HighestStable,
+            )),
+            Self::Unspecified => Ok(SelectionPolicy::default()),
         }
     }
 }
@@ -179,9 +199,7 @@ pub enum ResourceLocator {
 
 impl ResourceLocator {
     pub fn alternatives(urls: Vec<ValidUrl>) -> Result<Self> {
-        if urls.is_empty() {
-            return Err(ResourceError::EmptyAlternatives);
-        }
+        ensure_non_empty_collection(&urls, ResourceError::EmptyAlternatives)?;
         Ok(Self::Alternatives(urls))
     }
 }
@@ -463,6 +481,36 @@ impl<S> Resource<S> {
     pub fn into_spec(self) -> ResourceSpec {
         self.spec
     }
+
+    pub fn version_selection_policy(&self) -> Result<SelectionPolicy> {
+        self.spec.version.selection_policy()
+    }
+
+    pub fn select_preferred_resolved<'a>(
+        &self,
+        candidates: &'a [ResolvedResource],
+    ) -> Result<Option<&'a ResolvedResource>> {
+        let policy = self.version_selection_policy()?;
+        let parsed_versions = candidates
+            .iter()
+            .filter(|candidate| candidate.spec().id == self.spec.id)
+            .map(|candidate| {
+                parse_resolved_version(candidate.version()).map(|version| (candidate, version))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let versions = parsed_versions
+            .iter()
+            .map(|(_, version)| version.clone())
+            .collect::<Vec<_>>();
+        let Some(selected) = select_preferred(&versions, &policy) else {
+            return Ok(None);
+        };
+
+        Ok(parsed_versions
+            .into_iter()
+            .find_map(|(candidate, version)| (&version == selected).then_some(candidate)))
+    }
 }
 
 impl ResolvedResource {
@@ -488,24 +536,46 @@ impl ResolvedResource {
     }
 
     pub fn validate_version_selection(&self) -> Result<()> {
-        if self
+        if !self
             .spec
             .version
             .matches_resolved_version(&self.state.version)?
         {
-            Ok(())
-        } else {
-            Err(ResourceError::ResolvedVersionMismatch {
+            return Err(ResourceError::ResolvedVersionMismatch {
                 selector: self.spec.version.as_label(),
                 version: self.state.version.as_str().to_string(),
-            })
+            });
         }
+
+        Ok(())
     }
 }
 
 fn parse_resolved_version(version: &ResolvedVersion) -> Result<VersionKind> {
     VersionKind::parse(version.as_str())
         .map_err(|_| ResourceError::InvalidResolvedVersion(version.as_str().to_string()))
+}
+
+fn alias_selection_policy(alias: &str) -> Result<SelectionPolicy> {
+    let preference = match alias.to_ascii_lowercase().as_str() {
+        "latest" => VersionPreference::Latest,
+        "lowest" => VersionPreference::Lowest,
+        "stable" => VersionPreference::HighestStable,
+        "lts" => VersionPreference::Lts,
+        _ => return Err(ResourceError::UnknownVersionAlias(alias.to_string())),
+    };
+
+    Ok(selection_policy(VersionRequirement::Any, preference))
+}
+
+fn selection_policy(
+    requirement: VersionRequirement,
+    preference: VersionPreference,
+) -> SelectionPolicy {
+    SelectionPolicy {
+        requirement,
+        preference,
+    }
 }
 
 fn anchor_matches(
@@ -533,6 +603,28 @@ fn anchor_matches(
 fn ensure_non_empty(value: &str) -> Result<()> {
     if value.is_empty() {
         Err(ResourceError::EmptyValue)
+    } else {
+        Ok(())
+    }
+}
+
+fn non_empty_string(value: impl Into<String>) -> Result<String> {
+    let value = value.into();
+    ensure_non_empty(&value)?;
+    Ok(value)
+}
+
+fn parse_non_empty_value<T, F, E>(value: impl Into<String>, parse: F) -> Result<T>
+where
+    F: FnOnce(&str) -> std::result::Result<T, E>,
+{
+    let value = non_empty_string(value)?;
+    parse(&value).map_err(|_| ResourceError::EmptyValue)
+}
+
+fn ensure_non_empty_collection<T>(values: &[T], error: ResourceError) -> Result<()> {
+    if values.is_empty() {
+        Err(error)
     } else {
         Ok(())
     }
@@ -618,6 +710,119 @@ mod tests {
             resolved.validate_version_selection(),
             Err(ResourceError::ResolvedVersionMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn version_selector_exact_maps_to_pinned_policy() {
+        let selector = VersionSelector::exact("1.2.3").unwrap();
+        let policy = selector.selection_policy().unwrap();
+
+        assert_eq!(
+            policy,
+            SelectionPolicy {
+                requirement: VersionRequirement::Exact(VersionKind::parse("1.2.3").unwrap()),
+                preference: VersionPreference::Pinned(VersionKind::parse("1.2.3").unwrap()),
+            }
+        );
+    }
+
+    #[test]
+    fn version_selector_requirement_prefers_highest_stable() {
+        let selector = VersionSelector::requirement("^1.2").unwrap();
+        let policy = selector.selection_policy().unwrap();
+
+        assert_eq!(
+            policy.requirement,
+            VersionRequirement::parse("^1.2").unwrap()
+        );
+        assert_eq!(policy.preference, VersionPreference::HighestStable);
+    }
+
+    #[test]
+    fn version_selector_alias_maps_common_preferences() {
+        assert_eq!(
+            VersionSelector::alias("latest")
+                .unwrap()
+                .selection_policy()
+                .unwrap()
+                .preference,
+            VersionPreference::Latest
+        );
+        assert_eq!(
+            VersionSelector::alias("stable")
+                .unwrap()
+                .selection_policy()
+                .unwrap()
+                .preference,
+            VersionPreference::HighestStable
+        );
+        assert_eq!(
+            VersionSelector::alias("lts")
+                .unwrap()
+                .selection_policy()
+                .unwrap()
+                .preference,
+            VersionPreference::Lts
+        );
+    }
+
+    #[test]
+    fn version_selector_rejects_unknown_alias_for_selection_policy() {
+        assert!(matches!(
+            VersionSelector::alias("canary").unwrap().selection_policy(),
+            Err(ResourceError::UnknownVersionAlias(alias)) if alias == "canary"
+        ));
+    }
+
+    #[test]
+    fn resource_exposes_version_selection_policy() {
+        let resource = RequestedResource::new(
+            ResourceSpec::new(
+                ResourceId::parse("nodejs.org/node").unwrap(),
+                ResourceLocator::Url(ValidUrl::parse("https://example.com/node.zip").unwrap()),
+            )
+            .version(VersionSelector::alias("stable").unwrap()),
+        );
+
+        let policy = resource.version_selection_policy().unwrap();
+        assert_eq!(policy.preference, VersionPreference::HighestStable);
+    }
+
+    #[test]
+    fn resource_can_select_preferred_resolved_candidate() {
+        let resource = RequestedResource::new(
+            ResourceSpec::new(
+                ResourceId::parse("nodejs.org/node").unwrap(),
+                ResourceLocator::Url(ValidUrl::parse("https://example.com/node.zip").unwrap()),
+            )
+            .version(VersionSelector::alias("lts").unwrap()),
+        );
+        let candidates = vec![
+            RequestedResource::new(ResourceSpec::new(
+                ResourceId::parse("nodejs.org/node").unwrap(),
+                ResourceLocator::Url(ValidUrl::parse("https://example.com/node-20.zip").unwrap()),
+            ))
+            .resolve(
+                ResolvedVersion::new("20.11.0").unwrap(),
+                ResolvedLocator::Url(ValidUrl::parse("https://example.com/node-20.zip").unwrap()),
+                None,
+            ),
+            RequestedResource::new(ResourceSpec::new(
+                ResourceId::parse("nodejs.org/node").unwrap(),
+                ResourceLocator::Url(ValidUrl::parse("https://example.com/node-22.zip").unwrap()),
+            ))
+            .resolve(
+                ResolvedVersion::new("22.4.0").unwrap(),
+                ResolvedLocator::Url(ValidUrl::parse("https://example.com/node-22.zip").unwrap()),
+                None,
+            ),
+        ];
+
+        let selected = resource
+            .select_preferred_resolved(&candidates)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.version().as_str(), "22.4.0");
     }
 
     #[test]

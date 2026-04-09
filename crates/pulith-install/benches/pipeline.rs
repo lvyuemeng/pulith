@@ -13,7 +13,7 @@ use pulith_resource::{
     RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
     ValidUrl,
 };
-use pulith_source::SourceSpec;
+use pulith_source::PlannedSources;
 use pulith_state::StateReady;
 use pulith_store::{StoreKey, StoreReady, StoreRoots};
 
@@ -79,7 +79,7 @@ impl HttpClient for BenchHttpClient {
 struct FetchPipelineContext {
     _temp: tempfile::TempDir,
     multi: MultiSourceFetcher<BenchHttpClient>,
-    spec: SourceSpec,
+    planned: PlannedSources,
     store: StoreReady,
     ready: InstallReady,
     resource: pulith_resource::ResolvedResource,
@@ -130,7 +130,11 @@ fn resolved_archive_resource(version: &str) -> pulith_resource::ResolvedResource
 fn setup_fetch_pipeline(size: usize) -> FetchPipelineContext {
     let temp = tempfile::tempdir().unwrap();
     let resource = resolved_fetch_resource("https://example.com/runtime.bin", "1.0.0");
-    let spec = SourceSpec::from_resolved_resource(&resource).unwrap();
+    let planned = PlannedSources::from_resolved_resource(
+        &resource,
+        pulith_source::SelectionStrategy::OrderedFallback,
+    )
+    .unwrap();
     let fetcher = Fetcher::new(
         BenchHttpClient::new(size),
         temp.path().join("fetch-workspace"),
@@ -148,7 +152,7 @@ fn setup_fetch_pipeline(size: usize) -> FetchPipelineContext {
     FetchPipelineContext {
         _temp: temp,
         multi,
-        spec,
+        planned,
         store,
         ready,
         resource,
@@ -207,9 +211,8 @@ fn bench_fetch_store_install(c: &mut Criterion) {
                         let destination = context._temp.path().join(&context.destination);
                         let fetched = context
                             .multi
-                            .fetch_source_spec_with_receipt(
-                                context.spec,
-                                pulith_source::SelectionStrategy::OrderedFallback,
+                            .fetch_planned_sources_with_receipt(
+                                &context.planned,
                                 &destination,
                                 &FetchOptions::default(),
                             )
@@ -267,19 +270,19 @@ fn bench_archive_extract_store_install(c: &mut Criterion) {
                     )
                     .unwrap();
 
-                    let extracted = context
-                        .store
-                        .register_extract_dir(
-                            &StoreKey::logical("bench-archive-extract").unwrap(),
-                            &extract_root,
-                        )
-                        .unwrap();
+                    let install_input = InstallInput::store_archive_extraction(
+                        &context.store,
+                        &StoreKey::logical("bench-archive-extract").unwrap(),
+                        &extract_root,
+                        &report,
+                    )
+                    .unwrap();
 
                     let receipt = PlannedInstall::new(
                         context.ready,
                         InstallSpec::new(
                             context.resource,
-                            InstallInput::ExtractedArtifact(extracted),
+                            install_input,
                             context._temp.path().join(&context.install_root),
                         ),
                     )

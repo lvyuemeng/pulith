@@ -67,6 +67,14 @@ impl StoreReady {
         self.artifact_path(key).exists()
     }
 
+    pub fn has_extract(&self, key: &StoreKey) -> bool {
+        self.extract_path(key).exists()
+    }
+
+    pub fn has_metadata(&self, key: &StoreKey) -> bool {
+        self.metadata_path(key).exists()
+    }
+
     pub fn artifact_path(&self, key: &StoreKey) -> PathBuf {
         self.roots.artifacts.join(key.relative_name())
     }
@@ -82,29 +90,58 @@ impl StoreReady {
     }
 
     pub fn get_artifact(&self, key: &StoreKey) -> Option<StoredArtifact> {
-        let path = self.artifact_path(key);
-        if !path.exists() {
-            return None;
-        }
-        let provenance = self.load_provenance(key).ok().flatten();
-        Some(StoredArtifact {
-            key: key.clone(),
-            path,
-            provenance,
-        })
+        self.lookup_stored(key, StoredKind::Artifact)
+            .map(|artifact| StoredArtifact {
+                key: artifact.key,
+                path: artifact.path,
+                provenance: artifact.provenance,
+            })
     }
 
     pub fn get_extract(&self, key: &StoreKey) -> Option<ExtractedArtifact> {
-        let path = self.extract_path(key);
-        if !path.exists() {
-            return None;
-        }
-        let provenance = self.load_provenance(key).ok().flatten();
-        Some(ExtractedArtifact {
-            key: key.clone(),
-            path,
-            provenance,
-        })
+        self.lookup_stored(key, StoredKind::Extract)
+            .map(|extract| ExtractedArtifact {
+                key: extract.key,
+                path: extract.path,
+                provenance: extract.provenance,
+            })
+    }
+
+    pub fn get_artifact_for<K: KeyDerivation>(
+        &self,
+        resource: &ResolvedResource,
+        derivation: &K,
+    ) -> Option<StoredArtifact> {
+        derivation
+            .derive(resource)
+            .as_ref()
+            .and_then(|key| self.get_artifact(key))
+    }
+
+    pub fn get_extract_for<K: KeyDerivation>(
+        &self,
+        resource: &ResolvedResource,
+        derivation: &K,
+    ) -> Option<ExtractedArtifact> {
+        derivation
+            .derive(resource)
+            .as_ref()
+            .and_then(|key| self.get_extract(key))
+    }
+
+    pub fn get_metadata(&self, key: &StoreKey) -> Result<Option<StoreMetadataRecord>> {
+        self.load_metadata_record(key)
+    }
+
+    pub fn get_metadata_for<K: KeyDerivation>(
+        &self,
+        resource: &ResolvedResource,
+        derivation: &K,
+    ) -> Result<Option<StoreMetadataRecord>> {
+        derivation
+            .derive(resource)
+            .as_ref()
+            .map_or(Ok(None), |key| self.get_metadata(key))
     }
 
     pub fn list_metadata(&self) -> Result<Vec<StoreMetadataRecord>> {
@@ -114,29 +151,67 @@ impl StoreReady {
             if !entry.file_type()?.is_file() {
                 continue;
             }
-            let content = std::fs::read_to_string(entry.path())?;
-            let record: StoreMetadataRecord = serde_json::from_str(&content).map_err(|error| {
-                StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-            })?;
+            let record = load_metadata_file(&entry.path())?;
             records.push(record);
         }
         Ok(records)
     }
 
+    pub fn list_orphaned_metadata(&self) -> Result<Vec<StoreMetadataRecord>> {
+        Ok(self
+            .list_metadata()?
+            .into_iter()
+            .filter(|record| !self.record_target_exists(record))
+            .collect())
+    }
+
+    pub fn get_orphaned_metadata_for<K: KeyDerivation>(
+        &self,
+        resource: &ResolvedResource,
+        derivation: &K,
+    ) -> Result<Option<StoreMetadataRecord>> {
+        let Some(key) = derivation.derive(resource) else {
+            return Ok(None);
+        };
+
+        let Some(record) = self.get_metadata(&key)? else {
+            return Ok(None);
+        };
+
+        Ok((!self.record_target_exists(&record)).then_some(record))
+    }
+
+    pub fn plan_metadata_prune(&self, protected_keys: &[StoreKey]) -> Result<MetadataPrunePlan> {
+        let mut plan = MetadataPrunePlan::default();
+
+        for record in self.list_orphaned_metadata()? {
+            if protected_keys.contains(&record.key) {
+                plan.protected.push(record);
+            } else {
+                plan.removable.push(record);
+            }
+        }
+
+        Ok(plan)
+    }
+
     pub fn prune_missing(&self) -> Result<PruneReport> {
+        self.prune_missing_with_protection(&[])
+    }
+
+    pub fn prune_missing_with_protection(
+        &self,
+        protected_keys: &[StoreKey],
+    ) -> Result<PruneReport> {
         let mut report = PruneReport::default();
-        for record in self.list_metadata()? {
-            let key = &record.key;
-            let keep = match record.kind {
-                StoredKind::Artifact => self.artifact_path(key).exists(),
-                StoredKind::Extract => self.extract_path(key).exists(),
-            };
-            if !keep {
-                let metadata_path = self.metadata_path(key);
-                if metadata_path.exists() {
-                    std::fs::remove_file(&metadata_path)?;
-                    report.removed_metadata += 1;
-                }
+        let plan = self.plan_metadata_prune(protected_keys)?;
+        report.protected_metadata = plan.protected.len();
+
+        for record in plan.removable {
+            let metadata_path = self.metadata_path(&record.key);
+            if metadata_path.exists() {
+                std::fs::remove_file(&metadata_path)?;
+                report.removed_metadata += 1;
             }
         }
         Ok(report)
@@ -256,15 +331,40 @@ impl StoreReady {
     }
 
     fn load_provenance(&self, key: &StoreKey) -> Result<Option<StoreProvenance>> {
+        Ok(self
+            .load_metadata_record(key)?
+            .and_then(|record| record.provenance))
+    }
+
+    fn load_metadata_record(&self, key: &StoreKey) -> Result<Option<StoreMetadataRecord>> {
         let path = self.metadata_path(key);
         if !path.exists() {
             return Ok(None);
         }
-        let content = std::fs::read_to_string(path)?;
-        let record: StoreMetadataRecord = serde_json::from_str(&content).map_err(|error| {
-            StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-        })?;
-        Ok(record.provenance)
+        Ok(Some(load_metadata_file(&path)?))
+    }
+
+    fn lookup_stored(&self, key: &StoreKey, kind: StoredKind) -> Option<StoredEntry> {
+        let path = match kind {
+            StoredKind::Artifact => self.artifact_path(key),
+            StoredKind::Extract => self.extract_path(key),
+        };
+        if !path.exists() {
+            return None;
+        }
+
+        Some(StoredEntry {
+            key: key.clone(),
+            path,
+            provenance: self.load_provenance(key).ok().flatten(),
+        })
+    }
+
+    fn record_target_exists(&self, record: &StoreMetadataRecord) -> bool {
+        match record.kind {
+            StoredKind::Artifact => self.has_artifact(&record.key),
+            StoredKind::Extract => self.has_extract(&record.key),
+        }
     }
 }
 
@@ -276,6 +376,13 @@ fn stage_artifact_file(workspace: &Workspace, source: &Path, relative_path: Path
         HardlinkOrCopyOptions::new().fallback(FallBack::Copy),
     )?;
     Ok(())
+}
+
+fn load_metadata_file(path: &Path) -> Result<StoreMetadataRecord> {
+    let content = std::fs::read_to_string(path)?;
+    serde_json::from_str(&content).map_err(|error| {
+        StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,6 +450,13 @@ pub struct StoreMetadataRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PruneReport {
     pub removed_metadata: usize,
+    pub protected_metadata: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MetadataPrunePlan {
+    pub removable: Vec<StoreMetadataRecord>,
+    pub protected: Vec<StoreMetadataRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -357,6 +471,13 @@ pub struct ExtractedArtifact {
     pub key: StoreKey,
     pub path: PathBuf,
     pub provenance: Option<StoreProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredEntry {
+    key: StoreKey,
+    path: PathBuf,
+    provenance: Option<StoreProvenance>,
 }
 
 fn algorithm_name(algorithm: &pulith_resource::DigestAlgorithm) -> String {
@@ -447,6 +568,105 @@ mod tests {
     }
 
     #[test]
+    fn store_can_lookup_artifact_for_resource_via_key_derivation() {
+        struct ByVersion;
+        impl KeyDerivation for ByVersion {
+            fn derive(&self, resource: &ResolvedResource) -> Option<StoreKey> {
+                Some(StoreKey::NamedVersion {
+                    id: resource.spec().id.clone(),
+                    version: resource.version().clone(),
+                })
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.tar.gz").unwrap()),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(
+                ValidUrl::parse("https://mirror.example.com/runtime.tar.gz").unwrap(),
+            ),
+            None,
+        );
+        let key = ByVersion.derive(&resolved).unwrap();
+
+        store.put_artifact_bytes(&key, b"hello").unwrap();
+
+        let artifact = store.get_artifact_for(&resolved, &ByVersion).unwrap();
+        assert!(artifact.path.exists());
+        assert_eq!(artifact.key, key);
+    }
+
+    #[test]
+    fn store_can_lookup_extract_metadata_for_resource_via_key_derivation() {
+        struct ByVersion;
+        impl KeyDerivation for ByVersion {
+            fn derive(&self, resource: &ResolvedResource) -> Option<StoreKey> {
+                Some(StoreKey::NamedVersion {
+                    id: resource.spec().id.clone(),
+                    version: resource.version().clone(),
+                })
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.tar.gz").unwrap()),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(
+                ValidUrl::parse("https://mirror.example.com/runtime.tar.gz").unwrap(),
+            ),
+            None,
+        );
+        let key = ByVersion.derive(&resolved).unwrap();
+        let extract_root = temp.path().join("extract-root");
+        std::fs::create_dir_all(&extract_root).unwrap();
+        std::fs::write(extract_root.join("tool.exe"), b"hello").unwrap();
+
+        store
+            .register_extract_dir_with_provenance(
+                &key,
+                &extract_root,
+                Some(StoreProvenance {
+                    origin: Some("integration-test".to_string()),
+                    metadata: Metadata::from([("archive.format".to_string(), "Zip".to_string())]),
+                }),
+            )
+            .unwrap();
+
+        let extract = store.get_extract_for(&resolved, &ByVersion).unwrap();
+        assert_eq!(extract.key, key);
+
+        let metadata = store
+            .get_metadata_for(&resolved, &ByVersion)
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.kind, StoredKind::Extract);
+        assert_eq!(
+            metadata.provenance.unwrap().origin.as_deref(),
+            Some("integration-test")
+        );
+    }
+
+    #[test]
     fn store_persists_and_reads_provenance() {
         let temp = tempfile::tempdir().unwrap();
         let store = StoreReady::initialize(StoreRoots::new(
@@ -498,5 +718,126 @@ mod tests {
         let report = store.prune_missing().unwrap();
         assert_eq!(report.removed_metadata, 1);
         assert!(store.list_metadata().unwrap().is_empty());
+    }
+
+    #[test]
+    fn store_can_list_orphaned_metadata_before_pruning() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let artifact_key = StoreKey::logical("artifact-orphan").unwrap();
+        store.put_artifact_bytes(&artifact_key, b"hello").unwrap();
+        std::fs::remove_file(store.artifact_path(&artifact_key)).unwrap();
+
+        let extract_key = StoreKey::logical("extract-orphan").unwrap();
+        let extract_root = temp.path().join("extract-root");
+        std::fs::create_dir_all(&extract_root).unwrap();
+        std::fs::write(extract_root.join("tool.exe"), b"hello").unwrap();
+        store
+            .register_extract_dir(&extract_key, &extract_root)
+            .unwrap();
+        std::fs::remove_dir_all(store.extract_path(&extract_key)).unwrap();
+
+        let orphans = store.list_orphaned_metadata().unwrap();
+        assert_eq!(orphans.len(), 2);
+        assert!(orphans.iter().any(|record| record.key == artifact_key));
+        assert!(orphans.iter().any(|record| record.key == extract_key));
+    }
+
+    #[test]
+    fn store_can_lookup_orphaned_metadata_for_resource_via_key_derivation() {
+        struct ByVersion;
+        impl KeyDerivation for ByVersion {
+            fn derive(&self, resource: &ResolvedResource) -> Option<StoreKey> {
+                Some(StoreKey::NamedVersion {
+                    id: resource.spec().id.clone(),
+                    version: resource.version().clone(),
+                })
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.tar.gz").unwrap()),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(
+                ValidUrl::parse("https://mirror.example.com/runtime.tar.gz").unwrap(),
+            ),
+            None,
+        );
+        let key = ByVersion.derive(&resolved).unwrap();
+
+        store.put_artifact_bytes(&key, b"hello").unwrap();
+        std::fs::remove_file(store.artifact_path(&key)).unwrap();
+
+        let orphan = store
+            .get_orphaned_metadata_for(&resolved, &ByVersion)
+            .unwrap()
+            .unwrap();
+        assert_eq!(orphan.key, key);
+        assert_eq!(orphan.kind, StoredKind::Artifact);
+    }
+
+    #[test]
+    fn store_can_plan_protected_metadata_prune() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let protected_key = StoreKey::logical("protected-orphan").unwrap();
+        store.put_artifact_bytes(&protected_key, b"hello").unwrap();
+        std::fs::remove_file(store.artifact_path(&protected_key)).unwrap();
+
+        let removable_key = StoreKey::logical("removable-orphan").unwrap();
+        store.put_artifact_bytes(&removable_key, b"hello").unwrap();
+        std::fs::remove_file(store.artifact_path(&removable_key)).unwrap();
+
+        let plan = store
+            .plan_metadata_prune(std::slice::from_ref(&protected_key))
+            .unwrap();
+        assert_eq!(plan.protected.len(), 1);
+        assert_eq!(plan.protected[0].key, protected_key);
+        assert_eq!(plan.removable.len(), 1);
+        assert_eq!(plan.removable[0].key, removable_key);
+    }
+
+    #[test]
+    fn store_prune_can_skip_protected_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let protected_key = StoreKey::logical("protected-orphan").unwrap();
+        store.put_artifact_bytes(&protected_key, b"hello").unwrap();
+        std::fs::remove_file(store.artifact_path(&protected_key)).unwrap();
+
+        let report = store
+            .prune_missing_with_protection(std::slice::from_ref(&protected_key))
+            .unwrap();
+        assert_eq!(report.removed_metadata, 0);
+        assert_eq!(report.protected_metadata, 1);
+        assert!(store.has_metadata(&protected_key));
     }
 }
