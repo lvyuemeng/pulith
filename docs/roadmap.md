@@ -120,6 +120,7 @@ Current progress:
 - the example backend shapes specs and activators without absorbing fetch/store/state policy into a framework
 - `pulith-state` now has a dedicated `state_growth` benchmark for save/update cost across larger snapshots
 - `pulith-install` now has optional backup/restore helpers for install roots and matching state facts
+- `pulith-resource` now has an optional trust policy description layer with lightweight trust-anchor evaluation
 
 ## Integrated Test Plan
 

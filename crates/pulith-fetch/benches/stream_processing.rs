@@ -1,7 +1,8 @@
 use bytes::Bytes;
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures_util::{Stream, StreamExt};
 use pulith_fetch::ThrottledStream;
+use std::hint::black_box;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
