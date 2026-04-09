@@ -2,6 +2,12 @@
 
 Composable source definitions and planning.
 
+## Role
+
+`pulith-source` describes where resources may come from and turns that into executable candidate plans.
+
+It should not execute fetches or manage storage/install policy.
+
 ## Main APIs
 
 - `SourceSpec`
@@ -21,5 +27,13 @@ let planned = PlannedSources::from_locator(
 )?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## How To Use It
+
+Use this crate when you have a semantic resource or locator and need:
+
+- structured source definitions
+- ordered fallback plans
+- race-style source candidate plans
 
 See `docs/design/source.md`.

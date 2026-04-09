@@ -2,6 +2,10 @@
 
 Thin adapter-first backend example built on Pulith crates.
 
+## Role
+
+This crate demonstrates how to shape a backend-facing API without hiding fetch/store/state/install policy inside a framework.
+
 ## Main APIs
 
 - `ManagedBinarySpec`
@@ -23,5 +27,9 @@ let spec = managed_binary(
 let _requested = spec.requested_resource();
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## How To Use It
+
+Treat this crate as an adapter pattern reference, not a framework. It shows how to shape public backend inputs while leaving composition explicit.
 
 See `docs/design.md` and `examples/runtime-manager/`.

@@ -1,14 +1,17 @@
 # pulith-shim-bin
 
-Template shim binary support for Pulith.
+Thin shim-binary helper/template.
 
-## Purpose
+## Role
 
-Use this crate when you want a small executable that resolves a command target through `pulith-shim` and forwards execution.
+`pulith-shim-bin` bridges `pulith-shim` into a runnable executable boundary.
+
+It is a support/template crate, not a semantic or workflow crate.
 
 ## Main APIs
 
 - `try_run(...)`
+- `invoke(...)`
 - `Error`
 
 ## Basic Usage
@@ -23,5 +26,13 @@ use pulith_shim_bin::try_run;
 # }
 let _ = try_run(Resolver);
 ```
+
+## How To Use It
+
+Copy or adapt this crate when you need a tiny executable that:
+
+- resolves a command target through `pulith-shim`
+- validates the resolved path
+- forwards execution
 
 See `docs/design/shim.md`.

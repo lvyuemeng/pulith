@@ -6,6 +6,8 @@ Pulith is a Rust ecosystem for resource management primitives: version selection
 
 The project is mechanism-first. It should give tool authors reliable building blocks without forcing one package format, backend, or manager model.
 
+In practical terms, Pulith is meant to be the substrate for tools that need to manage external resources with explicit, inspectable behavior rather than ad hoc script glue.
+
 ## Why It Exists
 
 Most tools that manage external resources end up rebuilding the same layers:
@@ -18,6 +20,47 @@ Most tools that manage external resources end up rebuilding the same layers:
 - cross-platform behavior
 
 Pulith exists to make those layers reusable, composable, and correct.
+
+## What A User Should Expect
+
+If you adopt Pulith as a library stack, you should expect three things.
+
+### 1. Clear API Shape
+
+The public API should read like a resource-management pipeline:
+
+- describe resources semantically
+- derive and plan sources
+- fetch and verify content
+- register artifacts or extracted trees
+- install and activate explicitly
+- persist, inspect, repair, and retain lifecycle state
+
+You should not need to reconstruct raw path/key/record glue at every layer just to compose a normal flow.
+
+### 2. Clear Principles
+
+Pulith should be predictable because its crates follow a small number of rules:
+
+- primitives stay primitive
+- workflow crates compose lower layers instead of absorbing them
+- semantic crates describe facts and queries rather than hard-coding manager policy
+- side effects stay explicit in fetch/store/install/state operations
+- receipts, records, and reports should make behavior explainable after the fact
+
+### 3. Clear Execution Story
+
+Pulith should make it obvious how work happens:
+
+- `pulith-resource` describes what a thing is
+- `pulith-source` describes where it may come from
+- `pulith-fetch` turns a plan into bytes
+- `pulith-archive` turns archive bytes into a materialized tree
+- `pulith-store` makes artifacts/extracts reusable and provenance-aware
+- `pulith-install` places materialized content into an install root and optionally activates it
+- `pulith-state` persists lifecycle facts and supports inspection, repair, and retention planning
+
+That execution story should remain visible in both docs and public APIs.
 
 ## User-Centered Reframe
 
@@ -34,6 +77,8 @@ If I were building a real resource manager on top of Pulith - a system package m
 - detect, reconcile, repair, and reapply state when reality drifts from persisted facts
 - handle ownership, conflicts, retention, and cleanup without guessing blindly
 - support explainable decisions and auditable outcomes for operator-facing tools
+
+In short: Pulith should help users build real managers, not just isolated crate demos.
 
 ### Expected Safety
 
