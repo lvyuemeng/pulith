@@ -12,9 +12,15 @@ categories = ["cryptography"]
 thiserror.workspace = true
 hex.workspace = true
 digest = { version = "0.10", default-features = false }
+<<<<<<< HEAD
 sha2 = { workspace = true, optional = true }
 blake3 = { workspace = true, optional = true }
 sha3 = { version = "0.10", optional = true }
+=======
+sha2 = { version = "0.11", optional = true }
+blake3 = { version = "1.8", optional = true }
+sha3 = { version = "0.11", optional = true }
+>>>>>>> 72d40ec366acdd8ce631edd21800f816d8cb246e
 
 [dev-dependencies]
 hex.workspace = true

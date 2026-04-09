@@ -12,7 +12,7 @@ categories = ["os::unix-apis", "os::windows-apis"]
 thiserror.workspace = true
 memmap2 = "0.9"
 uuid = { version = "1", features = ["v4"] }
-junction = "1.4.1"
+junction = "1.4.2"
 fs2 = "0.4"
 
 [dev-dependencies]
