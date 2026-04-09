@@ -19,6 +19,17 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+bytes = "1"
+criterion.workspace = true
+futures-util = "0.3"
 pulith-source = { path = "../pulith-source" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 zip.workspace = true
+
+[[bench]]
+name = "pipeline"
+harness = false
+
+[[bench]]
+name = "copy_transition"
+harness = false

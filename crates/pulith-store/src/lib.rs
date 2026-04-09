@@ -10,6 +10,8 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+const COPY_ONLY_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error(transparent)]
@@ -178,10 +180,10 @@ impl StoreReady {
             workspace_root.path().join("artifact"),
             self.roots.artifacts.clone(),
         )?;
-        workspace.link_or_copy_file(
+        stage_artifact_file(
+            &workspace,
             source,
             PathBuf::from(key.relative_name()).join(file_name),
-            HardlinkOrCopyOptions::new().fallback(FallBack::Copy),
         )?;
         workspace.commit()?;
 
@@ -263,6 +265,23 @@ impl StoreReady {
         })?;
         Ok(record.provenance)
     }
+}
+
+fn stage_artifact_file(workspace: &Workspace, source: &Path, relative_path: PathBuf) -> Result<()> {
+    if should_copy_only(source)? {
+        let _ = workspace.copy_file(source, &relative_path)?;
+    } else {
+        workspace.link_or_copy_file(
+            source,
+            &relative_path,
+            HardlinkOrCopyOptions::new().fallback(FallBack::Copy),
+        )?;
+    }
+    Ok(())
+}
+
+fn should_copy_only(source: &Path) -> Result<bool> {
+    Ok(std::fs::metadata(source)?.len() < COPY_ONLY_THRESHOLD_BYTES)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

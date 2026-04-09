@@ -56,6 +56,7 @@ Current progress:
 - workspace integration tests now cover local source -> fetch -> store -> install -> activate
 - archive extract -> store -> install is now covered end-to-end
 - repeated activation switching is now covered at the workflow level
+- interrupted install recovery is now covered via install backup/restore round-trip tests
 
 ### 5. Add Performance Validation
 
@@ -63,6 +64,16 @@ Current progress:
 - benchmark large artifact fetch/extract/install flows
 - benchmark advanced fetch strategies under realistic workloads
 - measure copy-heavy transitions and reduce them where possible
+
+Current progress:
+
+- `pulith-install` now has criterion pipeline benchmarks for fetch -> store -> install flows
+- archive extract -> store -> install benchmark coverage now exists for larger artifact sizes
+- `pulith-fetch` now has criterion benchmarks for priority fallback and race-all multi-source strategy overhead
+- copy-transition benchmarks now compare hardlink-or-copy versus copy-only across store -> install artifact paths
+- current transition benchmark evidence shows copy-only wins for small artifacts while hardlink-or-copy wins consistently from multi-megabyte artifacts upward
+- store import and install staging now use a size threshold so small files copy directly while larger files still prefer hardlink-or-copy
+- threshold-tuning benchmark variants now exist, but current filesystem measurements remain noisy enough that the 4 MiB cutoff should be treated as a pragmatic default rather than a final calibrated constant
 
 ## Keep / Change Decisions
 

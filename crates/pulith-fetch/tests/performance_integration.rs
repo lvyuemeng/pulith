@@ -351,16 +351,30 @@ async fn test_memory_usage_under_load() {
 #[cfg(unix)]
 fn get_memory_usage() -> usize {
     use std::fs;
+    use std::process::Command;
 
-    let status = fs::read_to_string("/proc/self/status").unwrap();
-    for line in status.lines() {
-        if line.starts_with("VmRSS:") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                return parts[1].parse::<usize>().unwrap() * 1024; // Convert KB to bytes
+    if let Ok(status) = fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if line.starts_with("VmRSS:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if let Some(value) = parts.get(1).and_then(|value| value.parse::<usize>().ok()) {
+                    return value * 1024;
+                }
             }
         }
     }
+
+    let pid = std::process::id().to_string();
+    let output = Command::new("ps").args(["-o", "rss=", "-p", &pid]).output();
+
+    if let Ok(output) = output
+        && output.status.success()
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+        && let Ok(kibibytes) = stdout.trim().parse::<usize>()
+    {
+        return kibibytes * 1024;
+    }
+
     0
 }
 

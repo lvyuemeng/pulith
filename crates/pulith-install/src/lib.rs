@@ -13,6 +13,8 @@ use pulith_store::{ExtractedArtifact, StoreKey, StoredArtifact};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+const COPY_ONLY_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
+
 pub type Result<T> = std::result::Result<T, InstallError>;
 
 #[derive(Debug, Error)]
@@ -279,11 +281,7 @@ impl InstallInput {
                     .or_else(|| file_name_from_path(&receipt.destination));
                 let target_name = target_name.ok_or(InstallError::EmptyFileName)?;
 
-                workspace.link_or_copy_file(
-                    &receipt.destination,
-                    target_name,
-                    default_link_options(),
-                )?;
+                stage_workspace_file(workspace, &receipt.destination, Path::new(&target_name))?;
             }
             Self::ExtractedArtifact(artifact) => {
                 if !artifact.path.exists() {
@@ -309,7 +307,7 @@ impl InstallInput {
                 if !artifact.path.exists() {
                     return Err(InstallError::MissingStoredArtifact(artifact.path.clone()));
                 }
-                workspace.link_or_copy_file(&artifact.path, file_name, default_link_options())?;
+                stage_workspace_file(workspace, &artifact.path, Path::new(file_name))?;
             }
         }
 
@@ -676,6 +674,19 @@ fn default_link_options() -> HardlinkOrCopyOptions {
     HardlinkOrCopyOptions::new().fallback(FallBack::Copy)
 }
 
+fn stage_workspace_file(workspace: &Workspace, source: &Path, relative_path: &Path) -> Result<()> {
+    if should_copy_only(source)? {
+        let _ = workspace.copy_file(source, relative_path)?;
+    } else {
+        workspace.link_or_copy_file(source, relative_path, default_link_options())?;
+    }
+    Ok(())
+}
+
+fn should_copy_only(source: &Path) -> Result<bool> {
+    Ok(std::fs::metadata(source)?.len() < COPY_ONLY_THRESHOLD_BYTES)
+}
+
 fn copy_directory_into_workspace(
     workspace: &Workspace,
     source: &Path,
@@ -691,7 +702,7 @@ fn copy_directory_into_workspace(
             workspace.create_dir_all(&relative_path)?;
             copy_directory_into_workspace(workspace, &path, &relative_path)?;
         } else {
-            workspace.link_or_copy_file(&path, &relative_path, default_link_options())?;
+            stage_workspace_file(workspace, &path, &relative_path)?;
         }
     }
     Ok(())

@@ -1440,6 +1440,9 @@ dependencies = [
 name = "pulith-install"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "criterion",
+ "futures-util",
  "pulith-archive",
  "pulith-fetch",
  "pulith-fs",

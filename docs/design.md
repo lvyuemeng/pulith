@@ -178,6 +178,13 @@ Current progress:
 - store import and install staging now prefer hardlink-or-copy where the filesystem allows it
 - copy-heavy transitions still need measurement, but the default path is now less wasteful on same-device flows
 - `pulith-state` now has dedicated growth benchmarks so snapshot rewriting cost can be measured before changing storage architecture
+- install workflow tests now cover interrupted install recovery through backup/restore snapshots
+- `pulith-install` now includes criterion benchmarks for large fetch/store/install and archive extract/store/install flows
+- `pulith-fetch` now includes criterion benchmarks for multi-source priority and race strategy overhead
+- transition benchmarks now measure hardlink-or-copy against copy-only for same-device store/install artifact movement
+- current benchmark runs indicate the crossover favors copy-only for small files but shifts toward hardlink-or-copy once artifacts reach larger multi-megabyte sizes
+- store/import/install paths now apply that evidence with a size-threshold strategy rather than always attempting hardlinks first
+- additional threshold-variant benchmarks now exist for tuning, though current results are noisy enough that the chosen cutoff should remain provisional until repeated on calmer filesystems/CI runners
 
 ## Integrated Testing Direction
 

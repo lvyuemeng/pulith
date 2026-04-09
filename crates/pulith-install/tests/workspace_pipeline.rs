@@ -12,7 +12,7 @@ use pulith_resource::{
     ValidUrl,
 };
 use pulith_source::{SelectionStrategy, SourceSpec};
-use pulith_state::{ResourceLifecycle, StateReady};
+use pulith_state::{ResourceLifecycle, ResourceRecordPatch, StateReady};
 use pulith_store::{StoreKey, StoreReady, StoreRoots};
 
 fn resolved_resource(locator: ResourceLocator) -> pulith_resource::ResolvedResource {
@@ -235,4 +235,78 @@ fn repeated_activation_switches_active_install() {
     assert_eq!(snapshot.activations.len(), 2);
     assert_eq!(snapshot.resources[0].lifecycle, ResourceLifecycle::Active);
     assert!(active_target.exists());
+}
+
+#[test]
+fn interrupted_install_recovery_restores_previous_snapshot() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let ready = InstallReady::new(state.clone());
+    let install_root = temp.path().join("installs/runtime");
+
+    let initial_source = temp.path().join("src-initial");
+    fs::create_dir_all(&initial_source).unwrap();
+    fs::write(initial_source.join("runtime.bin"), b"v1").unwrap();
+
+    let initial_resource = RequestedResource::new(
+        ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::LocalPath(initial_source.clone()),
+        )
+        .version(pulith_resource::VersionSelector::exact("1.0.0").unwrap()),
+    )
+    .resolve(
+        ResolvedVersion::new("1.0.0").unwrap(),
+        ResolvedLocator::LocalPath(initial_source.clone()),
+        None,
+    );
+
+    PlannedInstall::new(
+        ready.clone(),
+        InstallSpec::new(
+            initial_resource,
+            InstallInput::from_archive_extraction(
+                initial_source.clone(),
+                pulith_archive::ArchiveReport {
+                    format: pulith_archive::ArchiveFormat::Zip,
+                    entry_count: 1,
+                    total_bytes: 2,
+                    entries: vec![],
+                },
+            ),
+            install_root.clone(),
+        ),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .finish();
+
+    let resource_id = ResourceId::parse("example/runtime").unwrap();
+    let backup = ready
+        .create_backup(&resource_id, &install_root, temp.path().join("backups"))
+        .unwrap();
+
+    fs::remove_dir_all(&install_root).unwrap();
+    fs::create_dir_all(&install_root).unwrap();
+    fs::write(install_root.join("runtime.bin"), b"partial").unwrap();
+    state
+        .patch_resource_record(
+            &resource_id,
+            ResourceRecordPatch::lifecycle(ResourceLifecycle::Failed),
+        )
+        .unwrap();
+
+    ready.restore_backup(&backup).unwrap();
+
+    assert_eq!(fs::read(install_root.join("runtime.bin")).unwrap(), b"v1");
+    assert_eq!(
+        state
+            .get_resource_record(&resource_id)
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ResourceLifecycle::Installed
+    );
 }

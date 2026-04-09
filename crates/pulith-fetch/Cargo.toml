@@ -49,3 +49,7 @@ harness = false
 [[bench]]
 name = "memory_usage"
 harness = false
+
+[[bench]]
+name = "multi_source"
+harness = false
