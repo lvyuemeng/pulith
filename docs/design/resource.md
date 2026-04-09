@@ -12,6 +12,7 @@ It does not fetch, store, or install anything. It only describes:
 - where a resource can be located
 - how a version is selected
 - what verification is required
+- what trust policy should apply
 - how the artifact should be materialized
 
 ## Design Rules
@@ -29,6 +30,7 @@ It does not fetch, store, or install anything. It only describes:
 - `ResourceLocator`
 - `VersionSelector`
 - `VerificationRequirement`
+- `TrustPolicy`
 - `MaterializationSpec`
 - `RequestedResource`
 - `ResolvedResource`
@@ -38,6 +40,16 @@ It does not fetch, store, or install anything. It only describes:
 `ValidUrl` and `ValidDigest` are proof-carrying validated values.
 
 They are checked once at construction and then reused across crates without repeated ad hoc validation.
+
+## Trust Policy
+
+`pulith-resource` now includes an optional trust policy description layer.
+
+This is intentionally lightweight:
+
+- trust anchors can be based on digest, host, or metadata
+- trust evaluation is descriptive and local
+- the crate does not become a full trust framework or PKI system
 
 ## Workflow Shape
 

@@ -46,6 +46,7 @@ Pulith now has four logical layers:
 ### 2. Semantic Model Layer
 
 - `pulith-resource`: shared resource semantics
+- `pulith-resource`: shared resource semantics and optional trust policy description
 - `pulith-store`: local artifact and extract storage
 - `pulith-state`: persistent resource lifecycle state
 

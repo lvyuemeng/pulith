@@ -35,6 +35,10 @@ pub enum ResourceError {
     EmptyValue,
     #[error("alternatives must not be empty")]
     EmptyAlternatives,
+    #[error("trust anchor host must not be empty")]
+    EmptyTrustHost,
+    #[error("trust metadata key must not be empty")]
+    EmptyTrustMetadataKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -222,6 +226,86 @@ pub enum VerificationRequirement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TrustMode {
+    Open,
+    RequireVerification,
+    RequireAnchorMatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TrustAnchor {
+    Digest(ValidDigest),
+    Host(String),
+    Metadata { key: String, value: String },
+}
+
+impl TrustAnchor {
+    pub fn host(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        ensure_non_empty(&value).map_err(|_| ResourceError::EmptyTrustHost)?;
+        Ok(Self::Host(value))
+    }
+
+    pub fn metadata(key: impl Into<String>, value: impl Into<String>) -> Result<Self> {
+        let key = key.into();
+        let value = value.into();
+        ensure_non_empty(&key).map_err(|_| ResourceError::EmptyTrustMetadataKey)?;
+        ensure_non_empty(&value)?;
+        Ok(Self::Metadata { key, value })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustPolicy {
+    pub mode: TrustMode,
+    pub anchors: Vec<TrustAnchor>,
+}
+
+impl Default for TrustPolicy {
+    fn default() -> Self {
+        Self {
+            mode: TrustMode::Open,
+            anchors: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrustDecision {
+    Trusted,
+    Untrusted(&'static str),
+}
+
+impl TrustPolicy {
+    pub fn evaluate(
+        &self,
+        locator: Option<&ResolvedLocator>,
+        artifact: Option<&ArtifactDescriptor>,
+        metadata: &Metadata,
+        verification: &VerificationRequirement,
+    ) -> TrustDecision {
+        match self.mode {
+            TrustMode::Open => TrustDecision::Trusted,
+            TrustMode::RequireVerification => match verification {
+                VerificationRequirement::None => TrustDecision::Untrusted("verification required"),
+                _ => TrustDecision::Trusted,
+            },
+            TrustMode::RequireAnchorMatch => {
+                if self
+                    .anchors
+                    .iter()
+                    .any(|anchor| anchor_matches(anchor, locator, artifact, metadata))
+                {
+                    TrustDecision::Trusted
+                } else {
+                    TrustDecision::Untrusted("no trust anchor matched")
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArtifactForm {
     File,
     Archive,
@@ -263,6 +347,7 @@ pub struct ResourceSpec {
     pub locator: ResourceLocator,
     pub version: VersionSelector,
     pub verification: VerificationRequirement,
+    pub trust: TrustPolicy,
     pub materialization: MaterializationSpec,
     pub labels: Labels,
     pub metadata: Metadata,
@@ -275,6 +360,7 @@ impl ResourceSpec {
             locator,
             version: VersionSelector::Unspecified,
             verification: VerificationRequirement::None,
+            trust: TrustPolicy::default(),
             materialization: MaterializationSpec::default(),
             labels: Labels::new(),
             metadata: Metadata::new(),
@@ -288,6 +374,11 @@ impl ResourceSpec {
 
     pub fn verification(mut self, verification: VerificationRequirement) -> Self {
         self.verification = verification;
+        self
+    }
+
+    pub fn trust(mut self, trust: TrustPolicy) -> Self {
+        self.trust = trust;
         self
     }
 
@@ -363,6 +454,37 @@ impl ResolvedResource {
     pub fn locator(&self) -> &ResolvedLocator {
         &self.state.locator
     }
+
+    pub fn trust_decision(&self) -> TrustDecision {
+        self.spec.trust.evaluate(
+            Some(&self.state.locator),
+            self.state.artifact.as_ref(),
+            &self.spec.metadata,
+            &self.spec.verification,
+        )
+    }
+}
+
+fn anchor_matches(
+    anchor: &TrustAnchor,
+    locator: Option<&ResolvedLocator>,
+    artifact: Option<&ArtifactDescriptor>,
+    metadata: &Metadata,
+) -> bool {
+    match anchor {
+        TrustAnchor::Digest(expected) => artifact
+            .and_then(|artifact| artifact.digest.as_ref())
+            .is_some_and(|digest| digest == expected),
+        TrustAnchor::Host(host) => locator
+            .and_then(|locator| match locator {
+                ResolvedLocator::Url(url) => url.as_url().host_str(),
+                ResolvedLocator::LocalPath(_) => None,
+            })
+            .is_some_and(|value| value == host),
+        TrustAnchor::Metadata { key, value } => {
+            metadata.get(key).is_some_and(|found| found == value)
+        }
+    }
 }
 
 fn ensure_non_empty(value: &str) -> Result<()> {
@@ -432,5 +554,41 @@ mod tests {
         );
 
         assert_eq!(resolved.version().as_str(), "20.12.1");
+    }
+
+    #[test]
+    fn trust_policy_can_require_anchor_match() {
+        let digest = ValidDigest::from_hex(
+            DigestAlgorithm::Sha256,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        )
+        .unwrap();
+
+        let spec = ResourceSpec::new(
+            ResourceId::parse("nodejs.org/node").unwrap(),
+            ResourceLocator::Url(
+                ValidUrl::parse("https://downloads.example.com/node.zip").unwrap(),
+            ),
+        )
+        .verification(VerificationRequirement::Digest(digest.clone()))
+        .trust(TrustPolicy {
+            mode: TrustMode::RequireAnchorMatch,
+            anchors: vec![TrustAnchor::host("downloads.example.com").unwrap()],
+        });
+
+        let requested = RequestedResource::new(spec);
+        let resolved = requested.resolve(
+            ResolvedVersion::new("20.12.1").unwrap(),
+            ResolvedLocator::Url(
+                ValidUrl::parse("https://downloads.example.com/node.zip").unwrap(),
+            ),
+            Some(ArtifactDescriptor {
+                digest: Some(digest),
+                file_name: Some("node.zip".to_string()),
+                metadata: Metadata::new(),
+            }),
+        );
+
+        assert_eq!(resolved.trust_decision(), TrustDecision::Trusted);
     }
 }

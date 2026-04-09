@@ -31,13 +31,20 @@ fn cleanup_temp_dir(temp_dir: &Path) {
 /// Mock HTTP client for testing.
 #[derive(Debug)]
 struct TestHttpClient {
-    data: Vec<u8>,
+    size: usize,
+    fill_byte: u8,
     delay: Duration,
+    chunk_size: Option<usize>,
 }
 
 impl TestHttpClient {
-    fn new(data: Vec<u8>, delay: Duration) -> Self {
-        Self { data, delay }
+    fn new(size: usize, fill_byte: u8, delay: Duration) -> Self {
+        Self {
+            size,
+            fill_byte,
+            delay,
+            chunk_size: None,
+        }
     }
 }
 
@@ -62,7 +69,7 @@ impl pulith_fetch::HttpClient for TestHttpClient {
     ) -> impl std::future::Future<Output = std::result::Result<Option<u64>, Self::Error>> + Send
     {
         let delay = self.delay;
-        let size = self.data.len();
+        let size = self.size;
         async move {
             tokio::time::sleep(delay).await;
             Ok(Some(size as u64))
@@ -79,22 +86,27 @@ impl pulith_fetch::HttpClient for TestHttpClient {
             Self::Error,
         >,
     > + Send {
-        let data = self.data.clone();
         let delay = self.delay;
+        let size = self.size;
+        let fill_byte = self.fill_byte;
+        let chunk_size = self.chunk_size.unwrap_or(8192);
         async move {
             tokio::time::sleep(delay).await;
 
-            // Split data into chunks to simulate streaming
-            let chunk_size = 8192; // 8KB chunks
-            let chunks: Vec<_> = data
-                .chunks(chunk_size)
-                .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
-                .collect();
+            let stream = futures_util::stream::unfold(size, move |remaining| async move {
+                if remaining == 0 {
+                    None
+                } else {
+                    let len = remaining.min(chunk_size);
+                    let chunk = vec![fill_byte; len];
+                    Some((Ok(Bytes::from(chunk)), remaining - len))
+                }
+            });
 
             let stream: pulith_fetch::net::http::BoxStream<
                 'static,
                 std::result::Result<Bytes, Self::Error>,
-            > = Box::pin(futures_util::stream::iter(chunks));
+            > = Box::pin(stream);
             Ok(stream)
         }
     }
@@ -103,7 +115,6 @@ impl pulith_fetch::HttpClient for TestHttpClient {
 #[tokio::test]
 async fn test_large_file_performance() {
     let file_size = 10 * 1024 * 1024;
-    let test_data = vec![0u8; file_size];
 
     let temp_dir = create_temp_dir();
     let workspace_root = temp_dir.join("workspace");
@@ -111,7 +122,7 @@ async fn test_large_file_performance() {
     let destination = temp_dir.join("output").join("large_file.bin");
     std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
 
-    let client = TestHttpClient::new(test_data, Duration::from_millis(10));
+    let client = TestHttpClient::new(file_size, 0u8, Duration::from_millis(10));
     let fetcher = Fetcher::new(client, &workspace_root);
 
     let options = FetchOptions::default();
@@ -200,11 +211,10 @@ async fn test_concurrent_performance() {
     for i in 0..NUM_DOWNLOADS {
         let workspace_root = workspace_root.join(format!("workspace_{}", i));
         std::fs::create_dir(&workspace_root).unwrap();
-        let test_data = vec![i as u8; FILE_SIZE];
         let temp_dir_clone = temp_dir.clone();
 
         let handle = tokio::spawn(async move {
-            let client = TestHttpClient::new(test_data, Duration::from_millis(5));
+            let client = TestHttpClient::new(FILE_SIZE, i as u8, Duration::from_millis(5));
             let fetcher = Fetcher::new(client, &workspace_root);
             // Create a unique destination directory for each concurrent download
             let dest_dir = temp_dir_clone.join(format!("concurrent_dest_{}", i));
@@ -282,11 +292,10 @@ async fn test_memory_usage_under_load() {
     for i in 0..NUM_CONCURRENT {
         let workspace_root = workspace_root.join(format!("workspace_{}", i));
         std::fs::create_dir(&workspace_root).unwrap();
-        let test_data = vec![i as u8; FILE_SIZE];
         let temp_dir_clone = temp_dir.clone();
 
         let handle = tokio::spawn(async move {
-            let client = TestHttpClient::new(test_data, Duration::from_millis(1));
+            let client = TestHttpClient::new(FILE_SIZE, i as u8, Duration::from_millis(1));
             let fetcher = Fetcher::new(client, &workspace_root);
             // Create a unique destination directory for each concurrent download
             let dest_dir = temp_dir_clone.join(format!("memory_dest_{}", i));
@@ -370,7 +379,6 @@ async fn test_performance_scaling() {
     let file_sizes = vec![1024, 1024 * 1024, 5 * 1024 * 1024];
 
     for size in file_sizes {
-        let test_data = vec![size as u8; size];
         let temp_dir = create_temp_dir();
         let workspace_root = temp_dir.join("workspace");
         std::fs::create_dir(&workspace_root).unwrap();
@@ -379,7 +387,7 @@ async fn test_performance_scaling() {
         std::fs::create_dir_all(&dest_dir).unwrap();
         let destination = dest_dir.join(format!("file_{}.bin", size));
 
-        let client = TestHttpClient::new(test_data, Duration::from_millis(1));
+        let client = TestHttpClient::new(size, size as u8, Duration::from_millis(1));
         let fetcher = Fetcher::new(client, &workspace_root);
 
         let options = FetchOptions::default();

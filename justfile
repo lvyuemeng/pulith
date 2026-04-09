@@ -28,8 +28,10 @@ tree:
     cargo tree --workspace --all-features -d
 
 deny:
-    cargo deny check --all-features advisories bans sources
+    cargo deny --all-features check advisories bans sources
 
-verify: fmt-check clippy test doc
+quality: fmt clippy test doc
 
-ci: verify audit tree deny
+verify: audit tree deny
+
+ci: quality verify

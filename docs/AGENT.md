@@ -3,7 +3,7 @@
 ## Language and Tooling
 
 - **Rust Edition**: 2024
-- **Minimum Rust Version**: 1.75.0
+- **Minimum Rust Version**: 1.88.0
 - **Formatting**: `cargo fmt` with default configuration
 - **Linting**: `cargo clippy` with strict warnings
 - **Documentation**: `cargo doc` for API documentation

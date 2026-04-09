@@ -1,4 +1,4 @@
-use pulith_fs::primitives::{hardlink, replace_dir, rw, symlink};
+use pulith_fs::primitives::{hardlink, rw};
 use tempfile::tempdir;
 
 #[test]
@@ -28,6 +28,7 @@ fn test_atomic_write_preserves_content_on_failure() {
 #[cfg(unix)]
 #[test]
 fn test_hardlink_or_copy_hardlink() {
+    use pulith_fs::hardlink_or_copy;
     use std::os::unix::fs::MetadataExt;
 
     let dir = tempdir().unwrap();
@@ -36,7 +37,7 @@ fn test_hardlink_or_copy_hardlink() {
 
     std::fs::write(&src, "shared content").unwrap();
 
-    hardlink_or_copy(&src, &dest, Options::new()).unwrap();
+    hardlink_or_copy(&src, &dest, hardlink::Options::new()).unwrap();
 
     assert!(dest.exists());
 
@@ -79,6 +80,7 @@ fn test_hardlink_or_copy_fallback_copy() {
 #[cfg(unix)]
 #[test]
 fn test_atomic_write_with_permissions() {
+    use pulith_fs::{AtomicWriteOptions, PermissionMode, atomic_write};
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempdir().unwrap();
@@ -87,7 +89,7 @@ fn test_atomic_write_with_permissions() {
     atomic_write(
         &path,
         b"#!/bin/bash\necho hello",
-        AtomicWriteOptions::new().permissions(0o755),
+        AtomicWriteOptions::new().permissions(PermissionMode::Custom(0o755)),
     )
     .unwrap();
 
@@ -100,6 +102,7 @@ fn test_atomic_write_with_permissions() {
 #[cfg(unix)]
 #[test]
 fn test_symlink_functionality() {
+    use pulith_fs::atomic_read;
     use pulith_fs::atomic_symlink;
 
     let dir = tempdir().unwrap();
@@ -116,6 +119,8 @@ fn test_symlink_functionality() {
 #[cfg(unix)]
 #[test]
 fn test_hardlink_or_copy_directory() {
+    use pulith_fs::{FallBack, hardlink_or_copy};
+
     let dir = tempdir().unwrap();
     let src = dir.path().join("source_dir");
     let dest = dir.path().join("dest_dir");
@@ -124,7 +129,7 @@ fn test_hardlink_or_copy_directory() {
     std::fs::write(src.join("file1.txt"), "content1").unwrap();
     std::fs::write(src.join("file2.txt"), "content2").unwrap();
 
-    let options = Options::new().fallback(FallBack::Copy);
+    let options = hardlink::Options::new().fallback(FallBack::Copy);
     hardlink_or_copy(&src, &dest, options).unwrap();
 
     assert!(dest.is_dir());
@@ -135,6 +140,8 @@ fn test_hardlink_or_copy_directory() {
 #[cfg(windows)]
 #[test]
 fn test_junction_creation() {
+    use pulith_fs::primitives::symlink;
+
     let dir = tempdir().unwrap();
     let target = dir.path().join("target_dir");
     let junction = dir.path().join("junction_link");
@@ -152,6 +159,8 @@ fn test_junction_creation() {
 #[cfg(windows)]
 #[test]
 fn test_replace_directory() {
+    use pulith_fs::primitives::replace_dir;
+
     let dir = tempdir().unwrap();
     let src = dir.path().join("new_version");
     let dest = dir.path().join("current");

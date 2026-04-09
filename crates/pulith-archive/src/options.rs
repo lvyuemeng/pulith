@@ -303,6 +303,8 @@ fn strip_components(path: &Path, count: usize) -> Result<PathBuf> {
 
 /// Normalize path separators and resolve relative components.
 fn normalize_path(path: &Path) -> Result<PathBuf> {
+    let normalized_separators = path.to_string_lossy().replace('\\', "/");
+    let path = Path::new(&normalized_separators);
     let mut result = PathBuf::new();
 
     for component in path.components() {

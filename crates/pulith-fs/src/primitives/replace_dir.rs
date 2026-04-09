@@ -29,7 +29,7 @@ impl Options {
     }
 }
 
-pub fn replace_dir(src: impl AsRef<Path>, dest: impl AsRef<Path>, options: Options) -> Result<()> {
+pub fn replace_dir(src: impl AsRef<Path>, dest: impl AsRef<Path>, _options: Options) -> Result<()> {
     let src = src.as_ref();
     let dest = dest.as_ref();
 
@@ -44,6 +44,7 @@ pub fn replace_dir(src: impl AsRef<Path>, dest: impl AsRef<Path>, options: Optio
     #[cfg(windows)]
     {
         use std::thread;
+        let options = _options;
         let mut attempts = 0;
         loop {
             if dest.exists()

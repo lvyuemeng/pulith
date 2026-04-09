@@ -18,8 +18,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -67,10 +66,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.85.0
+      - name: Install Rust 1.88.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.85.0
+          toolchain: 1.88.0
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
@@ -78,8 +77,40 @@ jobs:
       - name: Check workspace
         run: cargo check --workspace --all-features
 
-  audit:
-    name: Dependency Policy
+  cargo-audit:
+    name: Cargo Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cargo audit action
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cargo-deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cargo deny action
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.88.0"
+          log-level: warn
+          manifest-path: ./Cargo.toml
+          command: check
+          arguments: --all-features
+          command-arguments: advisories bans sources
+
+  dependency-tree:
+    name: Dependency Tree
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -88,14 +119,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependency tools
-        run: cargo install cargo-audit cargo-deny --locked
-
-      - name: Cargo audit
-        run: cargo audit
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Check duplicate dependency trees
         run: cargo tree --workspace --all-features -d
-
-      - name: Enforce dependency policy
-        run: cargo deny check --all-features advisories bans sources

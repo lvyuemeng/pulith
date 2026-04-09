@@ -31,6 +31,20 @@ pub fn hardlink_or_copy(
     let src = src.as_ref();
     let dest = dest.as_ref();
 
+    if src.is_dir() {
+        if matches!(options.fallback, FallBack::Copy) {
+            return crate::primitives::copy_dir::copy_dir_all(src, dest);
+        }
+
+        return Err(Error::Write {
+            path: dest.to_path_buf(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "hard-linking directories is not supported",
+            ),
+        });
+    }
+
     match std::fs::hard_link(src, dest) {
         Ok(_) => Ok(()),
         Err(e)
@@ -80,5 +94,20 @@ mod tests {
         let options = Options::new().fallback(FallBack::Copy);
         hardlink_or_copy(&src, &dest, options).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"data");
+    }
+
+    #[test]
+    fn test_hardlink_or_copy_directory_with_copy_fallback() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src_dir");
+        let dest = dir.path().join("dest_dir");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("file.txt"), "data").unwrap();
+
+        let options = Options::new().fallback(FallBack::Copy);
+        hardlink_or_copy(&src, &dest, options).unwrap();
+
+        assert!(dest.is_dir());
+        assert_eq!(std::fs::read(dest.join("file.txt")).unwrap(), b"data");
     }
 }

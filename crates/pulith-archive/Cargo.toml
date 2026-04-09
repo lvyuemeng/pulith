@@ -25,8 +25,8 @@ tempfile.workspace = true
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 blake3 = { workspace = true, optional = true }
-tar = { version = "0.4.44", optional = true }
+tar = { version = "0.4.45", optional = true }
 xz2 = { version = "0.1.7", optional = true }
 zstd = { version = "0.13.3", optional = true }
 flate2 = { workspace = true, optional = true }
-zip = {version = "7.2.0",optional = true}
+zip = { workspace = true, optional = true }

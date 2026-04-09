@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 pulith-fs = { path = "../pulith-fs" }
 
-home = "0.5"
+home = "0.5.12"
 query-shell = "0.3"
 once_cell.workspace = true
 thiserror.workspace = true
