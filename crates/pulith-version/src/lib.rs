@@ -8,6 +8,9 @@
 //! - **CalVer**: Calendar Versioning (`2024`, `2024.01.15`)
 //! - **Partial**: Partial versions for matching (`18`, `3.11`)
 
-pub use self::version::{CalVer, Partial, VersionError, VersionKind, VersionKindType};
+pub use self::version::{
+    CalVer, Partial, SelectionPolicy, VersionError, VersionKind, VersionKindType,
+    VersionPreference, VersionPreferenceError, VersionRequirement, select_preferred,
+};
 
 mod version;

@@ -326,9 +326,10 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
 
         let options = job.options.clone().unwrap_or_default();
 
-        fetcher
+        Ok(fetcher
             .try_source(&source, &job.destination, &options)
-            .await
+            .await?
+            .destination)
     }
 }
 

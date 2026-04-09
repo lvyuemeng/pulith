@@ -1,0 +1,15 @@
+[package]
+name = "pulith-backend-example"
+version = "0.1.0"
+edition = "2024"
+description = "Thin backend example crate for Pulith's adapter-first architecture"
+
+[dependencies]
+pulith-install = { path = "../pulith-install" }
+pulith-resource = { path = "../pulith-resource" }
+pulith-source = { path = "../pulith-source" }
+
+thiserror.workspace = true
+
+[dev-dependencies]
+pulith-fetch = { path = "../pulith-fetch" }

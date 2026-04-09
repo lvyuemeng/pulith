@@ -5,4 +5,4 @@ edition = "2024"
 description = "Template for pulith shim binary"
 
 [dependencies]
-pulith-shim = { path = "../pulith-shim" }
+pulith-shim = { path = "./pulith-shim" }

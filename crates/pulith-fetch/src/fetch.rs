@@ -9,7 +9,7 @@ pub mod segmented;
 
 pub use batch::{BatchDownloadJob, BatchFetcher, BatchOptions};
 pub use conditional::{ConditionalFetcher, ConditionalOptions, RemoteMetadata};
-pub use fetcher::Fetcher;
+pub use fetcher::{FetchReceipt, FetchSource, Fetcher};
 pub use multi_source::MultiSourceFetcher;
 pub use resumable::{DownloadCheckpoint, ResumableFetcher};
 pub use segmented::{SegmentedFetcher, SegmentedOptions};

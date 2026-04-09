@@ -1,23 +1,7 @@
-//! HTTP downloading with streaming verification and atomic placement.
+//! HTTP transfer primitives for Pulith.
 //!
-//! # Architecture
-//!
-//! This crate follows a functional group structure:
-//! - `rate` - Rate limiting, backoff, throttling
-//! - `segment` - File segmentation and validation
-//! - `fetch` - Download strategies
-//! - `config` - Configuration types
-//! - `progress` - Progress tracking
-//! - `cache` - Caching implementations
-//! - `codec` - Stream processing (decompress, verify, signature)
-//! - `net` - Network abstractions
-//!
-//! # Key Features
-//!
-//! - **Single-Pass**: Tee-Reader pattern hashes while streaming to avoid memory bloat
-//! - **Atomic Placement**: Uses `pulith-fs::Workspace` for guaranteed cleanup on error
-//! - **Streaming Verification**: Uses `pulith-verify::Hasher` for incremental hashing
-//! - **Mechanism-Only**: No policy; caller handles progress UI and retry orchestration
+//! Keep planning in `pulith-source`, verification in `pulith-verify`,
+//! and filesystem safety in `pulith-fs`. This crate owns transfer execution.
 
 mod error;
 
@@ -44,10 +28,10 @@ pub use config::{
 };
 pub use fetch::{
     BatchDownloadJob, BatchFetcher, BatchOptions, ConditionalFetcher, ConditionalOptions,
-    DownloadCheckpoint, Fetcher, MultiSourceFetcher, RemoteMetadata, ResumableFetcher,
-    SegmentedFetcher, SegmentedOptions,
+    DownloadCheckpoint, FetchReceipt, FetchSource, Fetcher, MultiSourceFetcher, RemoteMetadata,
+    ResumableFetcher, SegmentedFetcher, SegmentedOptions,
 };
-pub use net::{BoxStream, HttpClient, Protocol, ReqwestClient};
+pub use net::{BoxStream, HttpClient, ReqwestClient};
 pub use progress::{
     ExtendedProgress, PerformanceMetrics, PhaseTimings, Progress, ProgressReporter,
 };

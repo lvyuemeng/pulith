@@ -10,8 +10,10 @@
 //! - `codec/` - Compression codecs
 //! - `ops/` - Permission and hash operations
 
+pub use entry::ArchiveReport;
 pub use error::{Error, Result};
 pub use extract::extract_from_reader;
+pub use format::ArchiveFormat;
 pub use options::{ExtractOptions, SanitizedPath};
 pub use workspace::{WorkspaceExtraction, extract_to_workspace};
 

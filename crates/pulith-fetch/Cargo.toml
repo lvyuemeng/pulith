@@ -11,21 +11,22 @@ brotli = ["dep:brotli"]
 
 [dependencies]
 pulith-fs = { path = "../pulith-fs" }
+pulith-source = { path = "../pulith-source" }
 pulith-verify = { path = "../pulith-verify" }
 
 thiserror.workspace = true
 hex.workspace = true
 base64 = "0.22"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde.workspace = true
+serde_json.workspace = true
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 bytes = "1"
-flate2 = "1.0"
+flate2.workspace = true
 brotli = { version = "7.0", optional = true }
-sha2 = "0.10"
-async-trait = "0.1"
+sha2.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
+tempfile.workspace = true
 
 reqwest = { version = "0.13.1", features = [
 	"stream",
@@ -33,9 +34,9 @@ reqwest = { version = "0.13.1", features = [
 ], optional = true }
 
 [dev-dependencies]
-tempfile.workspace = true
+async-trait = "0.1"
+pulith-resource = { path = "../pulith-resource" }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
-tokio-test = "0.4"
 
 [[bench]]
 name = "token_bucket"

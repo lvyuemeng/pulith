@@ -12,4 +12,11 @@ pulith-store = { path = "../pulith-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports" ] }
 tempfile.workspace = true
+
+[[bench]]
+name = "state_growth"
+harness = false

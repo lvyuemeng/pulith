@@ -1451,6 +1451,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulith-backend-example"
+version = "0.1.0"
+dependencies = [
+ "pulith-fetch",
+ "pulith-install",
+ "pulith-resource",
+ "pulith-source",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "pulith-fetch"
 version = "0.2.0"
 dependencies = [
@@ -1464,6 +1475,8 @@ dependencies = [
  "futures-util",
  "hex",
  "pulith-fs",
+ "pulith-resource",
+ "pulith-source",
  "pulith-verify",
  "reqwest",
  "serde",
@@ -1472,7 +1485,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-test",
 ]
 
 [[package]]
@@ -1491,13 +1503,20 @@ dependencies = [
 name = "pulith-install"
 version = "0.1.0"
 dependencies = [
+ "pulith-archive",
+ "pulith-fetch",
  "pulith-fs",
  "pulith-resource",
+ "pulith-shim",
+ "pulith-source",
  "pulith-state",
  "pulith-store",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "zip",
 ]
 
 [[package]]
@@ -1516,6 +1535,7 @@ name = "pulith-resource"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "pulith-version",
  "serde",
  "thiserror 2.0.18",
  "url",
@@ -1548,6 +1568,7 @@ dependencies = [
 name = "pulith-state"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "pulith-fs",
  "pulith-resource",
  "pulith-store",
@@ -1561,10 +1582,10 @@ dependencies = [
 name = "pulith-store"
 version = "0.1.0"
 dependencies = [
- "hex",
  "pulith-fs",
  "pulith-resource",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -1588,6 +1609,7 @@ dependencies = [
  "once_cell",
  "regex",
  "semver",
+ "serde",
  "thiserror 2.0.18",
 ]
 
@@ -2332,28 +2354,6 @@ checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
  "tokio",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

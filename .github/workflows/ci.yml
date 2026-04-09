@@ -79,7 +79,7 @@ jobs:
         run: cargo check --workspace --all-features
 
   audit:
-    name: Audit
+    name: Dependency Policy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -88,8 +88,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+      - name: Install dependency tools
+        run: cargo install cargo-audit cargo-deny --locked
 
-      - name: Audit dependencies
+      - name: Cargo audit
+        run: cargo audit
+
+      - name: Check duplicate dependency trees
+        run: cargo tree --workspace --all-features -d
+
+      - name: Enforce dependency policy
         run: cargo deny check --all-features advisories bans sources

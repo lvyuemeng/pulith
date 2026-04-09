@@ -1,4 +1,4 @@
-use crate::primitives::rw;
+use crate::primitives::{hardlink, rw};
 use crate::{Error, Result};
 use std::path::{Component, Path, PathBuf};
 
@@ -102,6 +102,23 @@ impl Workspace {
             })?;
         }
         std::fs::copy(source, &path).map_err(|e| Error::Write { path, source: e })
+    }
+
+    pub fn link_or_copy_file(
+        &self,
+        source: impl AsRef<Path>,
+        relative_path: impl AsRef<Path>,
+        options: hardlink::Options,
+    ) -> Result<()> {
+        let source = source.as_ref();
+        let path = self.resolve(relative_path)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| Error::Write {
+                path: parent.to_path_buf(),
+                source: e,
+            })?;
+        }
+        hardlink::hardlink_or_copy(source, &path, options)
     }
 
     pub fn read(&self, relative_path: impl AsRef<Path>) -> Result<Vec<u8>> {
@@ -259,5 +276,20 @@ mod tests {
 
         let result = workspace.write("../escape.txt", b"data");
         assert!(matches!(result, Err(Error::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_workspace_link_or_copy_file() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.txt");
+        std::fs::write(&source, b"data").unwrap();
+
+        let workspace =
+            Workspace::new(dir.path().join("staging"), dir.path().join("dest")).unwrap();
+        workspace
+            .link_or_copy_file(&source, "bin/tool.txt", hardlink::Options::new())
+            .unwrap();
+
+        assert_eq!(workspace.read("bin/tool.txt").unwrap(), b"data");
     }
 }

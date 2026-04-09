@@ -3,6 +3,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version as SemVer;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 static CALVER_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -25,14 +26,14 @@ pub enum VersionError {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VersionKindType {
     SemVer,
     CalVer,
     Partial,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum VersionKind {
     SemVer(SemVer),
     CalVer(CalVer),
@@ -43,7 +44,7 @@ pub enum VersionKind {
 #[error("invalid CalVer format: {0}")]
 pub struct CalVerError(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CalVer(SemVer);
 
 impl CalVer {
@@ -149,7 +150,7 @@ impl std::ops::Deref for CalVer {
 #[error("invalid partial version: {0}")]
 pub struct PartialError(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Partial {
     pub major: Option<u64>,
     pub minor: Option<u64>,
@@ -295,9 +296,136 @@ impl VersionKind {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum VersionPreferenceError {
+    #[error("invalid version requirement: {0}")]
+    InvalidRequirement(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VersionRequirement {
+    Any,
+    Exact(VersionKind),
+    Partial(Partial),
+    SemVer(semver::VersionReq),
+}
+
+impl VersionRequirement {
+    pub fn parse(input: &str) -> Result<Self, VersionPreferenceError> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() || trimmed == "*" {
+            return Ok(Self::Any);
+        }
+
+        if let Ok(requirement) = semver::VersionReq::parse(trimmed) {
+            return Ok(Self::SemVer(requirement));
+        }
+
+        if let Ok(partial) = Partial::parse(trimmed) {
+            return Ok(Self::Partial(partial));
+        }
+
+        if let Ok(version) = VersionKind::parse(trimmed) {
+            return Ok(Self::Exact(version));
+        }
+
+        Err(VersionPreferenceError::InvalidRequirement(
+            trimmed.to_string(),
+        ))
+    }
+
+    pub fn matches(&self, version: &VersionKind) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Exact(expected) => expected == version,
+            Self::Partial(partial) => partial.matches(version),
+            Self::SemVer(requirement) => version
+                .as_semver()
+                .is_some_and(|value| requirement.matches(value)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VersionPreference {
+    Latest,
+    Lowest,
+    HighestStable,
+    Lts,
+    Pinned(VersionKind),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectionPolicy {
+    pub requirement: VersionRequirement,
+    pub preference: VersionPreference,
+}
+
+impl Default for SelectionPolicy {
+    fn default() -> Self {
+        Self {
+            requirement: VersionRequirement::Any,
+            preference: VersionPreference::Latest,
+        }
+    }
+}
+
+pub fn select_preferred<'a>(
+    versions: &'a [VersionKind],
+    policy: &SelectionPolicy,
+) -> Option<&'a VersionKind> {
+    let candidates: Vec<&VersionKind> = versions
+        .iter()
+        .filter(|version| policy.requirement.matches(version))
+        .collect();
+
+    if candidates.is_empty() {
+        return None;
+    }
+
+    match &policy.preference {
+        VersionPreference::Lowest => candidates.into_iter().min(),
+        VersionPreference::Latest => candidates.into_iter().max(),
+        VersionPreference::HighestStable => candidates
+            .into_iter()
+            .filter(|version| is_stable(version))
+            .max()
+            .or_else(|| {
+                versions
+                    .iter()
+                    .filter(|v| policy.requirement.matches(v))
+                    .max()
+            }),
+        VersionPreference::Lts => candidates
+            .into_iter()
+            .filter(|version| matches!(version, VersionKind::Partial(partial) if partial.lts))
+            .max()
+            .or_else(|| {
+                versions
+                    .iter()
+                    .filter(|v| policy.requirement.matches(v))
+                    .max()
+            }),
+        VersionPreference::Pinned(version) => {
+            versions.iter().find(|candidate| *candidate == version)
+        }
+    }
+}
+
+fn is_stable(version: &VersionKind) -> bool {
+    match version {
+        VersionKind::SemVer(version) => version.pre.is_empty(),
+        VersionKind::CalVer(version) => version.pre.is_empty(),
+        VersionKind::Partial(version) => version.pre_release.is_none(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{VersionKind, VersionKindType};
+    use super::{
+        Partial, SelectionPolicy, VersionKind, VersionKindType, VersionPreference,
+        VersionRequirement, select_preferred,
+    };
 
     #[test]
     fn test_semver_parse() {
@@ -328,5 +456,74 @@ mod tests {
     fn test_version_display() {
         let v: VersionKind = "1.2.3".parse().unwrap();
         assert_eq!(format!("{}", v), "1.2.3");
+    }
+
+    #[test]
+    fn semver_requirement_matches_semver() {
+        let requirement = VersionRequirement::parse("^1.2").unwrap();
+        assert!(requirement.matches(&VersionKind::parse("1.2.3").unwrap()));
+        assert!(!requirement.matches(&VersionKind::parse("2.0.0").unwrap()));
+    }
+
+    #[test]
+    fn partial_requirement_matches_cross_scheme() {
+        let requirement = VersionRequirement::Partial(Partial::parse("2024.01").unwrap());
+        assert!(requirement.matches(&VersionKind::parse("2024.01.15").unwrap()));
+    }
+
+    #[test]
+    fn select_latest_prefers_highest_match() {
+        let versions = vec![
+            VersionKind::parse("1.2.3").unwrap(),
+            VersionKind::parse("1.3.0").unwrap(),
+            VersionKind::parse("1.2.9").unwrap(),
+        ];
+
+        let selected = select_preferred(
+            &versions,
+            &SelectionPolicy {
+                requirement: VersionRequirement::parse("^1.2").unwrap(),
+                preference: VersionPreference::Latest,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selected.to_string(), "1.3.0");
+    }
+
+    #[test]
+    fn select_highest_stable_skips_prerelease() {
+        let versions = vec![
+            VersionKind::parse("1.2.3-alpha.1").unwrap(),
+            VersionKind::parse("1.2.2").unwrap(),
+        ];
+
+        let selected = select_preferred(
+            &versions,
+            &SelectionPolicy {
+                requirement: VersionRequirement::Any,
+                preference: VersionPreference::HighestStable,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selected.to_string(), "1.2.2");
+    }
+
+    #[test]
+    fn pinned_preference_returns_exact_version() {
+        let pinned = VersionKind::parse("20.12.1").unwrap();
+        let versions = vec![pinned.clone(), VersionKind::parse("20.11.0").unwrap()];
+
+        let selected = select_preferred(
+            &versions,
+            &SelectionPolicy {
+                requirement: VersionRequirement::Any,
+                preference: VersionPreference::Pinned(pinned),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selected.to_string(), "20.12.1");
     }
 }

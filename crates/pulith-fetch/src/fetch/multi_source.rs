@@ -4,11 +4,13 @@
 //! with different strategies for source selection and fallback.
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use pulith_source::{PlannedSources, ResolvedSourceCandidate, SelectionStrategy};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::config::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
 use crate::error::{Error, Result};
-use crate::fetch::fetcher::Fetcher;
+use crate::fetch::fetcher::{FetchReceipt, FetchSource, Fetcher};
 use crate::net::http::HttpClient;
 
 /// Multi-source fetcher implementation.
@@ -23,12 +25,12 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
     }
 
     /// Fetch from multiple sources using the specified strategy.
-    pub async fn fetch_multi_source(
+    pub async fn fetch_multi_source_with_receipt(
         &self,
         sources: Vec<DownloadSource>,
-        destination: &std::path::Path,
+        destination: &Path,
         options: MultiSourceOptions,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<FetchReceipt> {
         if sources.is_empty() {
             return Err(Error::InvalidState("No sources provided".into()));
         }
@@ -53,9 +55,9 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
     async fn fetch_priority(
         &self,
         mut sources: Vec<DownloadSource>,
-        destination: &std::path::Path,
+        destination: &Path,
         _options: MultiSourceOptions,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<FetchReceipt> {
         for source in sources.drain(..) {
             match self
                 .try_source(&source, destination, &crate::FetchOptions::default())
@@ -72,9 +74,9 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
     async fn fetch_race(
         &self,
         sources: Vec<DownloadSource>,
-        destination: &std::path::Path,
+        destination: &Path,
         _options: MultiSourceOptions,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<FetchReceipt> {
         let mut futures = FuturesUnordered::new();
 
         for source in sources {
@@ -82,7 +84,7 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
             let dest = destination.to_path_buf();
             let future = async move {
                 fetcher
-                    .fetch(&source.url, &dest, crate::FetchOptions::default())
+                    .fetch_with_receipt(&source.url, &dest, crate::FetchOptions::default())
                     .await
             };
             futures.push(Box::pin(future));
@@ -101,9 +103,9 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
     async fn fetch_fastest(
         &self,
         sources: Vec<DownloadSource>,
-        destination: &std::path::Path,
+        destination: &Path,
         _options: MultiSourceOptions,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<FetchReceipt> {
         // For now, just use priority order
         // In a real implementation, we would measure response times
         self.fetch_priority(sources, destination, _options).await
@@ -113,9 +115,9 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
     async fn fetch_geographic(
         &self,
         sources: Vec<DownloadSource>,
-        destination: &std::path::Path,
+        destination: &Path,
         _options: MultiSourceOptions,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<FetchReceipt> {
         // For now, just use priority order
         // In a real implementation, we would use geographic information
         self.fetch_priority(sources, destination, _options).await
@@ -125,18 +127,148 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
     async fn try_source(
         &self,
         source: &DownloadSource,
-        destination: &std::path::Path,
+        destination: &Path,
         options: &crate::FetchOptions,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<FetchReceipt> {
         // Create fetch options for this source
         let mut fetch_options = options.clone();
         fetch_options.checksum = source.checksum;
 
         // Fetch using the base fetcher
         self.fetcher
-            .fetch(&source.url, destination, fetch_options)
+            .fetch_with_receipt(&source.url, destination, fetch_options)
             .await
     }
+
+    /// Fetch from a planned source set produced by `pulith-source`.
+    pub async fn fetch_planned_sources_with_receipt(
+        &self,
+        planned: &PlannedSources,
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        let candidates = planned.candidates();
+        if candidates.is_empty() {
+            return Err(Error::InvalidState(
+                "No planned source candidates provided".into(),
+            ));
+        }
+
+        match planned.strategy() {
+            SelectionStrategy::OrderedFallback | SelectionStrategy::Exhaustive => {
+                self.fetch_candidate_sequence(candidates, destination, options)
+                    .await
+            }
+            SelectionStrategy::Race => {
+                self.fetch_candidate_race(candidates, destination, options)
+                    .await
+            }
+        }
+    }
+
+    async fn fetch_candidate_sequence(
+        &self,
+        candidates: &[ResolvedSourceCandidate],
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        let mut last_error = None;
+        for candidate in candidates {
+            match self.try_candidate(candidate, destination, options).await {
+                Ok(path) => return Ok(path),
+                Err(error) => last_error = Some(error),
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| Error::Network("All planned candidates failed".to_string())))
+    }
+
+    async fn fetch_candidate_race(
+        &self,
+        candidates: &[ResolvedSourceCandidate],
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        let mut futures = FuturesUnordered::new();
+
+        for candidate in candidates.iter().cloned() {
+            let fetcher = self.fetcher.clone();
+            let dest = destination.to_path_buf();
+            let options = options.clone();
+            futures.push(Box::pin(async move {
+                match candidate {
+                    ResolvedSourceCandidate::Url(url) => {
+                        fetcher
+                            .fetch_with_receipt(url.as_url().as_ref(), &dest, options)
+                            .await
+                    }
+                    ResolvedSourceCandidate::LocalPath(path) => copy_local_candidate(&path, &dest),
+                    ResolvedSourceCandidate::Git { .. } => Err(Error::InvalidState(
+                        "git candidates are not executable by pulith-fetch yet".to_string(),
+                    )),
+                }
+            }));
+        }
+
+        let mut last_error = None;
+        while let Some(result) = futures.next().await {
+            match result {
+                Ok(path) => return Ok(path),
+                Err(error) => last_error = Some(error),
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| Error::Network("All planned candidates failed".to_string())))
+    }
+
+    async fn try_candidate(
+        &self,
+        candidate: &ResolvedSourceCandidate,
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        match candidate {
+            ResolvedSourceCandidate::Url(url) => {
+                self.fetcher
+                    .fetch_with_receipt(url.as_url().as_ref(), destination, options.clone())
+                    .await
+            }
+            ResolvedSourceCandidate::LocalPath(path) => copy_local_candidate(path, destination),
+            ResolvedSourceCandidate::Git { .. } => Err(Error::InvalidState(
+                "git candidates are not executable by pulith-fetch yet".to_string(),
+            )),
+        }
+    }
+}
+
+fn copy_local_candidate(source: &Path, destination: &Path) -> Result<FetchReceipt> {
+    if source.is_dir() {
+        return Err(Error::InvalidState(
+            "local directory candidates are not executable by pulith-fetch".to_string(),
+        ));
+    }
+
+    let temp_root = tempfile::tempdir().map_err(|error| Error::Network(error.to_string()))?;
+    let staging_dir = temp_root.path().join("local-copy");
+    let dest_dir = destination.parent().unwrap_or_else(|| Path::new("."));
+    let workspace = pulith_fs::Workspace::new(&staging_dir, dest_dir)?;
+    let file_name = destination
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("download"));
+    workspace.copy_file(source, file_name)?;
+    workspace.commit()?;
+    let size = std::fs::metadata(destination)
+        .map_err(|error| Error::Network(error.to_string()))?
+        .len();
+    Ok(FetchReceipt {
+        source: FetchSource::LocalPath(source.to_path_buf()),
+        destination: destination.to_path_buf(),
+        bytes_downloaded: size,
+        total_bytes: Some(size),
+        sha256_hex: None,
+    })
 }
 
 #[cfg(test)]
@@ -146,6 +278,10 @@ mod tests {
     use crate::net::http::BoxStream;
     use crate::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
     use bytes::Bytes;
+    use pulith_resource::ValidUrl;
+    use pulith_source::{
+        HttpAssetSource, LocalSource, SelectionStrategy, SourceDefinition, SourceSet, SourceSpec,
+    };
     use std::sync::Arc;
 
     // Mock error type that implements std::error::Error
@@ -228,7 +364,7 @@ mod tests {
         };
 
         let result = multi_fetcher
-            .fetch_multi_source(sources, destination, options)
+            .fetch_multi_source_with_receipt(sources, destination, options)
             .await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -256,7 +392,7 @@ mod tests {
         };
 
         let result = multi_fetcher
-            .fetch_multi_source(sources, destination, options)
+            .fetch_multi_source_with_receipt(sources, destination, options)
             .await;
         // The test will fail because we're using a real fetcher with mock client
         // but that's expected - we're just testing the structure
@@ -282,7 +418,7 @@ mod tests {
         };
 
         let result = multi_fetcher
-            .fetch_multi_source(sources, destination, options)
+            .fetch_multi_source_with_receipt(sources, destination, options)
             .await;
         // The test will fail because we're using a real fetcher with mock client
         // but that's expected - we're just testing the structure
@@ -308,7 +444,7 @@ mod tests {
         };
 
         let result = multi_fetcher
-            .fetch_multi_source(sources, destination, options)
+            .fetch_multi_source_with_receipt(sources, destination, options)
             .await;
         // The test will fail because we're using a real fetcher with mock client
         // but that's expected - we're just testing the structure
@@ -334,10 +470,83 @@ mod tests {
         };
 
         let result = multi_fetcher
-            .fetch_multi_source(sources, destination, options)
+            .fetch_multi_source_with_receipt(sources, destination, options)
             .await;
         // The test will fail because we're using a real fetcher with mock client
         // but that's expected - we're just testing the structure
         assert!(result.is_err() || result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_planned_sources_with_http_candidates() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = MockHttpClient::new();
+        let fetcher = Arc::new(Fetcher::new(client, temp.path().join("workspace")));
+        let multi_fetcher = MultiSourceFetcher::new(fetcher);
+
+        let planned = SourceSpec::new(
+            SourceSet::new(vec![
+                SourceDefinition::HttpAsset(HttpAssetSource {
+                    url: ValidUrl::parse("https://example.com/file").unwrap(),
+                    file_name: None,
+                }),
+                SourceDefinition::HttpAsset(HttpAssetSource {
+                    url: ValidUrl::parse("https://mirror.example.com/file").unwrap(),
+                    file_name: None,
+                }),
+            ])
+            .unwrap(),
+        )
+        .plan(SelectionStrategy::OrderedFallback);
+
+        let destination = temp.path().join("downloads").join("artifact.bin");
+        let result = multi_fetcher
+            .fetch_planned_sources_with_receipt(
+                &planned,
+                &destination,
+                &crate::FetchOptions::default(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert!(destination.exists());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_planned_sources_with_local_candidate() {
+        let destination_root = tempfile::tempdir().unwrap();
+        let source_root = tempfile::tempdir().unwrap();
+        let client = MockHttpClient::new();
+        let fetcher = Arc::new(Fetcher::new(
+            client,
+            destination_root.path().join("workspace"),
+        ));
+        let multi_fetcher = MultiSourceFetcher::new(fetcher);
+
+        let source_path = source_root.path().join("local.bin");
+        std::fs::write(&source_path, b"local-data").unwrap();
+        let destination = destination_root
+            .path()
+            .join("downloads")
+            .join("artifact.bin");
+
+        let planned = SourceSpec::new(
+            SourceSet::new(vec![SourceDefinition::Local(LocalSource {
+                path: source_path,
+            })])
+            .unwrap(),
+        )
+        .plan(SelectionStrategy::OrderedFallback);
+
+        let result = multi_fetcher
+            .fetch_planned_sources_with_receipt(
+                &planned,
+                &destination,
+                &crate::FetchOptions::default(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(std::fs::read(destination).unwrap(), b"local-data");
     }
 }

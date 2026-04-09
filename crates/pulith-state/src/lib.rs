@@ -1,6 +1,7 @@
 //! Transaction-backed persistent state for Pulith resources.
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use pulith_fs::{Transaction, atomic_write};
 use pulith_resource::{Metadata, ResolvedLocator, ResolvedVersion, ResourceId, VersionSelector};
@@ -18,6 +19,26 @@ pub enum StateError {
     Fs(#[from] pulith_fs::Error),
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceRecordPatch {
+    pub selector: Option<VersionSelector>,
+    pub resolved_version: Option<Option<ResolvedVersion>>,
+    pub locator: Option<Option<ResolvedLocator>>,
+    pub artifact_key: Option<Option<StoreKey>>,
+    pub install_path: Option<Option<PathBuf>>,
+    pub lifecycle: Option<ResourceLifecycle>,
+    pub metadata: Option<Metadata>,
+}
+
+impl ResourceRecordPatch {
+    pub fn lifecycle(lifecycle: ResourceLifecycle) -> Self {
+        Self {
+            lifecycle: Some(lifecycle),
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +85,70 @@ impl StateReady {
         Ok(next)
     }
 
+    pub fn get_resource_record(&self, id: &ResourceId) -> Result<Option<ResourceRecord>> {
+        Ok(self
+            .load()?
+            .resources
+            .into_iter()
+            .find(|record| &record.id == id))
+    }
+
+    pub fn list_activation_records(&self, id: &ResourceId) -> Result<Vec<ActivationRecord>> {
+        Ok(self
+            .load()?
+            .activations
+            .into_iter()
+            .filter(|record| &record.id == id)
+            .collect())
+    }
+
+    pub fn set_resource_lifecycle(
+        &self,
+        id: &ResourceId,
+        lifecycle: ResourceLifecycle,
+    ) -> Result<StateSnapshot> {
+        self.patch_resource_record(id, ResourceRecordPatch::lifecycle(lifecycle))
+    }
+
+    pub fn patch_resource_record(
+        &self,
+        id: &ResourceId,
+        patch: ResourceRecordPatch,
+    ) -> Result<StateSnapshot> {
+        self.update(|mut snapshot| {
+            if let Some(record) = snapshot
+                .resources
+                .iter_mut()
+                .find(|record| &record.id == id)
+            {
+                apply_patch(record, patch);
+            }
+            Ok(snapshot)
+        })
+    }
+
+    pub fn ensure_resource_record(
+        &self,
+        id: ResourceId,
+        selector: VersionSelector,
+    ) -> Result<StateSnapshot> {
+        self.update(|mut snapshot| {
+            if !snapshot.resources.iter().any(|record| record.id == id) {
+                snapshot.resources.push(ResourceRecord {
+                    id,
+                    selector,
+                    resolved_version: None,
+                    locator: None,
+                    artifact_key: None,
+                    install_path: None,
+                    lifecycle: ResourceLifecycle::Declared,
+                    metadata: Metadata::new(),
+                });
+            }
+            Ok(snapshot)
+        })
+    }
+
     pub fn upsert_resource_record(&self, record: ResourceRecord) -> Result<StateSnapshot> {
         self.update(|mut snapshot| {
             if let Some(existing) = snapshot
@@ -82,6 +167,28 @@ impl StateReady {
     pub fn append_activation(&self, activation: ActivationRecord) -> Result<StateSnapshot> {
         self.update(|mut snapshot| {
             snapshot.activations.push(activation);
+            Ok(snapshot)
+        })
+    }
+
+    pub fn record_activation(&self, id: &ResourceId, target: PathBuf) -> Result<StateSnapshot> {
+        self.append_activation(ActivationRecord {
+            id: id.clone(),
+            target,
+            activated_at_unix: now_unix(),
+        })
+    }
+
+    pub fn remove_resource_record(&self, id: &ResourceId) -> Result<StateSnapshot> {
+        self.update(|mut snapshot| {
+            snapshot.resources.retain(|record| &record.id != id);
+            Ok(snapshot)
+        })
+    }
+
+    pub fn remove_activation_records(&self, id: &ResourceId) -> Result<StateSnapshot> {
+        self.update(|mut snapshot| {
+            snapshot.activations.retain(|record| &record.id != id);
             Ok(snapshot)
         })
     }
@@ -122,6 +229,37 @@ pub struct ActivationRecord {
     pub id: ResourceId,
     pub target: PathBuf,
     pub activated_at_unix: u64,
+}
+
+fn apply_patch(record: &mut ResourceRecord, patch: ResourceRecordPatch) {
+    if let Some(selector) = patch.selector {
+        record.selector = selector;
+    }
+    if let Some(resolved_version) = patch.resolved_version {
+        record.resolved_version = resolved_version;
+    }
+    if let Some(locator) = patch.locator {
+        record.locator = locator;
+    }
+    if let Some(artifact_key) = patch.artifact_key {
+        record.artifact_key = artifact_key;
+    }
+    if let Some(install_path) = patch.install_path {
+        record.install_path = install_path;
+    }
+    if let Some(lifecycle) = patch.lifecycle {
+        record.lifecycle = lifecycle;
+    }
+    if let Some(metadata) = patch.metadata {
+        record.metadata = metadata;
+    }
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn load_from_transaction(tx: &Transaction) -> Result<StateSnapshot> {
@@ -212,5 +350,45 @@ mod tests {
 
         let snapshot = state.load().unwrap();
         assert_eq!(snapshot.resources[0].lifecycle, ResourceLifecycle::Resolved);
+    }
+
+    #[test]
+    fn ensure_patch_and_lookup_are_ergonomic() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let id = ResourceId::parse("example/runtime").unwrap();
+
+        state
+            .ensure_resource_record(id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id,
+                ResourceRecordPatch {
+                    lifecycle: Some(ResourceLifecycle::Resolved),
+                    install_path: Some(Some(PathBuf::from("/opt/runtime"))),
+                    ..ResourceRecordPatch::default()
+                },
+            )
+            .unwrap();
+
+        let record = state.get_resource_record(&id).unwrap().unwrap();
+        assert_eq!(record.lifecycle, ResourceLifecycle::Resolved);
+        assert_eq!(record.install_path, Some(PathBuf::from("/opt/runtime")));
+    }
+
+    #[test]
+    fn record_activation_appends_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let id = ResourceId::parse("example/runtime").unwrap();
+
+        state
+            .record_activation(&id, PathBuf::from("/active/runtime"))
+            .unwrap();
+
+        let activations = state.list_activation_records(&id).unwrap();
+        assert_eq!(activations.len(), 1);
+        assert_eq!(activations[0].target, PathBuf::from("/active/runtime"));
     }
 }

@@ -178,14 +178,14 @@ impl<C: HttpClient + 'static> ResumableFetcher<C> {
         // Perform the download
         let result = self
             .base_fetcher
-            .fetch(url, destination, options_with_checkpoint)
+            .fetch_with_receipt(url, destination, options_with_checkpoint)
             .await;
 
         match result {
-            Ok(path) => {
+            Ok(receipt) => {
                 // Download successful, remove checkpoint
                 let _ = fs::remove_file(checkpoint_path).await;
-                Ok(path)
+                Ok(receipt.destination)
             }
             Err(e) => {
                 // Download failed, checkpoint remains for resuming
@@ -273,14 +273,14 @@ impl<C: HttpClient + 'static> ResumableFetcher<C> {
         // Resume the download
         let result = self
             .base_fetcher
-            .fetch(&checkpoint.url, &checkpoint.destination, resume_options)
+            .fetch_with_receipt(&checkpoint.url, &checkpoint.destination, resume_options)
             .await;
 
         match result {
-            Ok(path) => {
+            Ok(receipt) => {
                 // Download successful, remove checkpoint
                 let _ = fs::remove_file(checkpoint_path).await;
-                Ok(path)
+                Ok(receipt.destination)
             }
             Err(e) => {
                 // Download failed, checkpoint remains

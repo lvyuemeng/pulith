@@ -24,6 +24,7 @@ It guarantees the backing file exists and can be used through `pulith-fs::Transa
 - `StateReady`
 - `StateSnapshot`
 - `ResourceRecord`
+- `ResourceRecordPatch`
 - `ResourceLifecycle`
 - `ActivationRecord`
 
@@ -32,6 +33,7 @@ It guarantees the backing file exists and can be used through `pulith-fs::Transa
 - JSON by default
 - transaction-backed load/save/update operations
 - caller-facing records remain semantic and composable
+- ergonomic helpers for ensure / lookup / patch / lifecycle updates
 
 ## Design Boundary
 

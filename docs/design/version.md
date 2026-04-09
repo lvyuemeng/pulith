@@ -1,6 +1,6 @@
 # pulith-version
 
-Version parsing, comparison, display. SemVer, CalVer, partial versions. Pure core, no I/O.
+Version parsing, comparison, requirement matching, and preference selection. SemVer, CalVer, partial versions. Pure core, no I/O.
 
 ## API
 
@@ -9,6 +9,8 @@ Version parsing, comparison, display. SemVer, CalVer, partial versions. Pure cor
 VersionKind { SemVer(semver::Version), CalVer(CalVer), Partial(Partial) }
 
 VersionKind::parse("1.2.3") -> Result<VersionKind, VersionError>;
+VersionRequirement::parse("^1.2")?;
+select_preferred(&versions, &SelectionPolicy::default());
 
 // SemVer (uses semver::Version internally)
 VersionKind::SemVer(semver::Version::parse("1.2.3")?)
@@ -33,11 +35,22 @@ Partial: 18, 3.11, 3.11.0, 18lts
 ## Example
 
 ```rust
-use pulith_version::VersionKind;
+use pulith_version::{SelectionPolicy, VersionKind, VersionRequirement, select_preferred};
 
 let v1: VersionKind = "1.2.3".parse().unwrap();
 let v2: VersionKind = "2.0.0".parse().unwrap();
 assert!(v1 < v2);
+
+let versions = vec![v1, v2];
+let selected = select_preferred(
+    &versions,
+    &SelectionPolicy {
+        requirement: VersionRequirement::parse(">=1.0.0").unwrap(),
+        preference: pulith_version::VersionPreference::Latest,
+    },
+)
+.unwrap();
+assert_eq!(selected.to_string(), "2.0.0");
 ```
 
 ## Dependencies

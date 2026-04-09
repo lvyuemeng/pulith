@@ -18,7 +18,7 @@ The foundational crates now exist. The roadmap is no longer about adding missing
 ### 1. Tighten Integration Between Existing Crates
 
 - make `pulith-source` feed planned candidates directly into `pulith-fetch`
-- make `pulith-fetch` outputs convert cleanly into store handles
+- make `pulith-fetch` outputs convert cleanly into store and install handoff types
 - reduce path-level glue between `pulith-fetch`, `pulith-store`, `pulith-archive`, and `pulith-install`
 - standardize receipts and handoff types across pipeline stages
 
@@ -38,6 +38,11 @@ The foundational crates now exist. The roadmap is no longer about adding missing
 - add preference selection (`latest`, `lts`, exact, compatible, pinned)
 - connect those semantics to `pulith-resource` and `pulith-source`
 
+Current progress:
+
+- typed version requirements and preference selection now exist in `pulith-version`
+- `pulith-resource` version selectors now use typed requirements instead of raw strings
+
 ### 4. Add Integrated Testing
 
 - end-to-end pipeline tests across crates
@@ -45,6 +50,12 @@ The foundational crates now exist. The roadmap is no longer about adding missing
 - persistence and recovery tests
 - activation idempotence tests
 - source/fetch/store/install integration tests
+
+Current progress:
+
+- workspace integration tests now cover local source -> fetch -> store -> install -> activate
+- archive extract -> store -> install is now covered end-to-end
+- repeated activation switching is now covered at the workflow level
 
 ### 5. Add Performance Validation
 
@@ -78,7 +89,7 @@ The roadmap assumes integration tightening, not crate collapse.
 1. Connect `pulith-source` planning directly into `pulith-fetch`.
 2. Define shared receipts and handoff types across fetch, store, archive, and install.
 3. Add rollback / replace / upgrade semantics to `pulith-install`.
-4. Extend `pulith-version` with requirement matching and preference selection.
+4. Connect `pulith-version` selection semantics more directly into `pulith-source` and install planning.
 5. Add end-to-end workspace integration tests.
 
 ### Mid-Term
@@ -88,11 +99,27 @@ The roadmap assumes integration tightening, not crate collapse.
 3. Add shim-oriented activator adapters for `pulith-install`.
 4. Benchmark and optimize copy-heavy pipeline transitions.
 
+Current progress:
+
+- `pulith-store` now supports artifact/extract lookup
+- provenance can be persisted in store metadata sidecars
+- orphaned metadata can be pruned without binding store layout to install policy
+- `pulith-state` now supports higher-level ensure / lookup / patch / lifecycle helpers
+- store import and install staging now prefer hardlink-or-copy to reduce redundant file copies
+- `pulith-install` now has shim-oriented activation adapters built on `pulith-shim::TargetResolver`
+
 ### Later
 
 1. Add thin backend example crates to validate the adapter-first architecture.
 2. Revisit state storage structure only if benchmarks show snapshot rewriting is a real bottleneck.
 3. Add optional migration / backup / trust-policy extensions once the core pipeline is stable.
+
+Current progress:
+
+- `pulith-backend-example` now demonstrates a thin adapter built on `pulith-resource`, `pulith-source`, and `pulith-install`
+- the example backend shapes specs and activators without absorbing fetch/store/state policy into a framework
+- `pulith-state` now has a dedicated `state_growth` benchmark for save/update cost across larger snapshots
+- `pulith-install` now has optional backup/restore helpers for install roots and matching state facts
 
 ## Integrated Test Plan
 

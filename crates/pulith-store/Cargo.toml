@@ -9,6 +9,6 @@ pulith-fs = { path = "../pulith-fs" }
 pulith-resource = { path = "../pulith-resource" }
 
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
-hex.workspace = true
 tempfile.workspace = true

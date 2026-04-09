@@ -36,7 +36,7 @@ Pulith now has four logical layers:
 ### 1. Primitive Layer
 
 - `pulith-platform`: small cross-platform helpers
-- `pulith-version`: version parsing and comparison
+- `pulith-version`: version parsing, comparison, and selection
 - `pulith-fs`: atomic file and workspace primitives
 - `pulith-verify`: verification primitives
 - `pulith-archive`: archive extraction primitives
@@ -57,12 +57,16 @@ Pulith now has four logical layers:
 
 - `pulith-source`: source definitions, planning, and expansion
 
+### 5. Backend Example Layer
+
+- `pulith-backend-example`: thin adapter example built on top of resource, source, and install crates
+
 ## Active Crates
 
 | crate | maturity | role |
 |-------|----------|------|
 | `pulith-platform` | stable core | cross-platform helpers |
-| `pulith-version` | stable core | version parsing |
+| `pulith-version` | stable core | version parsing and selection |
 | `pulith-shim` | stable core | shim resolution |
 | `pulith-fs` | maturing core | atomic filesystem and workspace primitives |
 | `pulith-verify` | stable core | content verification |
@@ -73,6 +77,7 @@ Pulith now has four logical layers:
 | `pulith-state` | emerging core | persistent lifecycle state |
 | `pulith-install` | emerging core | installation workflow |
 | `pulith-source` | emerging core | source planning |
+| `pulith-backend-example` | example | adapter-first backend composition |
 
 ## Dependency Shape
 
@@ -90,6 +95,7 @@ Current high-level relationships:
 - `pulith-state` depends on `pulith-fs`, `pulith-resource`, and `pulith-store`
 - `pulith-install` depends on `pulith-fs`, `pulith-resource`, `pulith-store`, and `pulith-state`
 - `pulith-source` depends on `pulith-resource`
+- `pulith-backend-example` depends on `pulith-resource`, `pulith-source`, and `pulith-install`
 
 ## Current Assessment
 
@@ -110,7 +116,7 @@ The main issue is no longer missing layers. The main issue is integration maturi
 - `pulith-fetch` still mixes a dependable simple path with less mature advanced policy surfaces
 - the bridge between `pulith-source`, `pulith-fetch`, `pulith-store`, and `pulith-install` is thinner than it should be
 - some lifecycle transitions still require too much caller-side record construction and path-level glue
-- `pulith-version` is still stronger at parsing than at selection and requirement matching
+- `pulith-version` now has typed requirement and preference primitives, but still needs stronger integration across the full resource pipeline
 - `pulith-state` is intentionally simple, but snapshot rewriting may become expensive for larger registries
 
 ## Crate Re-evaluation
@@ -131,13 +137,13 @@ Merging these would reduce composability and make the shared model more rigid.
 - `pulith-fetch` should emit receipts that convert naturally into store handles
 - `pulith-store` and `pulith-install` should share clearer handoff types
 - `pulith-install` should gain shim-oriented activators without embedding shim policy into `pulith-shim`
-- `pulith-resource` should integrate more strongly with future `pulith-version` requirement semantics
+- `pulith-resource` should keep tightening its version selector around `pulith-version` semantics
 
 ### Crates That Need the Most Refactor Attention
 
 - `pulith-fetch`: make advanced execution modes explicit and trustworthy
 - `pulith-install`: add upgrade and rollback semantics
-- `pulith-version`: add requirement matching and preference selection
+- `pulith-version`: deepen integration of requirement matching and preference selection across callers
 - `pulith-state`: monitor snapshot scaling and avoid premature complexity until benchmarks justify change
 
 ## Practicality and Ergonomics
@@ -166,6 +172,12 @@ Priority areas:
 - benchmark advanced fetch modes instead of assuming concurrency helps
 - avoid rematerializing extracted trees when store ownership is already sufficient
 
+Current progress:
+
+- store import and install staging now prefer hardlink-or-copy where the filesystem allows it
+- copy-heavy transitions still need measurement, but the default path is now less wasteful on same-device flows
+- `pulith-state` now has dedicated growth benchmarks so snapshot rewriting cost can be measured before changing storage architecture
+
 ## Integrated Testing Direction
 
 The next quality step is more integrated testing, not more crate surface.
@@ -193,7 +205,7 @@ Required test layers:
 1. connect `pulith-source` planning directly to `pulith-fetch`
 2. define shared receipts and handoff types across fetch, store, archive, and install
 3. add replace / upgrade / rollback semantics to `pulith-install`
-4. extend `pulith-version` with requirement matching and preference selection
+4. integrate `pulith-version` selection semantics more directly into source and install flows
 5. add workspace-level end-to-end integration tests
 
 ## Architectural Conclusion

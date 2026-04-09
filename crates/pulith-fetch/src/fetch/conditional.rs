@@ -82,17 +82,20 @@ impl<C: HttpClient + 'static> ConditionalFetcher<C> {
         }
 
         // Perform the download
-        let result = self.base_fetcher.fetch(url, destination, options).await;
+        let result = self
+            .base_fetcher
+            .fetch_with_receipt(url, destination, options)
+            .await;
 
         match result {
-            Ok(path) => {
+            Ok(receipt) => {
                 // Store metadata for future conditional requests
                 if conditional_options.store_metadata {
                     let _ = self
                         .store_metadata(url, destination, &remote_metadata)
                         .await;
                 }
-                Ok(Some(path))
+                Ok(Some(receipt.destination))
             }
             Err(e) => Err(e),
         }

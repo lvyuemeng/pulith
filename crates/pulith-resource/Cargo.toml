@@ -5,6 +5,7 @@ edition = "2024"
 description = "Composable resource description types for Pulith"
 
 [dependencies]
+pulith-version = { path = "../pulith-version" }
 serde.workspace = true
 thiserror.workspace = true
 url.workspace = true

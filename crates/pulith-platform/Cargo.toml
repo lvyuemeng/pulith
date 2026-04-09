@@ -8,6 +8,6 @@ pulith-fs = { path = "../pulith-fs" }
 
 home = "0.5"
 query-shell = "0.3"
-once_cell = "1.21"
+once_cell.workspace = true
 thiserror.workspace = true
 

@@ -21,6 +21,9 @@ Creation ensures required directories exist before callers can write artifacts o
 - `StoreKey`
 - `StoredArtifact`
 - `ExtractedArtifact`
+- `StoreProvenance`
+- `StoreMetadataRecord`
+- `PruneReport`
 - `KeyDerivation`
 
 ## Storage Philosophy
@@ -35,5 +38,8 @@ Creation ensures required directories exist before callers can write artifacts o
 - artifact byte storage
 - extracted directory registration
 - deterministic relative naming from semantic keys
+- metadata-backed provenance lookup
+- orphaned metadata pruning
+- hardlink-or-copy artifact import to reduce unnecessary copying on the same filesystem
 
 Future policies like retention and pruning stay outside the core type model until they are better understood.

@@ -128,7 +128,7 @@ async fn test_large_file_performance() {
     }));
 
     let result = fetcher
-        .fetch(
+        .fetch_with_receipt(
             "http://example.com/large-file",
             &destination,
             options_with_callback,
@@ -141,7 +141,7 @@ async fn test_large_file_performance() {
 
     let elapsed = start_time.elapsed();
 
-    let actual_path = result.unwrap();
+    let actual_path = result.unwrap().destination;
     println!("Requested destination: {:?}", destination);
     println!("Actual path returned: {:?}", actual_path);
     println!("Actual path exists: {}", actual_path.exists());
@@ -215,7 +215,7 @@ async fn test_concurrent_performance() {
             let start_time = Instant::now();
 
             let result = fetcher
-                .fetch(
+                .fetch_with_receipt(
                     &format!("http://example.com/concurrent-{}", i),
                     &destination,
                     options,
@@ -295,7 +295,7 @@ async fn test_memory_usage_under_load() {
 
             let options = FetchOptions::default();
             fetcher
-                .fetch(
+                .fetch_with_receipt(
                     &format!("http://example.com/memory-test-{}", i),
                     &destination,
                     options,
@@ -386,7 +386,7 @@ async fn test_performance_scaling() {
         let start_time = Instant::now();
 
         let result = fetcher
-            .fetch("http://example.com/scale-test", &destination, options)
+            .fetch_with_receipt("http://example.com/scale-test", &destination, options)
             .await;
         let elapsed = start_time.elapsed();
 

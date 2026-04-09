@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use futures_util::StreamExt;
 use pulith_fs::workflow::Workspace;
 use pulith_verify::{Hasher, Sha256Hasher};
+use serde::{Deserialize, Serialize};
 
 use crate::config::{FetchOptions, FetchPhase};
 use crate::error::{Error, Result};
@@ -14,6 +15,21 @@ use crate::progress::Progress;
 pub struct Fetcher<C: HttpClient> {
     pub(crate) client: C,
     workspace_root: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FetchSource {
+    Url(String),
+    LocalPath(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchReceipt {
+    pub source: FetchSource,
+    pub destination: PathBuf,
+    pub bytes_downloaded: u64,
+    pub total_bytes: Option<u64>,
+    pub sha256_hex: Option<String>,
 }
 
 impl<C: HttpClient> Fetcher<C> {
@@ -33,16 +49,16 @@ impl<C: HttpClient> Fetcher<C> {
             .map_err(|e| Error::Network(e.to_string()))
     }
 
-    /// Fetch a file from the given URL and save it to the destination.
+    /// Fetch a file from the given URL and return a typed receipt.
     ///
     /// This function downloads the file with progress reporting, verification,
     /// and atomic placement using pulith-fs workspace.
-    pub async fn fetch(
+    pub async fn fetch_with_receipt(
         &self,
         url: &str,
         destination: &Path,
         options: FetchOptions,
-    ) -> Result<PathBuf> {
+    ) -> Result<FetchReceipt> {
         let start_time = std::time::Instant::now();
         let mut performance_metrics = PerformanceMetrics::default();
 
@@ -169,14 +185,14 @@ impl<C: HttpClient> Fetcher<C> {
             },
         );
 
-        if let Some(expected_checksum) = options.checksum {
-            let actual_checksum = hasher.finalize();
-            if actual_checksum != expected_checksum {
-                return Err(Error::ChecksumMismatch {
-                    expected: hex::encode(expected_checksum),
-                    actual: hex::encode(actual_checksum),
-                });
-            }
+        let actual_checksum = hasher.finalize();
+        if let Some(expected_checksum) = options.checksum
+            && actual_checksum != expected_checksum
+        {
+            return Err(Error::ChecksumMismatch {
+                expected: hex::encode(expected_checksum),
+                actual: hex::encode(actual_checksum),
+            });
         }
 
         let verifying_duration = verifying_start.elapsed();
@@ -215,7 +231,13 @@ impl<C: HttpClient> Fetcher<C> {
             },
         );
 
-        Ok(destination.to_path_buf())
+        Ok(FetchReceipt {
+            source: FetchSource::Url(url.to_string()),
+            destination: destination.to_path_buf(),
+            bytes_downloaded,
+            total_bytes,
+            sha256_hex: Some(hex::encode(actual_checksum)),
+        })
     }
 
     /// Report progress if callback is configured.
@@ -231,13 +253,14 @@ impl<C: HttpClient> Fetcher<C> {
         source: &crate::DownloadSource,
         destination: &Path,
         options: &FetchOptions,
-    ) -> Result<PathBuf> {
+    ) -> Result<FetchReceipt> {
         // Create fetch options for this source
         let mut fetch_options = options.clone();
         fetch_options.checksum = source.checksum;
 
         // Fetch using the base fetcher
-        self.fetch(&source.url, destination, fetch_options).await
+        self.fetch_with_receipt(&source.url, destination, fetch_options)
+            .await
     }
 }
 
@@ -377,7 +400,7 @@ mod tests {
         let options = FetchOptions::default();
 
         // Note: This test might fail due to workspace operations, but we're testing the structure
-        let result = fetcher.fetch(url, &destination, options).await;
+        let result = fetcher.fetch_with_receipt(url, &destination, options).await;
         // The result could be ok or err depending on workspace setup
         // We're just testing that it doesn't panic
         assert!(result.is_ok() || result.is_err());
@@ -401,7 +424,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _result = fetcher.fetch(url, &destination, options).await;
+        let _result = fetcher.fetch_with_receipt(url, &destination, options).await;
         // The callback might be called depending on how far the fetch gets
         // We're just testing that the option is accepted
         let _ = progress_called.load(std::sync::atomic::Ordering::Relaxed);

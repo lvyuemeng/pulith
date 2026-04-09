@@ -43,7 +43,9 @@ The most dependable path today is the base single-source fetch flow:
 let client = ReqwestClient::new()?;
 let fetcher = Fetcher::new(client, temp_root);
 
-let path = fetcher.fetch(url, destination, FetchOptions::default()).await?;
+let receipt = fetcher
+    .fetch_with_receipt(url, destination, FetchOptions::default())
+    .await?;
 ```
 
 This flow is the baseline Pulith fetch contract:
@@ -52,6 +54,7 @@ This flow is the baseline Pulith fetch contract:
 - optional verification hooks
 - atomic placement through `pulith-fs::Workspace`
 - progress callbacks through explicit caller-provided hooks
+- typed `FetchReceipt` handoff for higher workflow layers
 
 ## Advanced Fetchers
 
@@ -64,6 +67,8 @@ The crate also exposes higher-level fetchers:
 - `BatchFetcher`
 
 These are part of the intended design, but they should currently be treated as maturing APIs rather than fully proven policy engines.
+
+`MultiSourceFetcher` now also accepts planned candidates from `pulith-source`, so source planning can stay in `pulith-source` while transfer execution stays in `pulith-fetch`.
 
 ## Design Boundaries
 
@@ -84,6 +89,8 @@ These are part of the intended design, but they should currently be treated as m
 - activation logic
 - long-term registry/state schema
 
+`pulith-fetch` should consume planned source candidates, not become the planning layer itself.
+
 Those responsibilities belong in higher-level crates built later.
 
 ## Current Maturity Assessment
@@ -94,6 +101,8 @@ Working baseline:
 - module structure is aligned with the current codebase
 - strict clippy on `--all-targets --all-features` is now realistic
 - base fetch flow, progress plumbing, throttling helpers, and checksum-related utilities are usable
+- source planning can now feed directly into multi-source fetch execution
+- fetch execution can now hand a typed receipt to higher layers instead of only returning a path
 
 Still maturing:
 

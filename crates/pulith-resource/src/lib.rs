@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use pulith_version::{VersionKind, VersionRequirement};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
@@ -97,9 +98,9 @@ impl ValidUrl {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VersionSelector {
-    Exact(String),
+    Exact(VersionKind),
     Alias(String),
-    Requirement(String),
+    Requirement(VersionRequirement),
     Unspecified,
 }
 
@@ -107,7 +108,9 @@ impl VersionSelector {
     pub fn exact(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         ensure_non_empty(&value)?;
-        Ok(Self::Exact(value))
+        Ok(Self::Exact(
+            VersionKind::parse(&value).map_err(|_| ResourceError::EmptyValue)?,
+        ))
     }
 
     pub fn alias(value: impl Into<String>) -> Result<Self> {
@@ -119,7 +122,9 @@ impl VersionSelector {
     pub fn requirement(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         ensure_non_empty(&value)?;
-        Ok(Self::Requirement(value))
+        Ok(Self::Requirement(
+            VersionRequirement::parse(&value).map_err(|_| ResourceError::EmptyValue)?,
+        ))
     }
 }
 
