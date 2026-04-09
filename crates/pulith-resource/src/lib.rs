@@ -39,6 +39,10 @@ pub enum ResourceError {
     EmptyTrustHost,
     #[error("trust metadata key must not be empty")]
     EmptyTrustMetadataKey,
+    #[error("resolved version is not parseable for selector matching: {0}")]
+    InvalidResolvedVersion(String),
+    #[error("resolved version `{version}` does not satisfy selector `{selector}`")]
+    ResolvedVersionMismatch { selector: String, version: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -129,6 +133,25 @@ impl VersionSelector {
         Ok(Self::Requirement(
             VersionRequirement::parse(&value).map_err(|_| ResourceError::EmptyValue)?,
         ))
+    }
+
+    pub fn matches_resolved_version(&self, version: &ResolvedVersion) -> Result<bool> {
+        match self {
+            Self::Exact(expected) => Ok(expected == &parse_resolved_version(version)?),
+            Self::Requirement(requirement) => {
+                Ok(requirement.matches(&parse_resolved_version(version)?))
+            }
+            Self::Alias(_) | Self::Unspecified => Ok(true),
+        }
+    }
+
+    pub fn as_label(&self) -> String {
+        match self {
+            Self::Exact(version) => version.to_string(),
+            Self::Alias(alias) => alias.clone(),
+            Self::Requirement(requirement) => format!("{requirement:?}"),
+            Self::Unspecified => "*".to_string(),
+        }
     }
 }
 
@@ -463,6 +486,26 @@ impl ResolvedResource {
             &self.spec.verification,
         )
     }
+
+    pub fn validate_version_selection(&self) -> Result<()> {
+        if self
+            .spec
+            .version
+            .matches_resolved_version(&self.state.version)?
+        {
+            Ok(())
+        } else {
+            Err(ResourceError::ResolvedVersionMismatch {
+                selector: self.spec.version.as_label(),
+                version: self.state.version.as_str().to_string(),
+            })
+        }
+    }
+}
+
+fn parse_resolved_version(version: &ResolvedVersion) -> Result<VersionKind> {
+    VersionKind::parse(version.as_str())
+        .map_err(|_| ResourceError::InvalidResolvedVersion(version.as_str().to_string()))
 }
 
 fn anchor_matches(
@@ -554,6 +597,27 @@ mod tests {
         );
 
         assert_eq!(resolved.version().as_str(), "20.12.1");
+        assert!(resolved.validate_version_selection().is_ok());
+    }
+
+    #[test]
+    fn resolved_resource_rejects_requirement_mismatch() {
+        let spec = ResourceSpec::new(
+            ResourceId::parse("nodejs.org/node").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/node.zip").unwrap()),
+        )
+        .version(VersionSelector::requirement("^1.2").unwrap());
+
+        let resolved = RequestedResource::new(spec).resolve(
+            ResolvedVersion::new("2.0.0").unwrap(),
+            ResolvedLocator::Url(ValidUrl::parse("https://mirror.example.com/node.zip").unwrap()),
+            None,
+        );
+
+        assert!(matches!(
+            resolved.validate_version_selection(),
+            Err(ResourceError::ResolvedVersionMismatch { .. })
+        ));
     }
 
     #[test]

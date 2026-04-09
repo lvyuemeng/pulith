@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use pulith_fs::{FallBack, HardlinkOrCopyOptions, Workspace};
+use pulith_fs::{DEFAULT_COPY_ONLY_THRESHOLD_BYTES, FallBack, HardlinkOrCopyOptions, Workspace};
 use pulith_store::{StoreKey, StoreReady, StoreRoots, StoredArtifact};
 
 struct TransitionContext {
@@ -26,7 +26,7 @@ impl TransitionMode {
             Self::CopyOnly => "copy_only",
             Self::Adaptive { threshold_bytes } => match threshold_bytes {
                 ADAPTIVE_1M_THRESHOLD_BYTES => "adaptive_1m",
-                COPY_ONLY_THRESHOLD_BYTES => "adaptive_4m",
+                DEFAULT_COPY_ONLY_THRESHOLD_BYTES => "adaptive_4m",
                 ADAPTIVE_8M_THRESHOLD_BYTES => "adaptive_8m",
                 _ => "adaptive_custom",
             },
@@ -35,7 +35,6 @@ impl TransitionMode {
 }
 
 const ADAPTIVE_1M_THRESHOLD_BYTES: u64 = 1024 * 1024;
-const COPY_ONLY_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
 const ADAPTIVE_8M_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
 
 fn setup_context(size: usize) -> TransitionContext {
@@ -180,7 +179,7 @@ fn bench_copy_transition(c: &mut Criterion) {
                 threshold_bytes: ADAPTIVE_1M_THRESHOLD_BYTES,
             },
             TransitionMode::Adaptive {
-                threshold_bytes: COPY_ONLY_THRESHOLD_BYTES,
+                threshold_bytes: DEFAULT_COPY_ONLY_THRESHOLD_BYTES,
             },
             TransitionMode::Adaptive {
                 threshold_bytes: ADAPTIVE_8M_THRESHOLD_BYTES,

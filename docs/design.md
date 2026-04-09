@@ -185,6 +185,8 @@ Current progress:
 - current benchmark runs indicate the crossover favors copy-only for small files but shifts toward hardlink-or-copy once artifacts reach larger multi-megabyte sizes
 - store/import/install paths now apply that evidence with a size-threshold strategy rather than always attempting hardlinks first
 - additional threshold-variant benchmarks now exist for tuning, though current results are noisy enough that the chosen cutoff should remain provisional until repeated on calmer filesystems/CI runners
+- `pulith-install` now exposes a typed fetch-receipt to stored-install-input bridge so callers need less manual path and file-name glue
+- resource/source/install integration now carries more version intent: source specs can be derived from resources directly, and install staging validates resolved versions against exact and requirement selectors
 
 ## Integrated Testing Direction
 

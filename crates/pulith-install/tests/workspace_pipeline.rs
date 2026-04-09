@@ -11,7 +11,7 @@ use pulith_resource::{
     RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
     ValidUrl,
 };
-use pulith_source::{SelectionStrategy, SourceSpec};
+use pulith_source::SourceSpec;
 use pulith_state::{ResourceLifecycle, ResourceRecordPatch, StateReady};
 use pulith_store::{StoreKey, StoreReady, StoreRoots};
 
@@ -53,9 +53,7 @@ fn local_source_fetch_store_install_activate_pipeline() {
     fs::write(&local_source_path, b"runtime-binary").unwrap();
 
     let resource = resolved_resource(ResourceLocator::LocalPath(local_source_path.clone()));
-    let planned = SourceSpec::from_locator(&resource.spec().locator)
-        .unwrap()
-        .plan(SelectionStrategy::OrderedFallback);
+    let spec = SourceSpec::from_resolved_resource(&resource).unwrap();
 
     let fetcher = Fetcher::new(
         ReqwestClient::new().unwrap(),
@@ -66,8 +64,9 @@ fn local_source_fetch_store_install_activate_pipeline() {
         .unwrap()
         .block_on(async {
             multi
-                .fetch_planned_sources_with_receipt(
-                    &planned,
+                .fetch_source_spec_with_receipt(
+                    spec,
+                    pulith_source::SelectionStrategy::OrderedFallback,
                     &temp.path().join("downloads/runtime.bin"),
                     &pulith_fetch::FetchOptions::default(),
                 )
@@ -81,12 +80,12 @@ fn local_source_fetch_store_install_activate_pipeline() {
         temp.path().join("store/metadata"),
     ))
     .unwrap();
-    let stored = store
-        .import_artifact(
-            &StoreKey::logical("runtime-bin").unwrap(),
-            &fetched.destination,
-        )
-        .unwrap();
+    let install_input = InstallInput::store_fetched_artifact(
+        &store,
+        &StoreKey::logical("runtime-bin").unwrap(),
+        &fetched,
+    )
+    .unwrap();
 
     let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
     let ready = InstallReady::new(state.clone());
@@ -94,10 +93,7 @@ fn local_source_fetch_store_install_activate_pipeline() {
         ready,
         InstallSpec::new(
             resource,
-            InstallInput::StoredArtifact {
-                artifact: stored,
-                file_name: "runtime.bin".to_string(),
-            },
+            install_input,
             temp.path().join("installs/runtime"),
         )
         .activation(ActivationTarget {

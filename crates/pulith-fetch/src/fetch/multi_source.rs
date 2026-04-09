@@ -4,7 +4,7 @@
 //! with different strategies for source selection and fallback.
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use pulith_source::{PlannedSources, ResolvedSourceCandidate, SelectionStrategy};
+use pulith_source::{PlannedSources, ResolvedSourceCandidate, SelectionStrategy, SourceSpec};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -164,6 +164,19 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
                     .await
             }
         }
+    }
+
+    /// Plan and fetch a source specification produced by `pulith-source`.
+    pub async fn fetch_source_spec_with_receipt(
+        &self,
+        spec: SourceSpec,
+        strategy: SelectionStrategy,
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        let planned = spec.plan(strategy);
+        self.fetch_planned_sources_with_receipt(&planned, destination, options)
+            .await
     }
 
     async fn fetch_candidate_sequence(
@@ -503,6 +516,35 @@ mod tests {
         let result = multi_fetcher
             .fetch_planned_sources_with_receipt(
                 &planned,
+                &destination,
+                &crate::FetchOptions::default(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert!(destination.exists());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_source_spec_with_receipt_plans_and_fetches() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = MockHttpClient::new();
+        let fetcher = Arc::new(Fetcher::new(client, temp.path().join("workspace")));
+        let multi_fetcher = MultiSourceFetcher::new(fetcher);
+
+        let spec = SourceSpec::new(
+            SourceSet::new(vec![SourceDefinition::HttpAsset(HttpAssetSource {
+                url: ValidUrl::parse("https://example.com/file").unwrap(),
+                file_name: None,
+            })])
+            .unwrap(),
+        );
+
+        let destination = temp.path().join("downloads").join("artifact.bin");
+        let result = multi_fetcher
+            .fetch_source_spec_with_receipt(
+                spec,
+                SelectionStrategy::OrderedFallback,
                 &destination,
                 &crate::FetchOptions::default(),
             )

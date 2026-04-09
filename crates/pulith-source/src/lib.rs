@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use pulith_resource::{ResolvedResource, ResourceLocator, ValidUrl};
+use pulith_resource::{RequestedResource, ResolvedResource, ResourceLocator, ValidUrl};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -143,6 +143,14 @@ impl SourceSpec {
         Ok(Self::new(set))
     }
 
+    pub fn from_requested_resource(resource: &RequestedResource) -> Result<Self> {
+        Self::from_locator(&resource.spec().locator)
+    }
+
+    pub fn from_resolved_resource(resource: &ResolvedResource) -> Result<Self> {
+        Self::from_locator(&resource.spec().locator)
+    }
+
     pub fn plan(self, strategy: SelectionStrategy) -> PlannedSources {
         let candidates = self
             .set
@@ -251,6 +259,39 @@ mod tests {
         let spec = SourceSpec::from_locator(&locator).unwrap();
         let planned = spec.plan(SelectionStrategy::OrderedFallback);
         assert_eq!(planned.candidates().len(), 2);
+    }
+
+    #[test]
+    fn source_spec_can_be_built_from_requested_resource() {
+        let requested = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+        ));
+
+        let planned = SourceSpec::from_requested_resource(&requested)
+            .unwrap()
+            .plan(SelectionStrategy::OrderedFallback);
+
+        assert_eq!(planned.candidates().len(), 1);
+    }
+
+    #[test]
+    fn source_spec_can_be_built_from_resolved_resource() {
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::LocalPath(PathBuf::from("/tmp/runtime.bin")),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::LocalPath(PathBuf::from("/tmp/runtime.bin")),
+            None,
+        );
+
+        let planned = SourceSpec::from_resolved_resource(&resolved)
+            .unwrap()
+            .plan(SelectionStrategy::OrderedFallback);
+
+        assert_eq!(planned.candidates().len(), 1);
     }
 
     #[test]

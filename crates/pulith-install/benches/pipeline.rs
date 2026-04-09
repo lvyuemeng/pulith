@@ -13,7 +13,7 @@ use pulith_resource::{
     RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
     ValidUrl,
 };
-use pulith_source::{SelectionStrategy, SourceSpec};
+use pulith_source::SourceSpec;
 use pulith_state::StateReady;
 use pulith_store::{StoreKey, StoreReady, StoreRoots};
 
@@ -79,7 +79,7 @@ impl HttpClient for BenchHttpClient {
 struct FetchPipelineContext {
     _temp: tempfile::TempDir,
     multi: MultiSourceFetcher<BenchHttpClient>,
-    planned: pulith_source::PlannedSources,
+    spec: SourceSpec,
     store: StoreReady,
     ready: InstallReady,
     resource: pulith_resource::ResolvedResource,
@@ -130,9 +130,7 @@ fn resolved_archive_resource(version: &str) -> pulith_resource::ResolvedResource
 fn setup_fetch_pipeline(size: usize) -> FetchPipelineContext {
     let temp = tempfile::tempdir().unwrap();
     let resource = resolved_fetch_resource("https://example.com/runtime.bin", "1.0.0");
-    let planned = SourceSpec::from_locator(&resource.spec().locator)
-        .unwrap()
-        .plan(SelectionStrategy::OrderedFallback);
+    let spec = SourceSpec::from_resolved_resource(&resource).unwrap();
     let fetcher = Fetcher::new(
         BenchHttpClient::new(size),
         temp.path().join("fetch-workspace"),
@@ -150,7 +148,7 @@ fn setup_fetch_pipeline(size: usize) -> FetchPipelineContext {
     FetchPipelineContext {
         _temp: temp,
         multi,
-        planned,
+        spec,
         store,
         ready,
         resource,
@@ -209,30 +207,27 @@ fn bench_fetch_store_install(c: &mut Criterion) {
                         let destination = context._temp.path().join(&context.destination);
                         let fetched = context
                             .multi
-                            .fetch_planned_sources_with_receipt(
-                                &context.planned,
+                            .fetch_source_spec_with_receipt(
+                                context.spec,
+                                pulith_source::SelectionStrategy::OrderedFallback,
                                 &destination,
                                 &FetchOptions::default(),
                             )
                             .await
                             .unwrap();
 
-                        let stored = context
-                            .store
-                            .import_artifact(
-                                &StoreKey::logical("bench-fetch-artifact").unwrap(),
-                                &fetched.destination,
-                            )
-                            .unwrap();
+                        let install_input = InstallInput::store_fetched_artifact(
+                            &context.store,
+                            &StoreKey::logical("bench-fetch-artifact").unwrap(),
+                            &fetched,
+                        )
+                        .unwrap();
 
                         let receipt = PlannedInstall::new(
                             context.ready,
                             InstallSpec::new(
                                 context.resource,
-                                InstallInput::StoredArtifact {
-                                    artifact: stored,
-                                    file_name: "runtime.bin".to_string(),
-                                },
+                                install_input,
                                 context._temp.path().join(&context.install_root),
                             ),
                         )

@@ -2,6 +2,8 @@ use crate::primitives::{hardlink, rw};
 use crate::{Error, Result};
 use std::path::{Component, Path, PathBuf};
 
+pub const DEFAULT_COPY_ONLY_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceReport {
     pub staging_root: PathBuf,
@@ -121,6 +123,22 @@ impl Workspace {
         hardlink::hardlink_or_copy(source, &path, options)
     }
 
+    pub fn stage_file_by_size(
+        &self,
+        source: impl AsRef<Path>,
+        relative_path: impl AsRef<Path>,
+        threshold_bytes: u64,
+        options: hardlink::Options,
+    ) -> Result<()> {
+        let source = source.as_ref();
+        if should_copy_only(source, threshold_bytes)? {
+            let _ = self.copy_file(source, relative_path)?;
+        } else {
+            self.link_or_copy_file(source, relative_path, options)?;
+        }
+        Ok(())
+    }
+
     pub fn read(&self, relative_path: impl AsRef<Path>) -> Result<Vec<u8>> {
         let path = self.resolve(relative_path)?;
         rw::atomic_read(path)
@@ -223,6 +241,16 @@ impl Drop for Workspace {
     }
 }
 
+pub fn should_copy_only(source: &Path, threshold_bytes: u64) -> Result<bool> {
+    Ok(std::fs::metadata(source)
+        .map_err(|source_error| Error::Read {
+            path: source.to_path_buf(),
+            source: source_error,
+        })?
+        .len()
+        < threshold_bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +319,24 @@ mod tests {
             .unwrap();
 
         assert_eq!(workspace.read("bin/tool.txt").unwrap(), b"data");
+    }
+
+    #[test]
+    fn test_workspace_stage_file_by_size_prefers_copy_under_threshold() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        let destination = dir.path().join("dest");
+        std::fs::write(&source, b"data").unwrap();
+
+        let workspace = Workspace::new(dir.path().join("staging"), &destination).unwrap();
+        workspace
+            .stage_file_by_size(&source, "bin/tool.bin", 1024, hardlink::Options::new())
+            .unwrap();
+        workspace.commit().unwrap();
+
+        assert_eq!(
+            std::fs::read(destination.join("bin/tool.bin")).unwrap(),
+            b"data"
+        );
     }
 }

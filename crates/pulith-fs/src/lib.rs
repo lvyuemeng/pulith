@@ -12,4 +12,6 @@ pub use primitives::hardlink::{FallBack, Options as HardlinkOrCopyOptions, hardl
 pub use primitives::replace_dir::{Options as ReplaceDirOptions, replace_dir};
 pub use primitives::rw::{Options as AtomicWriteOptions, atomic_read, atomic_write};
 pub use primitives::symlink::atomic_symlink;
-pub use workflow::{Transaction, Workspace, WorkspaceReport};
+pub use workflow::{
+    DEFAULT_COPY_ONLY_THRESHOLD_BYTES, Transaction, Workspace, WorkspaceReport, should_copy_only,
+};

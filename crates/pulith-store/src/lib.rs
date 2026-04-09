@@ -3,14 +3,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pulith_fs::{FallBack, HardlinkOrCopyOptions, Workspace, atomic_write, copy_dir_all};
+use pulith_fs::{
+    DEFAULT_COPY_ONLY_THRESHOLD_BYTES, FallBack, HardlinkOrCopyOptions, Workspace, atomic_write,
+    copy_dir_all,
+};
 use pulith_resource::{Metadata, ResolvedResource, ResolvedVersion, ResourceId, ValidDigest};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, StoreError>;
-
-const COPY_ONLY_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -268,20 +269,13 @@ impl StoreReady {
 }
 
 fn stage_artifact_file(workspace: &Workspace, source: &Path, relative_path: PathBuf) -> Result<()> {
-    if should_copy_only(source)? {
-        let _ = workspace.copy_file(source, &relative_path)?;
-    } else {
-        workspace.link_or_copy_file(
-            source,
-            &relative_path,
-            HardlinkOrCopyOptions::new().fallback(FallBack::Copy),
-        )?;
-    }
+    workspace.stage_file_by_size(
+        source,
+        &relative_path,
+        DEFAULT_COPY_ONLY_THRESHOLD_BYTES,
+        HardlinkOrCopyOptions::new().fallback(FallBack::Copy),
+    )?;
     Ok(())
-}
-
-fn should_copy_only(source: &Path) -> Result<bool> {
-    Ok(std::fs::metadata(source)?.len() < COPY_ONLY_THRESHOLD_BYTES)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

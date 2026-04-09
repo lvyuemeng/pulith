@@ -5,15 +5,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use pulith_archive::entry::ArchiveReport;
 use pulith_fetch::FetchReceipt;
-use pulith_fs::{FallBack, HardlinkOrCopyOptions, Workspace, atomic_symlink, copy_dir_all};
+use pulith_fs::{
+    DEFAULT_COPY_ONLY_THRESHOLD_BYTES, FallBack, HardlinkOrCopyOptions, Workspace, atomic_symlink,
+    copy_dir_all,
+};
 use pulith_resource::{Metadata, ResolvedResource};
 use pulith_shim::TargetResolver;
 use pulith_state::{ActivationRecord, ResourceLifecycle, ResourceRecord, StateReady};
-use pulith_store::{ExtractedArtifact, StoreKey, StoredArtifact};
+use pulith_store::{ExtractedArtifact, StoreKey, StoreReady, StoredArtifact};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-
-const COPY_ONLY_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
 
 pub type Result<T> = std::result::Result<T, InstallError>;
 
@@ -27,6 +28,10 @@ pub enum InstallError {
     State(#[from] pulith_state::StateError),
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
+    #[error(transparent)]
+    Store(#[from] pulith_store::StoreError),
+    #[error(transparent)]
+    Resource(#[from] pulith_resource::ResourceError),
     #[error("artifact file name must not be empty")]
     EmptyFileName,
     #[error("extracted artifact path does not exist: {0}")]
@@ -251,6 +256,23 @@ impl InstallInput {
         }
     }
 
+    pub fn from_stored_artifact(artifact: StoredArtifact) -> Result<Self> {
+        let file_name = file_name_from_path(&artifact.path).ok_or(InstallError::EmptyFileName)?;
+        Ok(Self::StoredArtifact {
+            artifact,
+            file_name,
+        })
+    }
+
+    pub fn store_fetched_artifact(
+        store: &StoreReady,
+        key: &StoreKey,
+        receipt: &FetchReceipt,
+    ) -> Result<Self> {
+        let artifact = store.import_artifact(key, &receipt.destination)?;
+        Self::from_stored_artifact(artifact)
+    }
+
     pub fn from_archive_extraction(root: PathBuf, report: ArchiveReport) -> Self {
         Self::ExtractedTree {
             root,
@@ -401,6 +423,7 @@ impl PlannedInstall {
     }
 
     pub fn stage(self) -> Result<StagedInstall> {
+        self.spec.resource.validate_version_selection()?;
         let temp = tempfile::tempdir()?;
         let workspace =
             Workspace::new(temp.path().join("staging"), self.spec.install_root.clone())?;
@@ -675,16 +698,13 @@ fn default_link_options() -> HardlinkOrCopyOptions {
 }
 
 fn stage_workspace_file(workspace: &Workspace, source: &Path, relative_path: &Path) -> Result<()> {
-    if should_copy_only(source)? {
-        let _ = workspace.copy_file(source, relative_path)?;
-    } else {
-        workspace.link_or_copy_file(source, relative_path, default_link_options())?;
-    }
+    workspace.stage_file_by_size(
+        source,
+        relative_path,
+        DEFAULT_COPY_ONLY_THRESHOLD_BYTES,
+        default_link_options(),
+    )?;
     Ok(())
-}
-
-fn should_copy_only(source: &Path) -> Result<bool> {
-    Ok(std::fs::metadata(source)?.len() < COPY_ONLY_THRESHOLD_BYTES)
 }
 
 fn copy_directory_into_workspace(
@@ -738,6 +758,7 @@ mod tests {
         ResourceSpec, ValidUrl,
     };
     use pulith_state::StateSnapshot;
+    use pulith_store::StoreRoots;
 
     fn resolved_resource() -> ResolvedResource {
         RequestedResource::new(ResourceSpec::new(
@@ -822,6 +843,66 @@ mod tests {
     }
 
     #[test]
+    fn install_input_from_stored_artifact_uses_artifact_file_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let artifact_path = temp.path().join("archive.bin");
+        std::fs::write(&artifact_path, b"payload").unwrap();
+
+        let stored = StoredArtifact {
+            key: StoreKey::logical("archive").unwrap(),
+            path: artifact_path,
+            provenance: None,
+        };
+
+        let input = InstallInput::from_stored_artifact(stored).unwrap();
+        match input {
+            InstallInput::StoredArtifact { file_name, .. } => assert_eq!(file_name, "archive.bin"),
+            _ => panic!("expected stored artifact install input"),
+        }
+    }
+
+    #[test]
+    fn install_input_store_fetched_artifact_bridges_fetch_to_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let fetched_path = temp.path().join("downloads/runtime.bin");
+        std::fs::create_dir_all(fetched_path.parent().unwrap()).unwrap();
+        std::fs::write(&fetched_path, b"payload").unwrap();
+
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+        let key = StoreKey::logical("runtime").unwrap();
+
+        let input = InstallInput::store_fetched_artifact(
+            &store,
+            &key,
+            &FetchReceipt {
+                source: FetchSource::Url("https://example.com/runtime.bin".to_string()),
+                destination: fetched_path,
+                bytes_downloaded: 7,
+                total_bytes: Some(7),
+                sha256_hex: None,
+            },
+        )
+        .unwrap();
+
+        match input {
+            InstallInput::StoredArtifact {
+                artifact,
+                file_name,
+            } => {
+                assert!(artifact.path.exists());
+                assert_eq!(artifact.key, key);
+                assert_eq!(file_name, "runtime.bin");
+            }
+            _ => panic!("expected stored artifact install input"),
+        }
+    }
+
+    #[test]
     fn fetched_artifact_install_places_receipt_file() {
         let temp = tempfile::tempdir().unwrap();
         let fetched_path = temp.path().join("fetched.bin");
@@ -849,6 +930,47 @@ mod tests {
             .finish();
 
         assert!(receipt.install_root.join("fetched.bin").exists());
+    }
+
+    #[test]
+    fn install_stage_rejects_version_selector_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let fetched_path = temp.path().join("fetched.bin");
+        std::fs::write(&fetched_path, b"payload").unwrap();
+
+        let resource = RequestedResource::new(
+            ResourceSpec::new(
+                ResourceId::parse("example/runtime").unwrap(),
+                ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.bin").unwrap()),
+            )
+            .version(pulith_resource::VersionSelector::requirement("^1.2").unwrap()),
+        )
+        .resolve(
+            ResolvedVersion::new("2.0.0").unwrap(),
+            ResolvedLocator::Url(ValidUrl::parse("https://example.com/runtime.bin").unwrap()),
+            None,
+        );
+
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let ready = InstallReady::new(state);
+        let spec = InstallSpec::new(
+            resource,
+            InstallInput::from_fetch_receipt(FetchReceipt {
+                source: FetchSource::Url("https://example.com/runtime.bin".to_string()),
+                destination: fetched_path,
+                bytes_downloaded: 7,
+                total_bytes: Some(7),
+                sha256_hex: None,
+            }),
+            temp.path().join("install/fetched"),
+        );
+
+        assert!(matches!(
+            PlannedInstall::new(ready, spec).stage(),
+            Err(InstallError::Resource(
+                pulith_resource::ResourceError::ResolvedVersionMismatch { .. }
+            ))
+        ));
     }
 
     #[test]

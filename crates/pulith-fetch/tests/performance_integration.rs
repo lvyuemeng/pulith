@@ -407,16 +407,22 @@ async fn test_performance_scaling() {
         let options = FetchOptions::default();
         let start_time = Instant::now();
 
-        let result = fetcher
+        let receipt = fetcher
             .fetch_with_receipt("http://example.com/scale-test", &destination, options)
-            .await;
+            .await
+            .unwrap();
         let elapsed = start_time.elapsed();
 
-        assert!(result.is_ok());
-
         assert!(destination.exists());
+        assert_eq!(receipt.bytes_downloaded, size as u64);
+
         let downloaded_size = std::fs::metadata(&destination).unwrap().len();
-        assert_eq!(downloaded_size, size as u64);
+        if downloaded_size == 0 {
+            let downloaded_bytes = std::fs::read(&destination).unwrap();
+            assert_eq!(downloaded_bytes.len(), size);
+        } else {
+            assert_eq!(downloaded_size, size as u64);
+        }
 
         let throughput = size as f64 / elapsed.as_secs_f64();
         // For small files, the throughput will be lower due to overhead
