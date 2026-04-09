@@ -44,7 +44,7 @@ match os::detect() {
 
 ## Dependencies
 
-```
+```text
 query-shell, home
 ```
 

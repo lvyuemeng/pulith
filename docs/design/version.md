@@ -26,7 +26,7 @@ Partial.matches(&version)  // "18" matches 18.0.0, 18.5.2, etc.
 
 ## Formats
 
-```
+```text
 SemVer:  1.2.3, 1.2.3-alpha+build
 CalVer:  2024, 2024.01, 2024.01.15
 Partial: 18, 3.11, 3.11.0, 18lts
@@ -55,6 +55,6 @@ assert_eq!(selected.to_string(), "2.0.0");
 
 ## Dependencies
 
-```
+```text
 semver, thiserror
 ```

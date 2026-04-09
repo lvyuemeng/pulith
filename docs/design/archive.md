@@ -233,6 +233,7 @@ impl<R: Read + Seek> EntrySource for ZipSource<R> {
 ```
 
 **Features:**
+
 - Full ZIP support with path validation
 - Symlink detection (Windows .lnk files)
 - Streaming extraction with owned bytes
@@ -252,6 +253,7 @@ impl<R: Read> EntrySource for TarSource<R> {
 ```
 
 **Features:**
+
 - Streaming extraction (no seek required)
 - Compression codec support (Gzip, XZ, Zstd)
 - Native symlink support

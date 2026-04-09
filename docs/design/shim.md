@@ -45,7 +45,7 @@ impl TargetResolver for VersionResolver {
 
 ## Dependencies
 
-```
+```text
 thiserror
 ```
 

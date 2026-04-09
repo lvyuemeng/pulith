@@ -54,7 +54,7 @@ Prefer composable pipelines over ad-hoc control flow or global state.
 
 ## Workspace Structure
 
-```
+```text
 pulith/
 ├── Cargo.toml           # Workspace manifest
 ├── crates/

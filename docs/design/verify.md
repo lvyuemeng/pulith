@@ -177,11 +177,11 @@ fn verify_artifact(path: &str, expected_hash_hex: &str) -> Result<(), VerifyErro
     // Decode expected hash from hexadecimal string
     let expected = hex::decode(expected_hash_hex)
         .map_err(|e| VerifyError::HexDecode(e))?;
-    
+
     // Open the file for reading
     let file = File::open(path)
         .map_err(|e| VerifyError::Io(e))?;
-    
+
     // Create hasher and verified reader
     let hasher = Sha256Hasher::new();
     let mut reader = VerifiedReader::new(file, hasher);
@@ -201,7 +201,7 @@ fn verify_artifact(path: &str, expected_hash_hex: &str) -> Result<(), VerifyErro
 
     // Final verification - this will return an error if hashes don't match
     reader.finish(&expected)?;
-    
+
     Ok(())
 }
 
@@ -217,7 +217,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Dependencies
 
-```
+```text
 thiserror = "1.0"
 hex = { version = "0.4", optional = true }
 
@@ -234,7 +234,7 @@ sha3 = ["dep:sha3", "digest/std"]
 
 ## Relationship
 
-```
+```text
 pulith-verify
     ├── Hasher trait (core abstraction)
     ├── VerifyError (error handling)
@@ -259,7 +259,7 @@ mod tests {
         let mut hasher = Sha256Hasher::new();
         hasher.update(b"hello world");
         let hash = hasher.finalize();
-        
+
         // Expected SHA-256 hash of "hello world"
         let expected = hex::decode("a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e").unwrap();
         assert_eq!(hash, expected);
@@ -271,10 +271,10 @@ mod tests {
         let mut reader = Cursor::new(data);
         let hasher = Sha256Hasher::new();
         let mut verified = VerifiedReader::new(reader, hasher);
-        
+
         let mut buffer = [0; 32];
         verified.read(&mut buffer).unwrap();
-        
+
         // Expected hash of "test data for verification"
         let expected = hex::decode("5f2c3777c909a909226f0b3dd0c9101627fc8bb4e061dc828ca25b6f542856d8").unwrap();
         verified.finish(&expected).unwrap();
@@ -286,15 +286,15 @@ mod tests {
         let mut reader = Cursor::new(data);
         let hasher = Sha256Hasher::new();
         let mut verified = VerifiedReader::new(reader, hasher);
-        
+
         let mut buffer = [0; 32];
         verified.read(&mut buffer).unwrap();
-        
+
         // Wrong hash should cause error
         let wrong_hash = vec![0; 32];
         let result = verified.finish(&wrong_hash);
         assert!(result.is_err());
-        
+
         if let Err(VerifyError::HashMismatch { expected, actual }) = result {
             assert_eq!(expected, vec![0; 32]);
             assert_ne!(actual, vec![0; 32]);

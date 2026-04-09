@@ -5,12 +5,14 @@ Pulith is a Rust crate ecosystem for resource management primitives: version sel
 It is designed for tools that manage external resources without wanting to rebuild the same low-level machinery over and over again.
 
 Status:
+
 - under active development
 - API shape is stabilizing, but several crates are still marked as maturing or emerging
 
 ## Motive
 
 Many developer tools end up re-implementing the same hard parts:
+
 - version parsing and selection
 - source planning and download orchestration
 - checksum and integrity verification
@@ -24,12 +26,14 @@ Pulith exists so tool authors can compose those concerns from reusable crates in
 ## Design Direction
 
 Pulith is intentionally:
+
 - mechanism-first
 - composable rather than framework-driven
 - type-driven where workflow ordering matters
 - policy-light so backend/tool-specific behavior stays outside the core crates
 
 The current architectural view and roadmap live in:
+
 - `docs/design.md`
 - `docs/roadmap.md`
 
@@ -39,6 +43,7 @@ The current architectural view and roadmap live in:
 - `crates/` - workspace crates
 
 Current notable crates:
+
 - `pulith-fs` - atomic filesystem and workspace primitives
 - `pulith-verify` - verification primitives
 - `pulith-archive` - archive extraction
@@ -52,6 +57,7 @@ Current notable crates:
 ## CI and Dependency Policy
 
 The repository CI currently checks:
+
 - formatting
 - clippy
 - tests across Linux, macOS, and Windows
@@ -63,15 +69,41 @@ The repository CI currently checks:
   - `cargo deny check advisories bans sources`
 
 Notes:
+
 - the MSRV job verifies the minimum supported Rust version we currently target; because the workspace uses Rust 2024 edition, `1.85.0` is the practical floor
 - `cargo deny` is intentionally not used for license allowlisting in CI right now; the license check is stricter and more maintenance-heavy than the current project policy needs
 
 ## Development
 
-Useful local commands:
+Recommended local workflow uses `just` to keep common commands short and consistent.
+
+If you do not have `just` installed yet:
+
+```bash
+cargo install just
+```
+
+Common commands:
+
+```bash
+just fmt
+just fmt-check
+just check
+just clippy
+just test
+just doc
+just audit
+just tree
+just deny
+just verify
+just ci
+```
+
+Equivalent raw cargo commands:
 
 ```bash
 cargo fmt --all --check
+cargo check --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo doc --workspace --all-features --no-deps
@@ -85,14 +117,25 @@ cargo deny check --all-features advisories bans sources
 Contributions are welcome.
 
 Recommended flow:
+
 - read `docs/design.md` for the current architectural direction
 - read `docs/roadmap.md` for active priorities
 - read `docs/AGENT.md` for coding and review expectations
 - keep changes composable and policy-light
 - prefer improving integration quality and tests over widening surface area unnecessarily
+- use `just verify` before opening changes
+- use `just ci` when touching dependency policy, CI, or workspace-wide behavior
+
+Suggested contribution checklist:
+
+- implement the smallest coherent change
+- add or update tests when behavior changes
+- update docs when public workflow or crate roles change
+- run validation locally with `just verify`
+- run dependency checks with `just ci` when changing dependencies or CI-related files
 
 ## License
 
 This repository is licensed under Apache License 2.0.
 
-See `LICENSE`.
+See [LICENSE](./LICENSE).
