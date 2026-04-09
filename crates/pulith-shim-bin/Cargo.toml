@@ -6,3 +6,4 @@ description = "Template for pulith shim binary"
 
 [dependencies]
 pulith-shim = { path = "./pulith-shim" }
+thiserror.workspace = true

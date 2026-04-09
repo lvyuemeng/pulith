@@ -43,7 +43,7 @@ impl Arch {
 impl FromStr for Arch {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
+        match normalized_name(s).as_str() {
             "i386" | "i686" | "x86" => Ok(Self::X86),
             "x86_64" | "amd64" => Ok(Self::X86_64),
             "arm" | "armv7" | "armv7l" => Ok(Self::ARM),
@@ -148,6 +148,10 @@ impl FromStr for TargetTriple {
             _ => Err(Error::UnknownTriple(s.to_string())),
         }
     }
+}
+
+fn normalized_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]

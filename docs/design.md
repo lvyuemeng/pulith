@@ -78,6 +78,10 @@ Pulith now has four logical layers:
 - `pulith-fetch`: transfer execution primitives
 - `pulith-shim`: shim resolution primitives
 
+### 1a. Support and Template Layer
+
+- `pulith-shim-bin`: thin shim-binary helper/template for turning `pulith-shim` resolution into a runnable executable boundary
+
 ### 2. Semantic Model Layer
 
 - `pulith-resource`: shared resource semantics
@@ -97,6 +101,10 @@ Pulith now has four logical layers:
 
 - `pulith-backend-example`: thin adapter example built on top of resource, source, and install crates
 
+### 6. Top-Level Integration Examples
+
+- `examples/runtime-manager/`: partially practical multi-crate example that exercises the public workflow outside `crates/`
+
 ## Active Crates
 
 | crate | maturity | role |
@@ -104,6 +112,7 @@ Pulith now has four logical layers:
 | `pulith-platform` | stable core | cross-platform helpers |
 | `pulith-version` | stable core | version parsing and selection |
 | `pulith-shim` | stable core | shim resolution |
+| `pulith-shim-bin` | support/template | shim-binary execution helper |
 | `pulith-fs` | maturing core | atomic filesystem and workspace primitives |
 | `pulith-verify` | stable core | content verification |
 | `pulith-archive` | maturing core | archive extraction |
@@ -239,9 +248,32 @@ Merging these would reduce composability and make the shared model more rigid.
 - `pulith-fetch`: make advanced execution modes explicit and trustworthy
 - `pulith-install`: keep sharpening reusable workflow helpers while avoiding policy creep
 - `pulith-version`: deepen integration of requirement matching and preference selection across callers
+- `pulith-platform`: keep the crate narrow so it remains a host/platform helper layer rather than a grab-bag system toolkit
 - `pulith-state`: improve transition ergonomics now, monitor snapshot scaling continuously, and avoid premature storage redesign until benchmarks justify change
 - `pulith-store`: improve semantic lookup/provenance ergonomics without absorbing install policy
 - the workspace overall: define where reconciliation, ownership, retention, and audit semantics belong without turning the install layer into a catch-all
+
+## Role Refinement For Core Support Crates
+
+### `pulith-version`
+
+- should stay a pure primitive crate
+- should own generic comparison, matching, and preference selection only
+- resource-specific alias meaning and planner-specific policy mapping should stay outside it
+- it should help planners and adapters choose, not decide repository/package-manager policy
+
+### `pulith-platform`
+
+- should stay a narrow host/platform helper crate
+- good scope: OS/arch/triple parsing, directory conventions, shell metadata, lightweight process helpers
+- bad scope: richer package-manager policy, service management, installer orchestration, or broad system administration helpers
+- the crate should expose predictable normalization and command/shell behavior, not become a generic toolbox
+
+### `pulith-shim-bin`
+
+- should be treated as a support/template crate, not a semantic model or workflow crate
+- its role is to bridge `pulith-shim` into a runnable executable boundary with minimal policy
+- if it grows substantially, it should evolve either into a clearer support crate or move toward examples/templates rather than distorting the primitive/workflow layers
 
 ## Practicality and Ergonomics
 

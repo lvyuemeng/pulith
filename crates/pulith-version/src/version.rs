@@ -374,10 +374,7 @@ pub fn select_preferred<'a>(
     versions: &'a [VersionKind],
     policy: &SelectionPolicy,
 ) -> Option<&'a VersionKind> {
-    let candidates: Vec<&VersionKind> = versions
-        .iter()
-        .filter(|version| policy.requirement.matches(version))
-        .collect();
+    let candidates = matching_candidates(versions, &policy.requirement);
 
     if candidates.is_empty() {
         return None;
@@ -388,12 +385,11 @@ pub fn select_preferred<'a>(
         VersionPreference::Latest => candidates.into_iter().max(),
         VersionPreference::HighestStable => candidates
             .into_iter()
-            .filter(|version| is_stable(version))
+            .filter(|version| version.is_stable())
             .max()
             .or_else(|| {
-                versions
-                    .iter()
-                    .filter(|v| policy.requirement.matches(v))
+                matching_candidates(versions, &policy.requirement)
+                    .into_iter()
                     .max()
             }),
         VersionPreference::Lts => candidates
@@ -401,9 +397,8 @@ pub fn select_preferred<'a>(
             .filter(|version| matches!(version, VersionKind::Partial(partial) if partial.lts))
             .max()
             .or_else(|| {
-                versions
-                    .iter()
-                    .filter(|v| policy.requirement.matches(v))
+                matching_candidates(versions, &policy.requirement)
+                    .into_iter()
                     .max()
             }),
         VersionPreference::Pinned(version) => {
@@ -412,11 +407,23 @@ pub fn select_preferred<'a>(
     }
 }
 
-fn is_stable(version: &VersionKind) -> bool {
-    match version {
-        VersionKind::SemVer(version) => version.pre.is_empty(),
-        VersionKind::CalVer(version) => version.pre.is_empty(),
-        VersionKind::Partial(version) => version.pre_release.is_none(),
+fn matching_candidates<'a>(
+    versions: &'a [VersionKind],
+    requirement: &VersionRequirement,
+) -> Vec<&'a VersionKind> {
+    versions
+        .iter()
+        .filter(|version| requirement.matches(version))
+        .collect()
+}
+
+impl VersionKind {
+    pub fn is_stable(&self) -> bool {
+        match self {
+            VersionKind::SemVer(version) => version.pre.is_empty(),
+            VersionKind::CalVer(version) => version.pre.is_empty(),
+            VersionKind::Partial(version) => version.pre_release.is_none(),
+        }
     }
 }
 

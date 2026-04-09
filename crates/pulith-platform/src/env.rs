@@ -4,18 +4,21 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 fn paths_equal(p1: &Path, p2: &Path) -> bool {
-    fn normalize(p: &Path) -> String {
-        p.to_string_lossy()
-            .trim_end_matches(['/', '\\'])
-            .to_lowercase()
-    }
+    normalized_path(p1) == normalized_path(p2)
+}
+
+fn normalized_path(path: &Path) -> String {
+    let normalized = path
+        .to_string_lossy()
+        .trim_end_matches(['/', '\\'])
+        .to_string();
     #[cfg(target_os = "windows")]
     {
-        normalize(p1) == normalize(p2)
+        normalized.to_lowercase()
     }
     #[cfg(not(target_os = "windows"))]
     {
-        normalize(p1) == normalize(p2)
+        normalized
     }
 }
 

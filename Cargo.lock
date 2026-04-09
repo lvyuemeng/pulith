@@ -1494,6 +1494,7 @@ name = "pulith-shim-bin"
 version = "0.1.0"
 dependencies = [
  "pulith-shim",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1680,6 +1681,20 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "runtime-manager-example"
+version = "0.1.0"
+dependencies = [
+ "pulith-archive",
+ "pulith-fetch",
+ "pulith-install",
+ "pulith-resource",
+ "pulith-source",
+ "pulith-state",
+ "pulith-store",
+ "tokio",
 ]
 
 [[package]]

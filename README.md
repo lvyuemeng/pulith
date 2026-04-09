@@ -40,6 +40,10 @@ The current architectural summary and active priorities live in:
 - `docs/design.md`
 - `docs/roadmap.md`
 
+Practical multi-crate integration examples live in:
+
+- `examples/runtime-manager/`
+
 ## Status
 
 - under active development

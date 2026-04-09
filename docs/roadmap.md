@@ -31,6 +31,8 @@ The crate split is already in place. The remaining work is to make the composed 
 - workspace integration coverage now includes repeated copy-based activation over the same file target, strengthening cross-platform activator contract coverage for non-link activation paths
 - workspace integration coverage now also includes archive fetch/extract/store/install/activate/rollback recovery, strengthening archive-inclusive recovery guarantees instead of only install-from-directory recovery
 - workspace integration coverage now also includes repeated symlink-based file activation over the same target, balancing link-based and copy-based file activation contract coverage
+- the workspace now includes a top-level `examples/runtime-manager/` app so multi-crate usage is exercised outside `crates/` through a partially practical integration path
+- crates now carry local README usage docs so the basic API shape is visible without reading implementation or design documents first
 - workspace integration tests already cover the main install-centered flows
 
 ## What Real Managers Need
@@ -154,6 +156,7 @@ Current Phase E progress:
 3. extend Phase C from lifecycle-based retention planning into broader retention policy semantics without collapsing it into install
 4. thread version-selection policy into additional planner/backend paths beyond the current resource/example helpers
 5. add more Windows-specific contract coverage where activator behavior still differs beyond the current copy/link integration coverage
+6. keep growing top-level examples as practical integrations, not just internal demonstration crates
 
 ## Risks
 

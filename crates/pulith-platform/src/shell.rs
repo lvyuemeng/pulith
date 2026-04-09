@@ -39,6 +39,15 @@ impl Shell {
         }
     }
 
+    pub fn command_flag(&self) -> &'static str {
+        match self {
+            Self::Cmd => "/C",
+            Self::Powershell | Self::Pwsh => "-Command",
+            Self::Unknown => "",
+            _ => "-c",
+        }
+    }
+
     pub fn config_dir(&self) -> Option<PathBuf> {
         match self {
             Self::Bash
@@ -72,7 +81,7 @@ impl From<query_shell::Shell> for Shell {
 impl FromStr for Shell {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
+        match normalized_name(s).as_str() {
             "bash" => Ok(Self::Bash),
             "zsh" => Ok(Self::Zsh),
             "fish" => Ok(Self::Fish),
@@ -86,6 +95,10 @@ impl FromStr for Shell {
             _ => Err(Error::UnknownShell(s.to_string())),
         }
     }
+}
+
+fn normalized_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -145,6 +158,13 @@ mod tests {
     #[test]
     fn test_shell_executable_unknown() {
         assert_eq!(Shell::Unknown.executable(), "");
+    }
+
+    #[test]
+    fn test_shell_command_flags() {
+        assert_eq!(Shell::Bash.command_flag(), "-c");
+        assert_eq!(Shell::Pwsh.command_flag(), "-Command");
+        assert_eq!(Shell::Cmd.command_flag(), "/C");
     }
 
     #[test]

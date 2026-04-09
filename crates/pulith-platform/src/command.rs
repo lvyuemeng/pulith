@@ -40,9 +40,10 @@ impl Command {
 
     pub fn run_in_shell(mut self, shell: Shell) -> Self {
         let shell_exe = shell.executable();
+        let shell_flag = shell.command_flag();
         let script = self.program.clone();
         self.inner = StdCommand::new(shell_exe);
-        self.inner.args(["-c", &script]);
+        self.inner.args([shell_flag, &script]);
         self
     }
 
@@ -75,18 +76,20 @@ impl Command {
     }
 
     pub fn output(&mut self) -> Result<Output> {
-        self.inner.output().map_err(|e| Error::CommandFailed {
-            cmd: self.program.clone(),
-            source: e,
-        })
+        self.inner
+            .output()
+            .map_err(|e| command_failed(self.program.clone(), e))
     }
 
     pub fn spawn(&mut self) -> Result<std::process::Child> {
-        self.inner.spawn().map_err(|e| Error::CommandFailed {
-            cmd: self.program.clone(),
-            source: e,
-        })
+        self.inner
+            .spawn()
+            .map_err(|e| command_failed(self.program.clone(), e))
     }
+}
+
+fn command_failed(cmd: String, source: std::io::Error) -> Error {
+    Error::CommandFailed { cmd, source }
 }
 
 #[cfg(test)]
@@ -161,6 +164,7 @@ mod tests {
         let cmd = Command::new("echo hello").run_in_shell(Shell::Bash);
         let inner = cmd.inner;
         assert_eq!(inner.get_program().to_string_lossy(), "bash");
+        assert_eq!(inner.get_args().next().unwrap().to_string_lossy(), "-c");
     }
 
     #[test]
@@ -168,6 +172,18 @@ mod tests {
         let cmd = Command::new("echo hello").run_in_shell(Shell::Pwsh);
         let inner = cmd.inner;
         assert_eq!(inner.get_program().to_string_lossy(), "pwsh");
+        assert_eq!(
+            inner.get_args().next().unwrap().to_string_lossy(),
+            "-Command"
+        );
+    }
+
+    #[test]
+    fn test_command_run_in_shell_cmd() {
+        let cmd = Command::new("echo hello").run_in_shell(Shell::Cmd);
+        let inner = cmd.inner;
+        assert_eq!(inner.get_program().to_string_lossy(), "cmd.exe");
+        assert_eq!(inner.get_args().next().unwrap().to_string_lossy(), "/C");
     }
 
     #[test]

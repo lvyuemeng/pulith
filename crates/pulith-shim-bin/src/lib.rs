@@ -1,64 +1,117 @@
 //! Template shim binary.
 //!
-//! # Usage
-//!
 //! Copy this file and customize the resolver type and construction.
 //! The key is to implement [`TargetResolver`] and call [`try_run()`] with it.
 
-use pulith_shim::TargetResolver;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
-pub fn try_run<R: TargetResolver>(r: R) -> Result<ExitStatus, Error> {
-    let (command, forwarded_args) = parse_invoke()?;
+use pulith_shim::TargetResolver;
+use thiserror::Error;
 
-    let target = r.resolve(&command).ok_or(Error::CommandNotFound(command))?;
-
-    validate(&target)?;
-    exec(&target, forwarded_args)
+pub fn try_run<R: TargetResolver>(resolver: R) -> Result<ExitStatus, Error> {
+    invoke(resolver, env::args())
 }
 
-fn parse_invoke() -> Result<(String, Vec<String>), Error> {
-    let mut args = env::args();
+pub fn invoke<R, I, S>(resolver: R, args: I) -> Result<ExitStatus, Error>
+where
+    R: TargetResolver,
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let (command, forwarded_args) = parse_invoke(args)?;
+    let target = resolve_target(&resolver, &command)?;
+    exec(&target, &forwarded_args)
+}
+
+fn parse_invoke<I, S>(args: I) -> Result<(String, Vec<String>), Error>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut args = args.into_iter().map(Into::into);
 
     let _shim_exe = args.next();
-    let command = args.next().ok_or(Error::MissingCommand)?.to_string();
-    let forward = args.collect();
-    Ok((command, forward))
+    let command = args.next().ok_or(Error::MissingCommand)?;
+    let forwarded = args.collect();
+    Ok((command, forwarded))
 }
 
-fn validate(target: &Path) -> Result<(), Error> {
+fn resolve_target<R: TargetResolver>(resolver: &R, command: &str) -> Result<PathBuf, Error> {
+    let target = resolver
+        .resolve(command)
+        .ok_or_else(|| Error::CommandNotFound(command.to_string()))?;
+    validate_target(&target)?;
+    Ok(target)
+}
+
+fn validate_target(target: &Path) -> Result<(), Error> {
     if !target.exists() {
         return Err(Error::TargetNotFound(target.to_path_buf()));
     }
     Ok(())
 }
 
-fn exec(target: &PathBuf, args: Vec<String>) -> Result<ExitStatus, Error> {
+fn exec(target: &Path, args: &[String]) -> Result<ExitStatus, Error> {
     Command::new(target)
         .args(args)
         .status()
         .map_err(Error::ProcessFailed)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
+    #[error("no command specified")]
     MissingCommand,
+    #[error("command not found: '{0}'")]
     CommandNotFound(String),
+    #[error("target not found: {0}")]
     TargetNotFound(PathBuf),
+    #[error("process failed: {0}")]
     ProcessFailed(std::io::Error),
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::MissingCommand => write!(f, "no command specified"),
-            Error::CommandNotFound(cmd) => write!(f, "command not found: '{cmd}'"),
-            Error::TargetNotFound(path) => write!(f, "target not found: {}", path.display()),
-            Error::ProcessFailed(err) => write!(f, "process failed: {err}"),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Resolver(Option<PathBuf>);
+
+    impl TargetResolver for Resolver {
+        fn resolve(&self, _command: &str) -> Option<PathBuf> {
+            self.0.clone()
         }
     }
-}
 
-impl std::error::Error for Error {}
+    #[test]
+    fn parse_invoke_extracts_command_and_forwarded_args() {
+        let parsed = parse_invoke(["shim.exe", "tool", "--flag", "value"]).unwrap();
+        assert_eq!(parsed.0, "tool");
+        assert_eq!(parsed.1, vec!["--flag", "value"]);
+    }
+
+    #[test]
+    fn parse_invoke_rejects_missing_command() {
+        assert!(matches!(
+            parse_invoke(["shim.exe"]),
+            Err(Error::MissingCommand)
+        ));
+    }
+
+    #[test]
+    fn resolve_target_rejects_missing_target() {
+        assert!(matches!(
+            resolve_target(&Resolver(None), "tool"),
+            Err(Error::CommandNotFound(command)) if command == "tool"
+        ));
+    }
+
+    #[test]
+    fn validate_target_rejects_nonexistent_path() {
+        assert!(matches!(
+            validate_target(Path::new("/definitely/missing/target")),
+            Err(Error::TargetNotFound(_))
+        ));
+    }
+}

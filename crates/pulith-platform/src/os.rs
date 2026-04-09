@@ -40,7 +40,7 @@ impl FromStr for OS {
     type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
+        match normalized_name(s).as_str() {
             "windows" => Ok(Self::Windows),
             "macos" | "darwin" => Ok(Self::MacOS),
             "linux" => Ok(Self::Linux),
@@ -80,7 +80,7 @@ impl Distro {
 impl FromStr for Distro {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
+        match normalized_name(s).as_str() {
             "debian" => Ok(Self::Debian),
             "ubuntu" => Ok(Self::Ubuntu),
             "linuxmint" => Ok(Self::LinuxMint),
@@ -112,6 +112,10 @@ static DISTRO: Lazy<Distro> = Lazy::new(|| {
     }
     Distro::Unknown
 });
+
+fn normalized_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
 
 pub fn detect_distro() -> Distro {
     *DISTRO
