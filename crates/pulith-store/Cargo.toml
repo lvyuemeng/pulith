@@ -11,8 +11,8 @@ keywords = ["artifact", "store", "provenance", "metadata"]
 categories = ["filesystem", "data-structures"]
 
 [dependencies]
-pulith-fs = { path = "../pulith-fs" }
-pulith-resource = { path = "../pulith-resource" }
+pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
+pulith-resource = { path = "../pulith-resource", version = "0.1.0" }
 
 serde.workspace = true
 serde_json.workspace = true

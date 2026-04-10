@@ -8,3 +8,6 @@ publish = false
 [dependencies]
 pulith-shim = { path = "./pulith-shim" }
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

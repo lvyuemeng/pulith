@@ -70,6 +70,7 @@ Not guaranteed:
 - global rollback journals beyond per-resource backup/snapshot scope
 - stronger fetch retry/resume semantics than current `pulith-fetch` contract/tests
 - automatic policy decisions for ranking/trust/cleanup
+- archive decompression resource-limit protection is not guaranteed unless callers opt in via extraction limit options
 
 ## API Stability Decisions
 
@@ -97,6 +98,20 @@ Internal/non-publish crates:
 - `pulith-shim-bin` (internal binary wrapper)
 - `runtime-manager-example` (integration example)
 
+## Version Management Strategy
+
+Pulith uses an independent crate versioning model with release-train coordination.
+
+- public crates keep semver-independent versions so low-level crates can ship fixes without forcing lockstep bumps
+- releases are executed in dependency order (bottom-up publish train) so downstream crates can reference published versions cleanly
+- path dependencies in workspace manifests include explicit version requirements to keep publish manifests valid
+- internal/non-publish crates (`publish = false`) are excluded from publish-train version pressure
+
+Practical implication:
+
+- do not require every public crate to pass crates.io dry-run simultaneously before first publish
+- instead, require staged dry-run/publish evidence by dependency layer
+
 ## Current Readiness Snapshot
 
 Strong:
@@ -111,7 +126,7 @@ Remaining before first publish wave:
 - crates.io-direct dry-run path (independent of local mirror replacement)
 - final publish-readiness matrix and verification log per target crate
 - continued corpus/property expansion for version edge cases
-- explicit zip-bomb/resource-limit policy and tests (if contract is promoted)
+- tune and document default resource-limit recommendations for zip-bomb resistance (API support is now test-backed)
 
 ## References
 

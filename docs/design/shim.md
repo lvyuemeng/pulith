@@ -58,3 +58,9 @@ PairResolver::new(env_resolver, default_resolver);
 // Chain
 TripleResolver::new(env, file, default);
 ```
+
+## Invocation-Time Resolution Contract
+
+- shim targets are resolved on each invocation through `TargetResolver::resolve`
+- shims must not assume install-time target immutability
+- resolver implementations are expected to read current active-state/policy inputs at call time so version switches are reflected without shim regeneration

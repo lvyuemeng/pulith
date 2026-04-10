@@ -11,13 +11,13 @@ keywords = ["install", "activation", "rollback", "workflow"]
 categories = ["filesystem", "development-tools"]
 
 [dependencies]
-pulith-archive = { path = "../pulith-archive" }
-pulith-fetch = { path = "../pulith-fetch" }
-pulith-fs = { path = "../pulith-fs" }
-pulith-resource = { path = "../pulith-resource" }
-pulith-shim = { path = "../pulith-shim-bin/pulith-shim" }
-pulith-state = { path = "../pulith-state" }
-pulith-store = { path = "../pulith-store" }
+pulith-archive = { path = "../pulith-archive", version = "0.2.0" }
+pulith-fetch = { path = "../pulith-fetch", version = "0.2.0" }
+pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
+pulith-resource = { path = "../pulith-resource", version = "0.1.0" }
+pulith-shim = { path = "../pulith-shim-bin/pulith-shim", version = "0.1.0" }
+pulith-state = { path = "../pulith-state", version = "0.1.0" }
+pulith-store = { path = "../pulith-store", version = "0.1.0" }
 
 thiserror.workspace = true
 tempfile.workspace = true
@@ -28,7 +28,7 @@ serde_json.workspace = true
 bytes = "1"
 criterion.workspace = true
 futures-util = "0.3"
-pulith-source = { path = "../pulith-source" }
+pulith-source = { path = "../pulith-source", version = "0.1.0" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 zip.workspace = true
 

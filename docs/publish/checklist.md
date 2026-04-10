@@ -2,12 +2,13 @@
 
 Use this checklist as the single operational runbook.
 
-## Latest Attempt (2026-04-10 20:06 +08:00)
+## Latest Attempt (2026-04-10 20:19 +08:00)
 
-- attempted stage-2 crates.io dry-runs for `pulith-resource`, `pulith-platform`, `pulith-archive`
-- result: all failed on unresolved upstream Pulith dependencies (`pulith-version`/`pulith-fs`) in current registry resolution path
-- blocker class: dependency publish order gate (not dirty-worktree)
-- next executable step: publish stage 1 crates, then rerun stage-2 dry-runs
+- reran stage-2 dry-runs with crates.io-direct cargo home (`CARGO_HOME=.tmp/cargo-home`) and all passed
+- attempted real stage-2 publish with default config and it failed due `ustc` replacement not resolving `pulith-version`
+- attempted real stage-2 publish with crates.io-direct cargo home and it failed due missing publish token (`cargo login` required)
+- blocker class: publish environment mismatch (mirror replacement vs crates.io-direct auth)
+- next executable step: run stage-2 publish in crates.io-direct environment with valid token
 
 ## Stage 1 Gate Clearance
 
@@ -18,10 +19,10 @@ Use this checklist as the single operational runbook.
 
 ## Stage 1 Publish (After Gate Go)
 
-- [ ] publish `pulith-fs` `0.1.0`
-- [ ] publish `pulith-version` `0.1.0`
-- [ ] publish `pulith-verify` `0.1.0`
-- [ ] publish `pulith-shim` `0.1.0`
+- [x] publish `pulith-fs` `0.1.0`
+- [x] publish `pulith-version` `0.1.0`
+- [x] publish `pulith-verify` `0.1.0`
+- [x] publish `pulith-shim` `0.1.0`
 
 ## Stage 2 Dry-Run + Publish
 
@@ -29,7 +30,7 @@ Use this checklist as the single operational runbook.
 - [x] run `cargo publish -p pulith-resource --dry-run --registry crates-io`
 - [x] run `cargo publish -p pulith-platform --dry-run --registry crates-io`
 - [x] run `cargo publish -p pulith-archive --dry-run --registry crates-io`
-- [ ] publish in order: `pulith-resource` `0.1.0` -> `pulith-platform` `0.1.0` -> `pulith-archive` `0.2.0`
+- [ ] publish in order: `pulith-resource` `0.1.0` -> `pulith-platform` `0.1.0` -> `pulith-archive` `0.2.0` (blocked by environment/auth setup)
 
 ## Stage 3-5 Progression
 

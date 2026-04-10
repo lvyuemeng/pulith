@@ -11,7 +11,7 @@ keywords = ["source", "planning", "mirror", "adapter"]
 categories = ["data-structures", "development-tools"]
 
 [dependencies]
-pulith-resource = { path = "../pulith-resource" }
+pulith-resource = { path = "../pulith-resource", version = "0.1.0" }
 
 serde.workspace = true
 thiserror.workspace = true

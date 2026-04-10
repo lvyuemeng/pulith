@@ -120,6 +120,20 @@ pub struct SanitizedPath {
 - **Path normalization**: Handles `.`, `..`, mixed separators, and double slashes
 - **Component stripping**: Supports `--strip-components` functionality
 
+### Resource-Limit Controls (zip-bomb scope)
+
+- **Entry limit**: `ExtractOptions::max_entries` caps the number of processed entries.
+- **Byte limit**: `ExtractOptions::max_total_bytes` caps aggregate extracted size from archive entry metadata.
+- **Typed failure**: extraction aborts with explicit limit errors when limits are exceeded.
+- **Policy note**: defaults are unbounded (`None`); callers should set limits for untrusted archives.
+
+Recommended profile for untrusted archives (initial guidance):
+
+- `max_entries`: `20_000`
+- `max_total_bytes`: `2 * 1024 * 1024 * 1024` (2 GiB)
+
+These values are operational defaults for manager-layer policy and should be tuned per product risk/capacity.
+
 ## Extraction Options
 
 ```rust
@@ -129,6 +143,8 @@ pub struct ExtractOptions {
     pub hash_strategy: HashStrategy,
     pub strip_components: usize,
     pub expected_total_bytes: Option<u64>,
+    pub max_entries: Option<usize>,
+    pub max_total_bytes: Option<u64>,
     pub on_progress: Option<Arc<dyn Fn(Progress) + Send + Sync>>,
 }
 
@@ -137,6 +153,8 @@ impl ExtractOptions {
     pub fn hash_strategy(mut self, strategy: HashStrategy) -> Self;
     pub fn strip_components(mut self, n: usize) -> Self;
     pub fn expected_total_bytes(mut self, bytes: u64) -> Self;
+    pub fn max_entries(mut self, count: usize) -> Self;
+    pub fn max_total_bytes(mut self, bytes: u64) -> Self;
     pub fn on_progress(mut self, callback: Arc<dyn Fn(Progress) + Send + Sync>) -> Self;
 }
 ```

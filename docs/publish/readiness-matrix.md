@@ -6,8 +6,8 @@ Current source of truth for crates.io publish gating.
 
 | Stage | Crates | Gate state | Blocker |
 |---|---|---|---|
-| 1 | `pulith-fs`, `pulith-version`, `pulith-verify`, `pulith-shim` | stage-ready | all stage-1 crates have clean-worktree crates.io dry-run pass; awaiting actual publish |
-| 2 | `pulith-resource`, `pulith-platform`, `pulith-archive` | blocked | stage 1 crates not published in resolved registry path (`pulith-version`/`pulith-fs` unavailable) |
+| 1 | `pulith-fs`, `pulith-version`, `pulith-verify`, `pulith-shim` | published | published to crates.io (`0.1.0`)
+| 2 | `pulith-resource`, `pulith-platform`, `pulith-archive` | blocked | dry-runs pass in crates.io-direct context, but publish blocked by env split (`ustc` replacement vs missing token in direct env) |
 | 3 | `pulith-source`, `pulith-store` | waiting | stage 2 publish not complete |
 | 4 | `pulith-fetch`, `pulith-state` | waiting | stage 3 publish not complete |
 | 5 | `pulith-install` | waiting | stage 4 publish not complete |
@@ -25,9 +25,9 @@ Current source of truth for crates.io publish gating.
 
 | Crate | Version | Last crates.io dry-run | Status |
 |---|---|---|---|
-| `pulith-resource` | `0.1.0` | fail (`pulith-version` not found in resolved registry) | blocked |
-| `pulith-platform` | `0.1.0` | fail (`pulith-fs` not found in resolved registry) | blocked |
-| `pulith-archive` | `0.2.0` | fail (`pulith-fs` not found in resolved registry) | blocked |
+| `pulith-resource` | `0.1.0` | pass (crates.io-direct dry-run) | blocked publish env |
+| `pulith-platform` | `0.1.0` | pass (crates.io-direct dry-run) | blocked publish env |
+| `pulith-archive` | `0.2.0` | pass (crates.io-direct dry-run) | blocked publish env |
 
 ## Operational Links
 

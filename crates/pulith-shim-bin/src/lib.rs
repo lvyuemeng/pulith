@@ -114,4 +114,35 @@ mod tests {
             Err(Error::TargetNotFound(_))
         ));
     }
+
+    #[test]
+    fn resolve_target_re_resolves_each_invocation() {
+        use std::sync::Mutex;
+
+        struct SwitchingResolver {
+            values: Mutex<Vec<PathBuf>>,
+        }
+
+        impl TargetResolver for SwitchingResolver {
+            fn resolve(&self, _command: &str) -> Option<PathBuf> {
+                self.values.lock().unwrap().pop()
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("runtime-a");
+        let second = temp.path().join("runtime-b");
+        std::fs::write(&first, b"a").unwrap();
+        std::fs::write(&second, b"b").unwrap();
+
+        let resolver = SwitchingResolver {
+            values: Mutex::new(vec![first.clone(), second.clone()]),
+        };
+
+        let resolved_1 = resolve_target(&resolver, "tool").unwrap();
+        let resolved_2 = resolve_target(&resolver, "tool").unwrap();
+
+        assert_eq!(resolved_1, second);
+        assert_eq!(resolved_2, first);
+    }
 }

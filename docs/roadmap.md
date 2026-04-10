@@ -19,7 +19,7 @@ Block status:
 - publish train definition and readiness matrix are in place
 - stage 1 crates.io dry-runs were executed without `--allow-dirty`
 - stage-1 clean-worktree dry-run gate is now satisfied for all stage-1 crates
-- current publish blocker moved to stage-1 actual publish and downstream dependency-order availability
+- current publish blocker is stage-2 actual publish environment/auth split after stage-1 publish
 - publish docs are compacted into overview/checklist/matrix and aligned with current gates
 
 Evidence:
@@ -38,6 +38,9 @@ Execution checklist:
 - [x] compact publish docs and remove outdated per-block evidence files
 - [x] proceed next phase by retrying stage-1 gate command and recording current blocker
 - [x] clear stage-2 crate dirty-state blocker and re-run stage-2 dry-runs to confirm dependency-order gating
+- [x] execute stage-1 actual publish for all stage-1 crates
+- [x] retry stage-2 dry-runs and record registry-resolution blocker
+- [x] validate stage-2 dry-runs in crates.io-direct context and classify actual publish blocker
 
 Exit criteria:
 
