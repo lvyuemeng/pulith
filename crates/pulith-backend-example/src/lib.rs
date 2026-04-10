@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use pulith_fetch::FetchReceipt;
 use pulith_install::{
     ActivationTarget, InstallInput, InstallSpec, ShimCommand, ShimCopyActivator, ShimLinkActivator,
 };
@@ -97,6 +98,18 @@ impl ManagedBinarySpec {
         PlannedSources::from_locator(&self.locator, strategy)
     }
 
+    pub fn planned_sources_for_preferred_resolved(
+        &self,
+        candidates: &[ResolvedResource],
+        strategy: SelectionStrategy,
+    ) -> Result<Option<PlannedSources>> {
+        let selected = self.select_preferred_resolved(candidates)?;
+        selected
+            .map(|resource| PlannedSources::from_resolved_resource(resource, strategy))
+            .transpose()
+            .map_err(BackendError::Source)
+    }
+
     pub fn install_spec(&self, resource: ResolvedResource, input: InstallInput) -> InstallSpec {
         let mut spec = InstallSpec::new(resource, input, self.install_root.clone());
         spec.metadata = self.metadata.clone();
@@ -104,6 +117,14 @@ impl ManagedBinarySpec {
             spec = spec.activation(ActivationTarget { path: path.clone() });
         }
         spec
+    }
+
+    pub fn install_spec_from_fetch_receipt(
+        &self,
+        resource: ResolvedResource,
+        receipt: &FetchReceipt,
+    ) -> InstallSpec {
+        self.install_spec(resource, InstallInput::from_fetch_receipt(receipt.clone()))
     }
 
     pub fn shim_command(&self, command: impl Into<String>) -> Result<ShimCommand> {
@@ -268,5 +289,83 @@ mod tests {
         );
         let _link_activator = spec.shim_activator("runtime").unwrap();
         let _copy_activator = spec.shim_copy_activator("runtime").unwrap();
+    }
+
+    #[test]
+    fn managed_binary_builds_install_spec_from_fetch_receipt() {
+        let spec = managed_binary(
+            "example/runtime",
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.bin").unwrap()),
+            VersionSelector::exact("1.0.0").unwrap(),
+            "/installs/runtime",
+            "runtime.bin",
+        )
+        .unwrap()
+        .activation_path("/active/runtime");
+
+        let resolved = spec.requested_resource().resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(ValidUrl::parse("https://example.com/runtime.bin").unwrap()),
+            None,
+        );
+        let receipt = pulith_fetch::FetchReceipt {
+            source: pulith_fetch::FetchSource::Url("https://example.com/runtime.bin".to_string()),
+            destination: PathBuf::from("/downloads/runtime.bin"),
+            bytes_downloaded: 32,
+            total_bytes: Some(32),
+            sha256_hex: None,
+        };
+
+        let install = spec.install_spec_from_fetch_receipt(resolved, &receipt);
+
+        assert_eq!(install.install_root, PathBuf::from("/installs/runtime"));
+        assert!(install.activation.is_some());
+        match install.input {
+            InstallInput::FetchedArtifact { receipt: saved, .. } => {
+                assert_eq!(saved.destination, PathBuf::from("/downloads/runtime.bin"))
+            }
+            _ => panic!("expected fetch receipt input"),
+        }
+    }
+
+    #[test]
+    fn managed_binary_can_plan_sources_from_preferred_resolved_candidate() {
+        let spec = managed_binary(
+            "example/runtime",
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+            VersionSelector::alias("stable").unwrap(),
+            "/installs/runtime",
+            "bin/runtime",
+        )
+        .unwrap();
+        let candidates = vec![
+            spec.requested_resource().clone().resolve(
+                ResolvedVersion::new("1.2.0-alpha.1").unwrap(),
+                ResolvedLocator::Url(
+                    ValidUrl::parse("https://example.com/runtime-alpha.zip").unwrap(),
+                ),
+                None,
+            ),
+            spec.requested_resource().clone().resolve(
+                ResolvedVersion::new("1.1.0").unwrap(),
+                ResolvedLocator::Url(
+                    ValidUrl::parse("https://example.com/runtime-1.1.0.zip").unwrap(),
+                ),
+                None,
+            ),
+        ];
+
+        let planned = spec
+            .planned_sources_for_preferred_resolved(&candidates, SelectionStrategy::OrderedFallback)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(planned.candidates().len(), 1);
+        match &planned.candidates()[0] {
+            pulith_source::ResolvedSourceCandidate::Url(url) => {
+                assert_eq!(url.as_url().as_str(), "https://example.com/runtime.zip")
+            }
+            _ => panic!("expected URL candidate"),
+        }
     }
 }

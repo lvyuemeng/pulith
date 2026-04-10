@@ -5,6 +5,7 @@ edition = "2024"
 description = "Thin backend example crate for Pulith's adapter-first architecture"
 
 [dependencies]
+pulith-fetch = { path = "../pulith-fetch" }
 pulith-install = { path = "../pulith-install" }
 pulith-resource = { path = "../pulith-resource" }
 pulith-source = { path = "../pulith-source" }
@@ -13,4 +14,3 @@ pulith-version = { path = "../pulith-version" }
 thiserror.workspace = true
 
 [dev-dependencies]
-pulith-fetch = { path = "../pulith-fetch" }

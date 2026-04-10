@@ -4,6 +4,7 @@
 //! with different strategies for source selection and fallback.
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use pulith_resource::{RequestedResource, ResolvedResource};
 use pulith_source::{PlannedSources, ResolvedSourceCandidate, SelectionStrategy, SourceSpec};
 use std::path::Path;
 use std::sync::Arc;
@@ -179,6 +180,34 @@ impl<C: HttpClient + 'static> MultiSourceFetcher<C> {
             .await
     }
 
+    /// Plan and fetch sources directly from a requested resource.
+    pub async fn fetch_requested_resource_with_receipt(
+        &self,
+        resource: &RequestedResource,
+        strategy: SelectionStrategy,
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        let planned = PlannedSources::from_requested_resource(resource, strategy)
+            .map_err(|error| Error::InvalidState(error.to_string()))?;
+        self.fetch_planned_sources_with_receipt(&planned, destination, options)
+            .await
+    }
+
+    /// Plan and fetch sources directly from a resolved resource.
+    pub async fn fetch_resolved_resource_with_receipt(
+        &self,
+        resource: &ResolvedResource,
+        strategy: SelectionStrategy,
+        destination: &Path,
+        options: &crate::FetchOptions,
+    ) -> Result<FetchReceipt> {
+        let planned = PlannedSources::from_resolved_resource(resource, strategy)
+            .map_err(|error| Error::InvalidState(error.to_string()))?;
+        self.fetch_planned_sources_with_receipt(&planned, destination, options)
+            .await
+    }
+
     async fn fetch_candidate_sequence(
         &self,
         candidates: &[ResolvedSourceCandidate],
@@ -263,15 +292,32 @@ fn copy_local_candidate(source: &Path, destination: &Path) -> Result<FetchReceip
         ));
     }
 
-    let temp_root = tempfile::tempdir().map_err(|error| Error::Network(error.to_string()))?;
-    let staging_dir = temp_root.path().join("local-copy");
     let dest_dir = destination.parent().unwrap_or_else(|| Path::new("."));
-    let workspace = pulith_fs::Workspace::new(&staging_dir, dest_dir)?;
+    std::fs::create_dir_all(dest_dir).map_err(|source| {
+        Error::Fs(pulith_fs::Error::Write {
+            path: dest_dir.to_path_buf(),
+            source,
+        })
+    })?;
+
     let file_name = destination
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("download"));
-    workspace.copy_file(source, file_name)?;
-    workspace.commit()?;
+    let staging_dir = tempfile::Builder::new()
+        .prefix(".pulith-local-copy.")
+        .tempdir_in(dest_dir)
+        .map_err(|error| Error::Network(error.to_string()))?;
+    let staging_path = staging_dir.path().join(file_name);
+
+    std::fs::copy(source, &staging_path).map_err(|source| {
+        Error::Fs(pulith_fs::Error::Write {
+            path: staging_path.clone(),
+            source,
+        })
+    })?;
+
+    replace_destination_file(&staging_path, destination)?;
+
     let size = std::fs::metadata(destination)
         .map_err(|error| Error::Network(error.to_string()))?
         .len();
@@ -284,6 +330,30 @@ fn copy_local_candidate(source: &Path, destination: &Path) -> Result<FetchReceip
     })
 }
 
+fn replace_destination_file(staged_path: &Path, destination: &Path) -> Result<()> {
+    if let Ok(metadata) = std::fs::symlink_metadata(destination) {
+        if metadata.file_type().is_dir() {
+            return Err(Error::DestinationIsDirectory);
+        }
+
+        std::fs::remove_file(destination).map_err(|source| {
+            Error::Fs(pulith_fs::Error::Write {
+                path: destination.to_path_buf(),
+                source,
+            })
+        })?;
+    }
+
+    std::fs::rename(staged_path, destination).map_err(|source| {
+        Error::Fs(pulith_fs::Error::Write {
+            path: destination.to_path_buf(),
+            source,
+        })
+    })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,10 +361,14 @@ mod tests {
     use crate::net::http::BoxStream;
     use crate::{DownloadSource, MultiSourceOptions, SourceSelectionStrategy};
     use bytes::Bytes;
-    use pulith_resource::ValidUrl;
+    use pulith_resource::{
+        RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator,
+        ResourceSpec, ValidUrl,
+    };
     use pulith_source::{
         HttpAssetSource, LocalSource, SelectionStrategy, SourceDefinition, SourceSet, SourceSpec,
     };
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     // Mock error type that implements std::error::Error
@@ -590,5 +664,121 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(std::fs::read(destination).unwrap(), b"local-data");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_planned_sources_with_repeated_local_candidates_in_same_directory() {
+        let destination_root = tempfile::tempdir().unwrap();
+        let source_root = tempfile::tempdir().unwrap();
+        let client = MockHttpClient::new();
+        let fetcher = Arc::new(Fetcher::new(
+            client,
+            destination_root.path().join("workspace"),
+        ));
+        let multi_fetcher = MultiSourceFetcher::new(fetcher);
+        let destination_dir = destination_root.path().join("downloads");
+
+        for (name, payload) in [("artifact-v1.bin", b"v1"), ("artifact-v2.bin", b"v2")] {
+            let source_path = source_root.path().join(name);
+            std::fs::write(&source_path, payload).unwrap();
+            let destination = destination_dir.join(name);
+
+            let planned = SourceSpec::new(
+                SourceSet::new(vec![SourceDefinition::Local(LocalSource {
+                    path: source_path.clone(),
+                })])
+                .unwrap(),
+            )
+            .plan(SelectionStrategy::OrderedFallback);
+
+            let result = multi_fetcher
+                .fetch_planned_sources_with_receipt(
+                    &planned,
+                    &destination,
+                    &crate::FetchOptions::default(),
+                )
+                .await;
+
+            assert!(result.is_ok());
+            assert_eq!(std::fs::read(destination).unwrap(), payload);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_resolved_resource_with_receipt() {
+        let destination_root = tempfile::tempdir().unwrap();
+        let source_root = tempfile::tempdir().unwrap();
+        let client = MockHttpClient::new();
+        let fetcher = Arc::new(Fetcher::new(
+            client,
+            destination_root.path().join("workspace"),
+        ));
+        let multi_fetcher = MultiSourceFetcher::new(fetcher);
+
+        let source_path = source_root.path().join("runtime.zip");
+        std::fs::write(&source_path, b"archive-bytes").unwrap();
+        let resource = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::LocalPath(source_path),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::LocalPath(PathBuf::from("/local/runtime.zip")),
+            None,
+        );
+
+        let destination = destination_root
+            .path()
+            .join("downloads")
+            .join("runtime.zip");
+        let result = multi_fetcher
+            .fetch_resolved_resource_with_receipt(
+                &resource,
+                SelectionStrategy::OrderedFallback,
+                &destination,
+                &crate::FetchOptions::default(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(std::fs::read(destination).unwrap(), b"archive-bytes");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_requested_resource_with_receipt() {
+        let destination_root = tempfile::tempdir().unwrap();
+        let source_root = tempfile::tempdir().unwrap();
+        let client = MockHttpClient::new();
+        let fetcher = Arc::new(Fetcher::new(
+            client,
+            destination_root.path().join("workspace"),
+        ));
+        let multi_fetcher = MultiSourceFetcher::new(fetcher);
+
+        let source_path = source_root.path().join("runtime.zip");
+        std::fs::write(&source_path, b"archive-bytes-requested").unwrap();
+        let resource = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::LocalPath(source_path),
+        ));
+
+        let destination = destination_root
+            .path()
+            .join("downloads")
+            .join("runtime-requested.zip");
+        let result = multi_fetcher
+            .fetch_requested_resource_with_receipt(
+                &resource,
+                SelectionStrategy::OrderedFallback,
+                &destination,
+                &crate::FetchOptions::default(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(
+            std::fs::read(destination).unwrap(),
+            b"archive-bytes-requested"
+        );
     }
 }

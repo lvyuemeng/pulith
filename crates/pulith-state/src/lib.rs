@@ -149,19 +149,42 @@ impl StateReady {
         &self,
         id: &ResourceId,
         store: Option<&StoreReady>,
-    ) -> Result<ResourceInspection> {
+    ) -> Result<ResourceInspectionReport> {
         let full_snapshot = self.load()?;
         let snapshot = capture_resource_state_from_snapshot(&full_snapshot, id);
-        Ok(ResourceInspection::from_snapshot(
+        Ok(ResourceInspectionReport::from_snapshot(
             snapshot,
             &full_snapshot.activations,
             store,
         ))
     }
 
+    pub fn inspect_resource_legacy(
+        &self,
+        id: &ResourceId,
+        store: Option<&StoreReady>,
+    ) -> Result<ResourceInspection> {
+        Ok(self.inspect_resource(id, store)?.into_legacy())
+    }
+
     pub fn list_activation_conflicts(&self) -> Result<Vec<ActivationOwnershipConflict>> {
+        let report = self.activation_ownership_report()?;
+        Ok(report
+            .entries
+            .into_iter()
+            .filter(|entry| entry.owners.len() > 1)
+            .map(|entry| ActivationOwnershipConflict {
+                target: entry.target,
+                owners: entry.owners,
+            })
+            .collect())
+    }
+
+    pub fn activation_ownership_report(&self) -> Result<ActivationOwnershipReport> {
         let snapshot = self.load()?;
-        Ok(activation_conflicts(&snapshot.activations))
+        Ok(ActivationOwnershipReport::from_activations(
+            &snapshot.activations,
+        ))
     }
 
     pub fn list_store_references(&self) -> Result<Vec<StoreKeyReference>> {
@@ -195,14 +218,88 @@ impl StateReady {
         store: &StoreReady,
         policy: StoreRetentionPolicy,
     ) -> Result<StoreRetentionPlan> {
-        let protected_keys = self.protected_store_keys(policy)?;
-        let metadata_plan = store.plan_metadata_prune(&protected_keys)?;
+        let reasoned = self.plan_store_metadata_retention_reasoned(store, policy)?;
+
+        let protected_keys = reasoned
+            .protected_keys
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect();
+        let removable_metadata = reasoned
+            .removable_metadata
+            .iter()
+            .map(|entry| entry.record.clone())
+            .collect();
+        let protected_metadata = reasoned
+            .protected_metadata
+            .iter()
+            .map(|entry| entry.record.clone())
+            .collect();
 
         Ok(StoreRetentionPlan {
             policy,
             protected_keys,
-            removable_metadata: metadata_plan.removable,
-            protected_metadata: metadata_plan.protected,
+            removable_metadata,
+            protected_metadata,
+        })
+    }
+
+    pub fn plan_store_metadata_retention_reasoned(
+        &self,
+        store: &StoreReady,
+        policy: StoreRetentionPolicy,
+    ) -> Result<ReasonedStoreRetentionPlan> {
+        let snapshot = self.load()?;
+        let protected_keys = protected_store_keys_with_reasons(&snapshot.resources, policy);
+        let protected_key_values = protected_keys
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect::<Vec<_>>();
+
+        let mut metadata_plan = store.plan_metadata_prune(&protected_key_values)?;
+        metadata_plan
+            .protected
+            .sort_by_key(|record| record.key.relative_name());
+        metadata_plan
+            .removable
+            .sort_by_key(|record| record.key.relative_name());
+
+        let mut protected_metadata = metadata_plan
+            .protected
+            .into_iter()
+            .map(|record| {
+                let reasons = protected_metadata_reasons(&record, &protected_keys);
+                ProtectedStoreMetadata { record, reasons }
+            })
+            .collect::<Vec<_>>();
+        protected_metadata.sort_by_key(|entry| entry.record.key.relative_name());
+
+        let mut removable_metadata = metadata_plan
+            .removable
+            .into_iter()
+            .map(|record| {
+                let reasons = removable_metadata_reasons(&record, &snapshot.resources, policy);
+                RemovableStoreMetadata { record, reasons }
+            })
+            .collect::<Vec<_>>();
+        removable_metadata.sort_by_key(|entry| entry.record.key.relative_name());
+
+        Ok(ReasonedStoreRetentionPlan {
+            policy,
+            protected_keys,
+            protected_metadata,
+            removable_metadata,
+        })
+    }
+
+    pub fn plan_ownership_and_retention(
+        &self,
+        store: &StoreReady,
+        policy: StoreRetentionPolicy,
+    ) -> Result<OwnershipRetentionPlan> {
+        Ok(OwnershipRetentionPlan {
+            ownership: self.activation_ownership_report()?,
+            retention: self.plan_store_metadata_retention_reasoned(store, policy)?,
         })
     }
 
@@ -428,13 +525,13 @@ impl ResourceInspection {
         }
 
         if let Some(record) = &snapshot.record {
-            if let Some(install_path) = &record.install_path {
-                if !install_path.exists() {
-                    issues.push(ResourceInspectionIssue::MissingInstallPath {
-                        resource: snapshot.resource.clone(),
-                        path: install_path.clone(),
-                    });
-                }
+            if let Some(install_path) = &record.install_path
+                && !install_path.exists()
+            {
+                issues.push(ResourceInspectionIssue::MissingInstallPath {
+                    resource: snapshot.resource.clone(),
+                    path: install_path.clone(),
+                });
             }
 
             if let (Some(store), Some(key)) = (store, &record.artifact_key) {
@@ -479,19 +576,211 @@ impl ResourceInspection {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InspectionSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum InspectionCategory {
+    ResourceRecord,
+    InstallPath,
+    ActivationTarget,
+    ActivationOwnership,
+    StoreEntry,
+    StoreMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResourceInspectionFinding {
+    MissingResourceRecord {
+        resource: ResourceId,
+    },
+    MissingInstallPath {
+        resource: ResourceId,
+        path: PathBuf,
+    },
+    MissingActivationTarget {
+        resource: ResourceId,
+        target: PathBuf,
+    },
+    ActivationTargetConflict {
+        resource: ResourceId,
+        target: PathBuf,
+        conflicting_owners: Vec<ResourceId>,
+    },
+    MissingStoreEntry {
+        resource: ResourceId,
+        key: StoreKey,
+    },
+    MissingStoreMetadata {
+        resource: ResourceId,
+        key: StoreKey,
+    },
+}
+
+impl ResourceInspectionFinding {
+    pub fn severity(&self) -> InspectionSeverity {
+        match self {
+            Self::MissingResourceRecord { .. }
+            | Self::MissingInstallPath { .. }
+            | Self::MissingActivationTarget { .. }
+            | Self::MissingStoreEntry { .. } => InspectionSeverity::Error,
+            Self::ActivationTargetConflict { .. } | Self::MissingStoreMetadata { .. } => {
+                InspectionSeverity::Warning
+            }
+        }
+    }
+
+    pub fn category(&self) -> InspectionCategory {
+        match self {
+            Self::MissingResourceRecord { .. } => InspectionCategory::ResourceRecord,
+            Self::MissingInstallPath { .. } => InspectionCategory::InstallPath,
+            Self::MissingActivationTarget { .. } => InspectionCategory::ActivationTarget,
+            Self::ActivationTargetConflict { .. } => InspectionCategory::ActivationOwnership,
+            Self::MissingStoreEntry { .. } => InspectionCategory::StoreEntry,
+            Self::MissingStoreMetadata { .. } => InspectionCategory::StoreMetadata,
+        }
+    }
+
+    fn sort_key(&self) -> (InspectionSeverity, InspectionCategory, String, String) {
+        let detail = match self {
+            Self::MissingResourceRecord { resource } => (resource.as_string(), String::new()),
+            Self::MissingInstallPath { resource, path } => {
+                (resource.as_string(), path.display().to_string())
+            }
+            Self::MissingActivationTarget { resource, target } => {
+                (resource.as_string(), target.display().to_string())
+            }
+            Self::ActivationTargetConflict {
+                resource,
+                target,
+                conflicting_owners,
+            } => (
+                resource.as_string(),
+                format!(
+                    "{}:{}",
+                    target.display(),
+                    conflicting_owners
+                        .iter()
+                        .map(ResourceId::as_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            ),
+            Self::MissingStoreEntry { resource, key }
+            | Self::MissingStoreMetadata { resource, key } => {
+                (resource.as_string(), key.relative_name())
+            }
+        };
+
+        (self.severity(), self.category(), detail.0, detail.1)
+    }
+
+    pub fn summary_label(&self) -> &'static str {
+        match self {
+            Self::MissingResourceRecord { .. } => "missing-resource-record",
+            Self::MissingInstallPath { .. } => "missing-install-path",
+            Self::MissingActivationTarget { .. } => "missing-activation-target",
+            Self::ActivationTargetConflict { .. } => "activation-target-conflict",
+            Self::MissingStoreEntry { .. } => "missing-store-entry",
+            Self::MissingStoreMetadata { .. } => "missing-store-metadata",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ResourceInspectionSummary {
+    pub total_findings: usize,
+    pub info_count: usize,
+    pub warning_count: usize,
+    pub error_count: usize,
+}
+
+impl ResourceInspectionSummary {
+    fn from_findings(findings: &[ResourceInspectionFinding]) -> Self {
+        let mut summary = Self {
+            total_findings: findings.len(),
+            ..Self::default()
+        };
+
+        for finding in findings {
+            match finding.severity() {
+                InspectionSeverity::Info => summary.info_count += 1,
+                InspectionSeverity::Warning => summary.warning_count += 1,
+                InspectionSeverity::Error => summary.error_count += 1,
+            }
+        }
+
+        summary
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceInspectionReport {
+    pub snapshot: ResourceStateSnapshot,
+    pub findings: Vec<ResourceInspectionFinding>,
+    pub summary: ResourceInspectionSummary,
+}
+
+impl ResourceInspectionReport {
+    pub fn from_snapshot(
+        snapshot: ResourceStateSnapshot,
+        all_activations: &[ActivationRecord],
+        store: Option<&StoreReady>,
+    ) -> Self {
+        let legacy = ResourceInspection::from_snapshot(snapshot, all_activations, store);
+        Self::from_legacy(legacy)
+    }
+
+    pub fn from_legacy(inspection: ResourceInspection) -> Self {
+        let mut findings = inspection
+            .issues
+            .iter()
+            .cloned()
+            .map(ResourceInspectionFinding::from)
+            .collect::<Vec<_>>();
+        findings.sort_by_key(ResourceInspectionFinding::sort_key);
+        let summary = ResourceInspectionSummary::from_findings(&findings);
+
+        Self {
+            snapshot: inspection.snapshot,
+            findings,
+            summary,
+        }
+    }
+
+    pub fn is_clean(&self) -> bool {
+        self.findings.is_empty()
+    }
+
+    pub fn into_legacy(self) -> ResourceInspection {
+        ResourceInspection {
+            snapshot: self.snapshot,
+            issues: self
+                .findings
+                .into_iter()
+                .map(ResourceInspectionIssue::from)
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceRepairPlan {
-    pub inspection: ResourceInspection,
+    pub inspection: ResourceInspectionReport,
     pub actions: Vec<ResourceRepairAction>,
 }
 
 impl ResourceRepairPlan {
-    pub fn from_inspection(inspection: ResourceInspection) -> Self {
+    pub fn from_inspection(inspection: ResourceInspectionReport) -> Self {
         let mut actions = Vec::new();
 
-        for issue in &inspection.issues {
-            match issue {
-                ResourceInspectionIssue::MissingInstallPath { resource, .. } => {
+        for finding in &inspection.findings {
+            match finding {
+                ResourceInspectionFinding::MissingInstallPath { resource, .. } => {
                     push_unique_action(
                         &mut actions,
                         ResourceRepairAction::ClearInstallPath {
@@ -499,7 +788,7 @@ impl ResourceRepairPlan {
                         },
                     );
                 }
-                ResourceInspectionIssue::MissingActivationTarget { resource, target } => {
+                ResourceInspectionFinding::MissingActivationTarget { resource, target } => {
                     push_unique_action(
                         &mut actions,
                         ResourceRepairAction::RemoveActivationRecord {
@@ -508,7 +797,7 @@ impl ResourceRepairPlan {
                         },
                     );
                 }
-                ResourceInspectionIssue::MissingStoreEntry { resource, .. } => {
+                ResourceInspectionFinding::MissingStoreEntry { resource, .. } => {
                     push_unique_action(
                         &mut actions,
                         ResourceRepairAction::ClearArtifactKey {
@@ -516,9 +805,9 @@ impl ResourceRepairPlan {
                         },
                     );
                 }
-                ResourceInspectionIssue::MissingResourceRecord { .. }
-                | ResourceInspectionIssue::MissingStoreMetadata { .. }
-                | ResourceInspectionIssue::ActivationTargetConflict { .. } => {}
+                ResourceInspectionFinding::MissingResourceRecord { .. }
+                | ResourceInspectionFinding::MissingStoreMetadata { .. }
+                | ResourceInspectionFinding::ActivationTargetConflict { .. } => {}
             }
         }
 
@@ -571,6 +860,68 @@ pub enum ResourceInspectionIssue {
     },
 }
 
+impl From<ResourceInspectionIssue> for ResourceInspectionFinding {
+    fn from(issue: ResourceInspectionIssue) -> Self {
+        match issue {
+            ResourceInspectionIssue::MissingResourceRecord { resource } => {
+                Self::MissingResourceRecord { resource }
+            }
+            ResourceInspectionIssue::MissingInstallPath { resource, path } => {
+                Self::MissingInstallPath { resource, path }
+            }
+            ResourceInspectionIssue::MissingActivationTarget { resource, target } => {
+                Self::MissingActivationTarget { resource, target }
+            }
+            ResourceInspectionIssue::ActivationTargetConflict {
+                resource,
+                target,
+                conflicting_owners,
+            } => Self::ActivationTargetConflict {
+                resource,
+                target,
+                conflicting_owners,
+            },
+            ResourceInspectionIssue::MissingStoreEntry { resource, key } => {
+                Self::MissingStoreEntry { resource, key }
+            }
+            ResourceInspectionIssue::MissingStoreMetadata { resource, key } => {
+                Self::MissingStoreMetadata { resource, key }
+            }
+        }
+    }
+}
+
+impl From<ResourceInspectionFinding> for ResourceInspectionIssue {
+    fn from(finding: ResourceInspectionFinding) -> Self {
+        match finding {
+            ResourceInspectionFinding::MissingResourceRecord { resource } => {
+                Self::MissingResourceRecord { resource }
+            }
+            ResourceInspectionFinding::MissingInstallPath { resource, path } => {
+                Self::MissingInstallPath { resource, path }
+            }
+            ResourceInspectionFinding::MissingActivationTarget { resource, target } => {
+                Self::MissingActivationTarget { resource, target }
+            }
+            ResourceInspectionFinding::ActivationTargetConflict {
+                resource,
+                target,
+                conflicting_owners,
+            } => Self::ActivationTargetConflict {
+                resource,
+                target,
+                conflicting_owners,
+            },
+            ResourceInspectionFinding::MissingStoreEntry { resource, key } => {
+                Self::MissingStoreEntry { resource, key }
+            }
+            ResourceInspectionFinding::MissingStoreMetadata { resource, key } => {
+                Self::MissingStoreMetadata { resource, key }
+            }
+        }
+    }
+}
+
 fn push_unique_action(actions: &mut Vec<ResourceRepairAction>, action: ResourceRepairAction) {
     if !actions.contains(&action) {
         actions.push(action);
@@ -583,10 +934,137 @@ pub struct ActivationOwnershipConflict {
     pub owners: Vec<ResourceId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum OwnershipSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OwnershipReason {
+    SharedActivationTarget {
+        target: PathBuf,
+        owners: Vec<ResourceId>,
+    },
+    StateStoreReference {
+        key: StoreKey,
+        owner: ResourceId,
+        lifecycle: ResourceLifecycle,
+    },
+    RetentionPolicyExcludesLifecycle {
+        policy: StoreRetentionPolicy,
+        resource: ResourceId,
+        lifecycle: ResourceLifecycle,
+    },
+    UnreferencedStoreMetadata {
+        key: StoreKey,
+    },
+}
+
+impl OwnershipReason {
+    fn sort_key(&self) -> (u8, String, String) {
+        match self {
+            Self::SharedActivationTarget { target, owners } => (
+                0,
+                target.display().to_string(),
+                owners
+                    .iter()
+                    .map(ResourceId::as_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            Self::StateStoreReference {
+                key,
+                owner,
+                lifecycle,
+            } => (
+                1,
+                key.relative_name(),
+                format!("{}:{lifecycle:?}", owner.as_string()),
+            ),
+            Self::RetentionPolicyExcludesLifecycle {
+                policy,
+                resource,
+                lifecycle,
+            } => (2, resource.as_string(), format!("{policy:?}:{lifecycle:?}")),
+            Self::UnreferencedStoreMetadata { key } => (3, key.relative_name(), String::new()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivationOwnershipEntry {
+    pub target: PathBuf,
+    pub owners: Vec<ResourceId>,
+    pub severity: OwnershipSeverity,
+    pub reasons: Vec<OwnershipReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ActivationOwnershipReport {
+    pub entries: Vec<ActivationOwnershipEntry>,
+}
+
+impl ActivationOwnershipReport {
+    pub fn from_activations(activations: &[ActivationRecord]) -> Self {
+        let mut entries = activation_ownership_entries(activations);
+        entries.sort_by_key(|entry| {
+            (
+                entry.severity,
+                entry.target.display().to_string(),
+                entry
+                    .owners
+                    .iter()
+                    .map(ResourceId::as_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        });
+        Self { entries }
+    }
+
+    pub fn is_clean(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreKeyReference {
     pub key: StoreKey,
     pub owners: Vec<ResourceId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtectedStoreKey {
+    pub key: StoreKey,
+    pub reasons: Vec<OwnershipReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtectedStoreMetadata {
+    pub record: StoreMetadataRecord,
+    pub reasons: Vec<OwnershipReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemovableStoreMetadata {
+    pub record: StoreMetadataRecord,
+    pub reasons: Vec<OwnershipReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReasonedStoreRetentionPlan {
+    pub policy: StoreRetentionPolicy,
+    pub protected_keys: Vec<ProtectedStoreKey>,
+    pub protected_metadata: Vec<ProtectedStoreMetadata>,
+    pub removable_metadata: Vec<RemovableStoreMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnershipRetentionPlan {
+    pub ownership: ActivationOwnershipReport,
+    pub retention: ReasonedStoreRetentionPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -638,33 +1116,45 @@ fn conflicting_activation_owners(
             owners.push(activation.id.clone());
         }
     }
+    owners.sort_by_key(ResourceId::as_string);
     owners
 }
 
-fn activation_conflicts(activations: &[ActivationRecord]) -> Vec<ActivationOwnershipConflict> {
-    let mut conflicts = Vec::new();
+fn activation_ownership_entries(activations: &[ActivationRecord]) -> Vec<ActivationOwnershipEntry> {
+    let mut entries = Vec::new();
 
     for activation in activations {
-        let mut owners = vec![activation.id.clone()];
-        for other in activations {
-            if other.target == activation.target && !owners.contains(&other.id) {
-                owners.push(other.id.clone());
-            }
+        if entries
+            .iter()
+            .any(|entry: &ActivationOwnershipEntry| entry.target == activation.target)
+        {
+            continue;
         }
 
-        if owners.len() > 1
-            && !conflicts
-                .iter()
-                .any(|conflict: &ActivationOwnershipConflict| conflict.target == activation.target)
-        {
-            conflicts.push(ActivationOwnershipConflict {
+        let mut owners = activations
+            .iter()
+            .filter(|other| other.target == activation.target)
+            .map(|other| other.id.clone())
+            .collect::<Vec<_>>();
+        owners.sort_by_key(ResourceId::as_string);
+        owners.dedup();
+
+        if owners.len() <= 1 {
+            continue;
+        }
+
+        entries.push(ActivationOwnershipEntry {
+            target: activation.target.clone(),
+            owners: owners.clone(),
+            severity: OwnershipSeverity::Warning,
+            reasons: vec![OwnershipReason::SharedActivationTarget {
                 target: activation.target.clone(),
                 owners,
-            });
-        }
+            }],
+        });
     }
 
-    conflicts
+    entries
 }
 
 fn store_key_references(records: &[ResourceRecord]) -> Vec<StoreKeyReference> {
@@ -690,6 +1180,12 @@ fn store_key_references(records: &[ResourceRecord]) -> Vec<StoreKeyReference> {
         }
     }
 
+    for reference in &mut references {
+        reference.owners.sort_by_key(ResourceId::as_string);
+        reference.owners.dedup();
+    }
+    references.sort_by_key(|reference| reference.key.relative_name());
+
     references
 }
 
@@ -703,6 +1199,87 @@ fn store_key_references_for_retention(
         .cloned()
         .collect::<Vec<_>>();
     store_key_references(&filtered)
+}
+
+fn protected_store_keys_with_reasons(
+    records: &[ResourceRecord],
+    policy: StoreRetentionPolicy,
+) -> Vec<ProtectedStoreKey> {
+    let mut entries = Vec::<ProtectedStoreKey>::new();
+
+    for record in records {
+        let Some(key) = &record.artifact_key else {
+            continue;
+        };
+
+        if !retention_matches(record.lifecycle.clone(), policy) {
+            continue;
+        }
+
+        let reason = OwnershipReason::StateStoreReference {
+            key: key.clone(),
+            owner: record.id.clone(),
+            lifecycle: record.lifecycle.clone(),
+        };
+        if let Some(existing) = entries.iter_mut().find(|entry| entry.key == *key) {
+            existing.reasons.push(reason);
+        } else {
+            entries.push(ProtectedStoreKey {
+                key: key.clone(),
+                reasons: vec![reason],
+            });
+        }
+    }
+
+    for entry in &mut entries {
+        entry.reasons.sort_by_key(OwnershipReason::sort_key);
+        entry.reasons.dedup();
+    }
+    entries.sort_by_key(|entry| entry.key.relative_name());
+
+    entries
+}
+
+fn protected_metadata_reasons(
+    record: &StoreMetadataRecord,
+    protected_keys: &[ProtectedStoreKey],
+) -> Vec<OwnershipReason> {
+    protected_keys
+        .iter()
+        .find(|entry| entry.key == record.key)
+        .map(|entry| entry.reasons.clone())
+        .unwrap_or_default()
+}
+
+fn removable_metadata_reasons(
+    record: &StoreMetadataRecord,
+    resources: &[ResourceRecord],
+    policy: StoreRetentionPolicy,
+) -> Vec<OwnershipReason> {
+    let mut reasons = Vec::new();
+
+    let referencing_records = resources
+        .iter()
+        .filter(|resource| resource.artifact_key.as_ref() == Some(&record.key))
+        .collect::<Vec<_>>();
+
+    if referencing_records.is_empty() {
+        reasons.push(OwnershipReason::UnreferencedStoreMetadata {
+            key: record.key.clone(),
+        });
+    } else {
+        for resource in referencing_records {
+            reasons.push(OwnershipReason::RetentionPolicyExcludesLifecycle {
+                policy,
+                resource: resource.id.clone(),
+                lifecycle: resource.lifecycle.clone(),
+            });
+        }
+    }
+
+    reasons.sort_by_key(OwnershipReason::sort_key);
+    reasons.dedup();
+    reasons
 }
 
 fn retention_matches(lifecycle: ResourceLifecycle, policy: StoreRetentionPolicy) -> bool {
@@ -1023,33 +1600,33 @@ mod tests {
 
         assert!(
             inspection
-                .issues
-                .contains(&ResourceInspectionIssue::MissingInstallPath {
+                .findings
+                .contains(&ResourceInspectionFinding::MissingInstallPath {
                     resource: id.clone(),
                     path: temp.path().join("missing-install"),
                 })
         );
+        assert!(inspection.findings.contains(
+            &ResourceInspectionFinding::MissingActivationTarget {
+                resource: id.clone(),
+                target: temp.path().join("active/runtime"),
+            }
+        ));
         assert!(
             inspection
-                .issues
-                .contains(&ResourceInspectionIssue::MissingActivationTarget {
-                    resource: id.clone(),
-                    target: temp.path().join("active/runtime"),
-                })
-        );
-        assert!(
-            inspection
-                .issues
-                .contains(&ResourceInspectionIssue::MissingStoreEntry {
+                .findings
+                .contains(&ResourceInspectionFinding::MissingStoreEntry {
                     resource: id.clone(),
                     key: key.clone(),
                 })
         );
         assert!(
             inspection
-                .issues
-                .contains(&ResourceInspectionIssue::MissingStoreMetadata { resource: id, key })
+                .findings
+                .contains(&ResourceInspectionFinding::MissingStoreMetadata { resource: id, key })
         );
+        assert_eq!(inspection.summary.error_count, 3);
+        assert_eq!(inspection.summary.warning_count, 1);
     }
 
     #[test]
@@ -1086,7 +1663,44 @@ mod tests {
         state.record_activation(&id, activation_target).unwrap();
 
         let inspection = state.inspect_resource(&id, Some(&store)).unwrap();
-        assert!(inspection.issues.is_empty());
+        assert!(inspection.is_clean());
+        assert_eq!(inspection.summary.total_findings, 0);
+    }
+
+    #[test]
+    fn resource_inspection_is_read_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+        let id = ResourceId::parse("example/runtime").unwrap();
+        let key = StoreKey::logical("runtime").unwrap();
+
+        state
+            .ensure_resource_record(id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id,
+                ResourceRecordPatch::artifact_key(Some(key))
+                    .with_install_path(Some(temp.path().join("missing-install")))
+                    .with_lifecycle(ResourceLifecycle::Installed),
+            )
+            .unwrap();
+        state
+            .record_activation(&id, temp.path().join("active/runtime"))
+            .unwrap();
+
+        let before = state.load().unwrap();
+        let inspection = state.inspect_resource(&id, Some(&store)).unwrap();
+        let after = state.load().unwrap();
+
+        assert!(!inspection.is_clean());
+        assert_eq!(before, after);
     }
 
     #[test]
@@ -1204,15 +1818,13 @@ mod tests {
             .unwrap();
 
         let inspection = state.inspect_resource(&first, None).unwrap();
-        assert!(
-            inspection
-                .issues
-                .contains(&ResourceInspectionIssue::ActivationTargetConflict {
-                    resource: first.clone(),
-                    target: shared_target.clone(),
-                    conflicting_owners: vec![second.clone()],
-                })
-        );
+        assert!(inspection.findings.contains(
+            &ResourceInspectionFinding::ActivationTargetConflict {
+                resource: first.clone(),
+                target: shared_target.clone(),
+                conflicting_owners: vec![second.clone()],
+            }
+        ));
 
         let conflicts = state.list_activation_conflicts().unwrap();
         assert_eq!(conflicts.len(), 1);
@@ -1400,5 +2012,218 @@ mod tests {
         assert_eq!(plan.protected_metadata[0].key, active_key);
         assert_eq!(plan.removable_metadata.len(), 1);
         assert_eq!(plan.removable_metadata[0].key, fetched_key);
+    }
+
+    #[test]
+    fn activation_ownership_report_detects_shared_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let shared_target = temp.path().join("active/shared-runtime");
+        std::fs::create_dir_all(shared_target.parent().unwrap()).unwrap();
+        std::fs::write(&shared_target, b"active").unwrap();
+
+        let first = ResourceId::parse("example/runtime-a").unwrap();
+        let second = ResourceId::parse("example/runtime-b").unwrap();
+
+        state
+            .record_activation(&first, shared_target.clone())
+            .unwrap();
+        state
+            .record_activation(&second, shared_target.clone())
+            .unwrap();
+
+        let report = state.activation_ownership_report().unwrap();
+        assert_eq!(report.entries.len(), 1);
+        let entry = &report.entries[0];
+        assert_eq!(entry.target, shared_target);
+        assert_eq!(entry.severity, OwnershipSeverity::Warning);
+        assert_eq!(entry.owners, vec![first.clone(), second.clone()]);
+        assert_eq!(
+            entry.reasons,
+            vec![OwnershipReason::SharedActivationTarget {
+                target: entry.target.clone(),
+                owners: vec![first, second],
+            }]
+        );
+    }
+
+    #[test]
+    fn reasoned_retention_plan_explains_lifecycle_based_protection_and_removal() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+
+        let active_id = ResourceId::parse("example/runtime-active").unwrap();
+        let fetched_id = ResourceId::parse("example/runtime-fetched").unwrap();
+        let orphaned_key = StoreKey::logical("runtime-orphaned").unwrap();
+        let active_key = StoreKey::logical("runtime-active").unwrap();
+        let fetched_key = StoreKey::logical("runtime-fetched").unwrap();
+
+        for key in [&active_key, &fetched_key, &orphaned_key] {
+            store.put_artifact_bytes(key, b"payload").unwrap();
+            std::fs::remove_file(store.artifact_path(key)).unwrap();
+        }
+
+        state
+            .ensure_resource_record(active_id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &active_id,
+                ResourceRecordPatch::artifact_key(Some(active_key.clone()))
+                    .with_lifecycle(ResourceLifecycle::Active),
+            )
+            .unwrap();
+
+        state
+            .ensure_resource_record(fetched_id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &fetched_id,
+                ResourceRecordPatch::artifact_key(Some(fetched_key.clone()))
+                    .with_lifecycle(ResourceLifecycle::Fetched),
+            )
+            .unwrap();
+
+        let plan = state
+            .plan_store_metadata_retention_reasoned(&store, StoreRetentionPolicy::ActiveOnly)
+            .unwrap();
+
+        assert_eq!(plan.protected_keys.len(), 1);
+        assert_eq!(plan.protected_keys[0].key, active_key);
+        assert_eq!(
+            plan.protected_keys[0].reasons,
+            vec![OwnershipReason::StateStoreReference {
+                key: plan.protected_keys[0].key.clone(),
+                owner: active_id,
+                lifecycle: ResourceLifecycle::Active,
+            }]
+        );
+
+        assert_eq!(plan.removable_metadata.len(), 2);
+        assert_eq!(plan.removable_metadata[0].record.key, fetched_key);
+        assert_eq!(
+            plan.removable_metadata[0].reasons,
+            vec![OwnershipReason::RetentionPolicyExcludesLifecycle {
+                policy: StoreRetentionPolicy::ActiveOnly,
+                resource: fetched_id,
+                lifecycle: ResourceLifecycle::Fetched,
+            }]
+        );
+        assert_eq!(plan.removable_metadata[1].record.key, orphaned_key);
+        assert_eq!(
+            plan.removable_metadata[1].reasons,
+            vec![OwnershipReason::UnreferencedStoreMetadata {
+                key: plan.removable_metadata[1].record.key.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn ownership_and_retention_plans_are_deterministic() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+
+        let id_a = ResourceId::parse("example/runtime-a").unwrap();
+        let id_b = ResourceId::parse("example/runtime-b").unwrap();
+        let key_a = StoreKey::logical("runtime-a").unwrap();
+        let key_b = StoreKey::logical("runtime-b").unwrap();
+        let shared_target = temp.path().join("active/shared");
+        std::fs::create_dir_all(shared_target.parent().unwrap()).unwrap();
+        std::fs::write(&shared_target, b"active").unwrap();
+
+        for key in [&key_a, &key_b] {
+            store.put_artifact_bytes(key, b"payload").unwrap();
+            std::fs::remove_file(store.artifact_path(key)).unwrap();
+        }
+
+        state
+            .ensure_resource_record(id_b.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id_b,
+                ResourceRecordPatch::artifact_key(Some(key_b.clone()))
+                    .with_lifecycle(ResourceLifecycle::Fetched),
+            )
+            .unwrap();
+        state
+            .ensure_resource_record(id_a.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id_a,
+                ResourceRecordPatch::artifact_key(Some(key_a.clone()))
+                    .with_lifecycle(ResourceLifecycle::Active),
+            )
+            .unwrap();
+        state
+            .record_activation(&id_b, shared_target.clone())
+            .unwrap();
+        state.record_activation(&id_a, shared_target).unwrap();
+
+        let plan_one = state
+            .plan_ownership_and_retention(&store, StoreRetentionPolicy::ActiveOnly)
+            .unwrap();
+        let plan_two = state
+            .plan_ownership_and_retention(&store, StoreRetentionPolicy::ActiveOnly)
+            .unwrap();
+
+        assert_eq!(plan_one, plan_two);
+    }
+
+    #[test]
+    fn ownership_and_retention_planning_is_read_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+        let id = ResourceId::parse("example/runtime").unwrap();
+        let key = StoreKey::logical("runtime").unwrap();
+
+        store.put_artifact_bytes(&key, b"payload").unwrap();
+        std::fs::remove_file(store.artifact_path(&key)).unwrap();
+
+        state
+            .ensure_resource_record(id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id,
+                ResourceRecordPatch::artifact_key(Some(key))
+                    .with_lifecycle(ResourceLifecycle::Fetched),
+            )
+            .unwrap();
+        state
+            .record_activation(&id, temp.path().join("active/runtime"))
+            .unwrap();
+
+        let before = state.load().unwrap();
+        let _ = state.activation_ownership_report().unwrap();
+        let _ = state
+            .plan_store_metadata_retention_reasoned(&store, StoreRetentionPolicy::ActiveOnly)
+            .unwrap();
+        let _ = state
+            .plan_ownership_and_retention(&store, StoreRetentionPolicy::ActiveOnly)
+            .unwrap();
+        let after = state.load().unwrap();
+
+        assert_eq!(before, after);
     }
 }

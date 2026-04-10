@@ -56,6 +56,8 @@ This flow is the baseline Pulith fetch contract:
 - progress callbacks through explicit caller-provided hooks
 - typed `FetchReceipt` handoff for higher workflow layers
 
+Advanced retry/resume behavior outside this baseline should be treated as maturing and must not be interpreted as a stronger reliability contract than current tests document.
+
 ## Advanced Fetchers
 
 The crate also exposes higher-level fetchers:

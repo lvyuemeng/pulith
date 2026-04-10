@@ -1,4 +1,11 @@
 //! Composable installation workflow primitives for Pulith.
+//!
+//! Contract highlights:
+//! - Replace/upgrade flows capture a previous-install snapshot and can roll back within that scope.
+//! - Rollback and backup/restore restore both install content and per-resource `pulith-state` facts.
+//! - Activation replacement is explicit and platform-specific behavior is surfaced through typed errors.
+//! - Windows file symlink privilege failures map to [`InstallError::WindowsFileSymlinkPrivilege`]
+//!   instead of hidden fallback behavior.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,12 +55,14 @@ pub enum InstallError {
     #[error("install root does not exist for upgrade: {0}")]
     MissingInstallForUpgrade(PathBuf),
     #[error("no rollback snapshot is available")]
+    /// Rollback was requested for a flow that did not capture a previous-install snapshot.
     RollbackUnavailable,
     #[error("shim command must not be empty")]
     EmptyShimCommand,
     #[error("shim target `{0}` is not resolvable")]
     UnresolvedShimTarget(String),
     #[error("install root does not exist for backup: {0}")]
+    /// Backup can only snapshot an existing install root.
     MissingInstallForBackup(PathBuf),
     #[error(
         "activation of file target requires symlink privilege or developer mode on Windows: {installed_path} -> {target}"
@@ -83,6 +92,9 @@ impl InstallReady {
         &self.state
     }
 
+    /// Captures a per-resource backup receipt containing install content and matching state facts.
+    ///
+    /// The state payload is limited to the target resource record and activation history.
     pub fn create_backup(
         &self,
         id: &pulith_resource::ResourceId,
@@ -129,6 +141,10 @@ impl InstallReady {
         })
     }
 
+    /// Restores install content and captured per-resource state from a prior [`BackupReceipt`].
+    ///
+    /// This restore scope is limited to the install root in the receipt plus persisted facts for the
+    /// same resource.
     pub fn restore_backup(&self, backup: &BackupReceipt) -> Result<RestoreReceipt> {
         if backup.install_root.exists() {
             remove_existing_target(&backup.install_root)?;
@@ -837,6 +853,7 @@ fn prepare_path_for_removal(path: &Path) -> Result<()> {
 }
 
 #[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
 fn clear_readonly_recursive(path: &Path) -> Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     let file_type = metadata.file_type();

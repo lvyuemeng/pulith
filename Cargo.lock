@@ -1688,6 +1688,7 @@ name = "runtime-manager-example"
 version = "0.1.0"
 dependencies = [
  "pulith-archive",
+ "pulith-backend-example",
  "pulith-fetch",
  "pulith-install",
  "pulith-resource",

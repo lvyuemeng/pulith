@@ -2,182 +2,108 @@
 
 ## Vision
 
-Pulith is a Rust ecosystem for resource management primitives: version selection, source planning, fetching, verification, storage, extraction, installation, activation, and persistent state.
+Pulith is a mechanism-first Rust ecosystem for resource management primitives.
 
-The project is mechanism-first. It should give tool authors reliable building blocks without forcing one package format, backend, or manager model.
+It exists to let tool authors build reliable resource managers from explicit, composable parts rather than from package-manager-specific script glue.
 
-In practical terms, Pulith is meant to be the substrate for tools that need to manage external resources with explicit, inspectable behavior rather than ad hoc script glue.
-
-## Why It Exists
-
-Most tools that manage external resources end up rebuilding the same layers:
-
-- version parsing and selection
-- source planning and fetching
-- content verification
-- atomic filesystem updates
-- persistent state and activation
-- cross-platform behavior
-
-Pulith exists to make those layers reusable, composable, and correct.
-
-## What A User Should Expect
-
-If you adopt Pulith as a library stack, you should expect three things.
-
-### 1. Clear API Shape
-
-The public API should read like a resource-management pipeline:
+Pulith is not trying to be a monolithic package manager framework. It is trying to be a trustworthy substrate for managers that need to:
 
 - describe resources semantically
-- derive and plan sources
-- fetch and verify content
-- register artifacts or extracted trees
-- install and activate explicitly
-- persist, inspect, repair, and retain lifecycle state
+- plan and fetch sources explicitly
+- verify and materialize content safely
+- install and activate resources predictably
+- persist lifecycle state durably
+- inspect, reconcile, repair, and retain state without hidden policy
 
-You should not need to reconstruct raw path/key/record glue at every layer just to compose a normal flow.
+## Scope
 
-### 2. Clear Principles
+Pulith is in scope for:
 
-Pulith should be predictable because its crates follow a small number of rules:
+- resource identity and version intent
+- source planning and fetch execution
+- verification, storage, extraction, install, and activation
+- persistence of lifecycle facts and provenance
+- semantic inspection, repair planning, and retention planning
+- cross-platform behavior where install and activation semantics differ
 
-- primitives stay primitive
-- workflow crates compose lower layers instead of absorbing them
-- semantic crates describe facts and queries rather than hard-coding manager policy
-- side effects stay explicit in fetch/store/install/state operations
-- receipts, records, and reports should make behavior explainable after the fact
+Pulith is out of scope for:
 
-### 3. Clear Execution Story
-
-Pulith should make it obvious how work happens:
-
-- `pulith-resource` describes what a thing is
-- `pulith-source` describes where it may come from
-- `pulith-fetch` turns a plan into bytes
-- `pulith-archive` turns archive bytes into a materialized tree
-- `pulith-store` makes artifacts/extracts reusable and provenance-aware
-- `pulith-install` places materialized content into an install root and optionally activates it
-- `pulith-state` persists lifecycle facts and supports inspection, repair, and retention planning
-
-That execution story should remain visible in both docs and public APIs.
-
-## User-Centered Reframe
-
-If I were building a real resource manager on top of Pulith - a system package manager, config manager, runtime/tool installer, or plugin manager - I would want a few things very clearly.
-
-### Expected Behavior
-
-- declare resources semantically instead of stitching together raw paths and file names
-- resolve, fetch, verify, store, install, and activate through predictable composable steps
-- support both file-like and directory-like resources
-- support reinstall, upgrade, rollback, activation switching, and recovery after interruption
-- preserve provenance so I can explain where a resource came from and how it was materialized
-- adapt to different manager styles without forcing one package model or repository design
-- detect, reconcile, repair, and reapply state when reality drifts from persisted facts
-- handle ownership, conflicts, retention, and cleanup without guessing blindly
-- support explainable decisions and auditable outcomes for operator-facing tools
-
-In short: Pulith should help users build real managers, not just isolated crate demos.
-
-### Expected Safety
-
-- atomic replace/install behavior so partial writes do not become live state
-- explicit verification and trust hooks rather than hidden best-effort checks
-- rollback and recovery paths that restore both filesystem state and persisted lifecycle facts
-- cross-platform behavior that is explicit where semantics differ, especially on Windows
-- explicit effect boundaries so helpers do not hide network, filesystem, or activation side effects
-
-### Expected Consistency
-
-- the same semantic resource identity should drive planning, storage, state, and installation
-- provenance should survive handoff boundaries instead of disappearing during workflow transitions
-- lifecycle transitions should be expressed through small semantic operations, not repeated record reconstruction
-- helpers should be named by role (`plan`, `resolve`, `lookup`, `register`, `record`, `activate`) and behave consistently across crates
-- convenience should reduce orchestration, not introduce hidden policy
-- repair, reconcile, and prune behavior should use the same identity/provenance model as install and activation
+- repository hosting
+- authentication servers
+- license management
+- full dependency resolution
+- lockfile-driven package graphs
+- manager-specific policy such as ranking repositories, upgrade channels, or dependency solving rules
 
 ## Design Principles
 
 1. atomicity first
-2. composability over framework-style policy
-3. cross-platform behavior as a primary constraint
-4. semantic APIs over raw stringly glue
-5. type-driven correctness where workflow ordering matters
-6. proof-carrying validation where repeated checks would spread through the codebase
-7. thin integration surfaces between crates instead of monolithic abstraction
-8. semantic consistency across fetch, store, install, activate, and state
-9. ergonomic helpers should remove repetition without hiding effects or policy
+2. semantic APIs over stringly glue
+3. pure core, impure edge
+4. composition over orchestration
+5. crate roles stay narrow and predictable
+6. ergonomic helpers remove repetition without hiding policy
+7. cross-platform behavior is explicit where semantics differ
+8. receipts, records, and reports should make behavior explainable afterward
+
+## User Expectation
+
+If a user builds on Pulith, the public API should read like a resource-management pipeline:
+
+- describe a resource
+- derive or plan sources
+- fetch and verify content
+- register an artifact or extracted tree
+- install and optionally activate it
+- persist lifecycle facts
+- inspect drift, plan repair, and derive retention safely
+
+The important constraint is not just correctness of each crate in isolation. The important constraint is that adjacent crates compose without forcing callers to rebuild path, key, provenance, and record glue by hand.
 
 ## Current Architecture
 
-Pulith now has four logical layers:
+Pulith has four main layers plus support crates and examples.
 
-### 1. Primitive Layer
+### Primitive Layer
 
-- `pulith-platform`: small cross-platform helpers
-- `pulith-version`: version parsing, comparison, and selection
-- `pulith-fs`: atomic file and workspace primitives
+- `pulith-platform`: platform and environment helpers
+- `pulith-version`: version parsing, comparison, matching, and preference
+- `pulith-fs`: atomic filesystem and workspace primitives
 - `pulith-verify`: verification primitives
-- `pulith-archive`: archive extraction primitives
+- `pulith-archive`: extraction primitives
 - `pulith-fetch`: transfer execution primitives
 - `pulith-shim`: shim resolution primitives
 
-### 1a. Support and Template Layer
+### Semantic Model Layer
 
-- `pulith-shim-bin`: thin shim-binary helper/template for turning `pulith-shim` resolution into a runnable executable boundary
+- `pulith-resource`: resource identity, locator, version intent, and selection helpers
+- `pulith-store`: artifact/extract registration, metadata, provenance, and lookup
+- `pulith-state`: lifecycle facts, inspection, repair planning, and retention-oriented state helpers
 
-### 2. Semantic Model Layer
+### Workflow Layer
 
-- `pulith-resource`: shared resource semantics
-- `pulith-resource`: shared resource semantics and optional trust policy description
-- `pulith-store`: local artifact and extract storage
-- `pulith-state`: persistent resource lifecycle state
+- `pulith-install`: typed install, replace, activate, upgrade, and rollback workflow
 
-### 3. Workflow Layer
+### Source Layer
 
-- `pulith-install`: typed installation and activation workflow
+- `pulith-source`: source definitions, planning, candidate expansion, and planning strategy
 
-### 4. Source Layer
+### Support / Example Layer
 
-- `pulith-source`: source definitions, planning, and expansion
-
-### 5. Backend Example Layer
-
-- `pulith-backend-example`: thin adapter example built on top of resource, source, and install crates
-
-### 6. Top-Level Integration Examples
-
-- `examples/runtime-manager/`: partially practical multi-crate example that exercises the public workflow outside `crates/`
-
-## Active Crates
-
-| crate | maturity | role |
-|-------|----------|------|
-| `pulith-platform` | stable core | cross-platform helpers |
-| `pulith-version` | stable core | version parsing and selection |
-| `pulith-shim` | stable core | shim resolution |
-| `pulith-shim-bin` | support/template | shim-binary execution helper |
-| `pulith-fs` | maturing core | atomic filesystem and workspace primitives |
-| `pulith-verify` | stable core | content verification |
-| `pulith-archive` | maturing core | archive extraction |
-| `pulith-fetch` | maturing core | transfer execution |
-| `pulith-resource` | emerging core | resource semantics |
-| `pulith-store` | emerging core | artifact storage |
-| `pulith-state` | emerging core | persistent lifecycle state |
-| `pulith-install` | emerging core | installation workflow |
-| `pulith-source` | emerging core | source planning |
-| `pulith-backend-example` | example | adapter-first backend composition |
+- `pulith-shim-bin`: thin runtime boundary around shim resolution
+- `pulith-backend-example`: thin adapter example
+- `examples/runtime-manager/`: practical multi-crate integration example
 
 ## Dependency Shape
 
-The dependency shape is intentionally layered:
+The dependency shape remains correct and should stay intact.
 
-- primitives should stay independently usable
-- semantic crates should stay policy-light
-- workflow crates should compose lower layers rather than absorb them
+- primitive crates should remain independently useful
+- semantic crates should remain policy-light
+- workflow crates should compose lower layers instead of absorbing them
+- examples should prove end-to-end ergonomics without redefining the architecture
 
-Current high-level relationships:
+High-level relationships:
 
 - `pulith-fetch` depends on `pulith-fs` and `pulith-verify`
 - `pulith-archive` depends on `pulith-fs`
@@ -185,329 +111,276 @@ Current high-level relationships:
 - `pulith-state` depends on `pulith-fs`, `pulith-resource`, and `pulith-store`
 - `pulith-install` depends on `pulith-fs`, `pulith-resource`, `pulith-store`, and `pulith-state`
 - `pulith-source` depends on `pulith-resource`
-- `pulith-backend-example` depends on `pulith-resource`, `pulith-source`, and `pulith-install`
 
-## Current Assessment
+The next phase should tighten these handoffs, not merge the crates.
 
-The architecture is broadly correct.
-
-The main issue is no longer missing layers. The main issue is integration maturity between the newer crates, especially where callers still have to reconstruct semantic queries, lifecycle transitions, or composed plans by hand.
+## Current State
 
 ### What Is Working
 
-- the crate split still maps well to real resource-management concerns
-- the philosophy is still consistent across the workspace
-- type-state is used in the right places so far: resource resolution, source planning, and install flow
-- proof-carrying validation is present where it matters most today (`ValidUrl`, `ValidDigest`)
-- the engineering baseline is strong: formatting, tests, docs, and CI all work across the workspace
-- the composed system is starting to behave like a usable resource-management substrate rather than a loose set of primitives
+The workspace is no longer missing its basic layers.
+
+What is already materially in place:
+
+- the crate split maps well to resource-management concerns
+- semantic resource identity is present and increasingly reused across layers
+- source planning, fetch/store handoff, install staging, activation, rollback, and persistence all exist
+- provenance now survives more of the fetch -> store -> install path
+- install replacement, rollback, and activation semantics are much stronger than earlier iterations
+- `pulith-store` and `pulith-state` now expose more semantic helpers instead of forcing repeated caller-side reconstruction
+- inspection, repair planning, ownership conflict detection, and retention planning now exist in initial form
+- integration tests cover the main install-centered workflows
 
 ### Main Design Debt
 
-- `pulith-fetch` still mixes a dependable simple path with less mature advanced policy surfaces
-- some remaining bridges between `pulith-source`, `pulith-fetch`, `pulith-store`, and `pulith-install` are still phrased as caller-side choreography instead of reusable semantic helpers
-- some lifecycle transitions still require too much caller-side record construction even though the state model itself is already stable enough to support better helpers
-- `pulith-version` now has typed requirement and preference primitives, but still needs stronger integration across real planners and adapter decisions
-- `pulith-state` is intentionally simple, but snapshot rewriting may become expensive for larger registries
-- some user-facing guarantees are still implicit rather than clearly stated: what is safe to retry, what is reversible, what provenance is durable, and where cross-platform semantics intentionally diverge
-- discovery, reconciliation, ownership, retention, repair, and explainability are not yet first-class behavior families in the current design story even though real managers need them
+Pulith's main problem is no longer missing crates. Its main problem is uneven maturity across behavior families and crate boundaries.
 
-## Current Goal Reframing
+The most important debt is:
 
-The next design goal should not be "add more crates" or even simply "add more typed bridges".
+- some source/fetch/store/install/state handoffs still require caller-side choreography
+- some lifecycle transitions still require record-level reconstruction by callers
+- discovery, reconciliation, repair, ownership, retention, and explainability exist only in partial form
+- user-facing guarantees are still weaker than the API surface suggests
+- advanced fetch execution and retry/recovery semantics need a clearer contract story
+- state snapshot growth is simple and acceptable for now, but long-term scaling remains an evidence question
 
-The current goal should be:
+## What Pulith Must Be Strong At
 
-- keep the existing crate boundaries
-- reduce repeated orchestration at crate boundaries
-- make semantic queries and lifecycle transitions first-class helpers
-- extend behavior only where the additional semantics are broadly reusable
-- improve ergonomics and consistency without hiding effects or policy
-- make Pulith feel trustworthy to build real managers on top of, not just correct in isolated crate tests
+Pulith should converge on five first-class behavior families.
 
-This matches `docs/AGENT.md` more closely:
+### 1. Install and Activation
 
-- Functions First: move repeated orchestration into focused helpers with explicit inputs/outputs
-- Pure Core, Impure Edge: keep policy-light semantic transformations reusable while leaving I/O at the boundary
-- Composition Over Orchestration: favor pipeline helpers and record/query helpers over ad hoc caller loops
-- Explicit Effects: keep fetch/store/install/state side effects visible rather than burying them in large controller types
+This is the most mature behavior family today.
 
-## Additional Behavior Families To Design For
+Pulith should support:
 
-Install behavior is only one slice of a real resource manager. Pulith should also explicitly account for the following behavior families.
+- install of file-like and directory-like resources
+- explicit activation policy choices
+- replace, upgrade, rollback, and interruption recovery
+- clear cross-platform activation failure surfaces
 
-### Discovery and Inspection
+### 2. Discovery and Inspection
+
+This behavior family exists only partially today.
+
+Pulith should support:
 
 - detect already-installed resources
-- inspect store/state/install/activation facts without mutating them
-- compare persisted facts against on-disk reality
+- inspect store, install, activation, and state facts without mutation
+- compare persisted facts with filesystem and store reality
+- produce explainable issue reports rather than opaque booleans
 
-### Drift, Reconciliation, and Repair
+### 3. Reconciliation and Repair
 
-- detect when resources, installs, or activation targets drift from desired state
-- reconcile persisted state with reality safely
-- repair broken activations, partial installs, or stale metadata without inventing hidden policy
+This behavior family has initial helpers but is not yet mature enough.
 
-### Ownership, Conflict, and Retention
+Pulith should support:
 
-- express which resource owns which install root, activation target, or stored artifact
-- detect collisions and ambiguous ownership instead of silently overwriting
-- support pruning and retention with explicit ownership/protection semantics
+- detect drift in install paths, activation targets, metadata, and store references
+- plan repair explicitly before applying it
+- reapply or restore state without inventing hidden manager policy
+- preserve recoverability and explainability across repair flows
 
-### Migration and Convergence
+### 4. Ownership, Conflict, and Retention
 
-- support install-root migration, state/schema migration, and semantic renames where needed
-- support desired-state -> diff -> converge flows for config-manager-like use cases
-- support batch or grouped application where several resource operations need one higher-level plan
+This behavior family is still under-modeled.
 
-### Explainability and Auditability
+Pulith should support:
 
-- explain why a source, version, store key, or activation target was chosen
-- keep enough durable provenance and lifecycle history to support audit/debug flows
-- prefer receipts, records, and small semantic events over opaque orchestration state
+- explicit ownership of install roots, activation targets, and stored material
+- collision detection before destructive replacement or cleanup
+- protected prune planning derived from semantic state
+- retention planning that explains why something is protected or removable
 
-## Crate Re-evaluation
+### 5. Explainability and Auditability
 
-### Keep As Separate Crates
+This behavior family is still incomplete.
 
-These boundaries are still good and should remain:
+Pulith should support:
 
-- `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`
-- `pulith-resource`, `pulith-store`, `pulith-state`
-- `pulith-install`, `pulith-source`
+- explain why a source or candidate was selected
+- explain why an install or activation target is current or stale
+- keep provenance durable across workflow boundaries
+- keep enough lifecycle evidence to explain cleanup, repair, or rollback decisions
 
-Merging these would reduce composability and make the shared model more rigid.
+## Required Guarantees
 
-### Tighten Integration Without Merging
-
-- `pulith-source` should feed planned candidates directly into `pulith-fetch`
-- `pulith-fetch` should emit receipts that convert naturally into store handles
-- `pulith-store` and `pulith-install` should share clearer handoff types
-- `pulith-install` should gain shim-oriented activators without embedding shim policy into `pulith-shim`
-- `pulith-resource` should keep tightening its version selector around `pulith-version` semantics
-- `pulith-store` and `pulith-state` should expose more semantic lookup/transition helpers so callers stop reconstructing keys and lifecycle mutations manually
-- future discovery/reconciliation/retention helpers should compose existing crates rather than collapse their roles into `pulith-install`
-
-### Crates That Need the Most Refactor Attention
-
-- `pulith-fetch`: make advanced execution modes explicit and trustworthy
-- `pulith-install`: keep sharpening reusable workflow helpers while avoiding policy creep
-- `pulith-version`: deepen integration of requirement matching and preference selection across callers
-- `pulith-platform`: keep the crate narrow so it remains a host/platform helper layer rather than a grab-bag system toolkit
-- `pulith-state`: improve transition ergonomics now, monitor snapshot scaling continuously, and avoid premature storage redesign until benchmarks justify change
-- `pulith-store`: improve semantic lookup/provenance ergonomics without absorbing install policy
-- the workspace overall: define where reconciliation, ownership, retention, and audit semantics belong without turning the install layer into a catch-all
-
-## Role Refinement For Core Support Crates
-
-### `pulith-version`
-
-- should stay a pure primitive crate
-- should own generic comparison, matching, and preference selection only
-- resource-specific alias meaning and planner-specific policy mapping should stay outside it
-- it should help planners and adapters choose, not decide repository/package-manager policy
-
-### `pulith-platform`
-
-- should stay a narrow host/platform helper crate
-- good scope: OS/arch/triple parsing, directory conventions, shell metadata, lightweight process helpers
-- bad scope: richer package-manager policy, service management, installer orchestration, or broad system administration helpers
-- the crate should expose predictable normalization and command/shell behavior, not become a generic toolbox
-
-### `pulith-shim-bin`
-
-- should be treated as a support/template crate, not a semantic model or workflow crate
-- its role is to bridge `pulith-shim` into a runnable executable boundary with minimal policy
-- if it grows substantially, it should evolve either into a clearer support crate or move toward examples/templates rather than distorting the primitive/workflow layers
-
-## Practicality and Ergonomics
-
-The current crate layout is practical for internal composition, but still slightly too verbose for end users.
-
-The next ergonomics step should be better typed bridges, not fewer crates.
-
-Focus areas:
-
-- standardize receipts across fetch, store, extract, install, and activate
-- reduce ad hoc path conversion between layers
-- add ready-made adapters for common end-to-end flows
-- make lifecycle persistence less repetitive for callers
-- improve end-to-end examples that span multiple crates
-- keep public helpers named by semantic role (`plan`, `derive`, `lookup`, `register`, `activate`, `record`) rather than by implementation detail
-
-## Required Guarantees For Real Managers
-
-For Pulith to be a strong substrate for system package managers, config managers, and plugin managers, it should converge on the following guarantees.
+Pulith should be explicit about the guarantees it does and does not provide.
 
 ### Behavioral Guarantees
 
-- repeatable end-to-end flows for fetch/store/install/activate
-- explicit upgrade and rollback semantics
-- provenance continuity across workflow boundaries
-- thin but complete helpers for common file, archive, and shim-based flows
-- support for inspect/detect/reconcile/repair flows without requiring custom ad hoc state plumbing
+- repeatable baseline fetch -> store -> install -> activate flows, with advanced fetch retry/source strategies treated as maturing contracts
+- explicit replace, upgrade, and rollback behavior within the install snapshot boundaries exposed by `pulith-install`
+- explicit inspect and repair planning surfaces
+- semantic continuity from resource identity to persisted lifecycle facts
 
 ### Safety Guarantees
 
-- atomic install-state updates where possible
-- explicit failure surfaces for platform-specific activation constraints
-- recoverable interrupted operations
-- durable persistence of the facts needed to explain and recover resource state
-- explicit conflict and ownership boundaries before destructive cleanup or replacement
+- partial writes should not become live state where atomic replacement is possible
+- recovery paths should restore both filesystem state and persisted lifecycle facts when a supported snapshot/backup path is used
+- destructive cleanup should require explicit ownership or protection reasoning
+- platform-specific activation limits should appear as explicit errors, not hidden fallback behavior
 
 ### Consistency Guarantees
 
-- semantic resource identity remains the backbone of the system
-- version intent, provenance, install facts, and activation facts stay aligned
-- helpers in adjacent crates compose naturally without caller-side translation layers
-- crate roles remain narrow and predictable
-- discovery, reconciliation, pruning, and repair use the same semantic resource model as initial installation
+- resource identity should remain the backbone of planning, storage, install, and state
+- version intent should survive planning and install handoffs
+- provenance should survive workflow boundaries instead of being dropped mid-pipeline
+- adjacent crates should compose without ad hoc translation layers
 
-## Concrete Refactor Plan
+### Non-Guarantees
 
-The next refactor work should proceed in four compact phases.
+Pulith should not imply support for:
 
-### Phase 1: Semantic Query and Transition Ergonomics
+- dependency solving
+- lockfile-driven reproducibility for dependency graphs
+- manager-specific policy such as channel ranking or repository trust models
+- hidden automatic repair or cleanup decisions
+- global rollback journals beyond per-resource snapshot/backup scope
+- stronger advanced fetch retry/resume guarantees than the current `pulith-fetch` maturity level documents
 
-- continue turning repeated `ResolvedResource` -> key/lookup glue into `pulith-store` helpers
-- continue turning repeated lifecycle record updates into `pulith-state` helpers
-- add paired metadata/provenance query helpers where callers still fetch records and unpack them manually
-- keep these helpers policy-light and deterministic
+## Where The Missing Work Is
 
-### Phase 2: User-Facing Workflow Consistency
+The remaining work is concentrated in seven areas.
 
-- make archive, file, extract, install, activate, upgrade, and rollback paths feel structurally similar to callers
-- extend helpers only where they remove real repeated orchestration for manager authors
-- preserve explicit effects and keep policy choices visible
+### 1. Semantic Handoffs
 
-### Phase 3: Discovery, Reconciliation, and Ownership
+Remaining repeated orchestration should move into typed helpers.
 
-- design semantic inspect/detect/reconcile helpers instead of forcing every manager to rebuild drift handling
-- add ownership/conflict/retention semantics where destructive actions otherwise become ambiguous
-- keep these helpers explanatory and policy-light rather than turning them into a monolithic package model
+Key examples:
 
-### Phase 4: Planner and Adapter Integration
+- planned source -> fetch input
+- fetch receipt -> store registration
+- store lookup -> install input
+- resolved resource -> lifecycle record / query helpers
 
-- thread `VersionSelector` -> `SelectionPolicy` helpers into more backend/example planning paths
-- add thin adapter helpers only where they remove real repetition across composed flows
-- keep `pulith-source` and `pulith-install` as composition points rather than monolithic orchestrators
+### 2. Discovery Maturity
 
-### Phase 5: Safety, Contract Hardening, and Evidence
+Inspection needs to become a clear public behavior family rather than a small set of lower-level helpers.
 
-- add cross-platform tests for the remaining Windows activation differences
-- make retry/recovery/rollback guarantees clearer in both tests and docs
-- rerun performance evidence for copy/hardlink/state-growth decisions on steadier environments
-- redesign storage internals only if those measurements show the current model is the bottleneck
+Needed outputs:
 
-## Efficiency Direction
+- stable inspection/report types
+- issue categories that are durable enough for managers to act on
+- clear separation between inspect-only and repair-capable flows
 
-The main efficiency risks are in composition, not in the small primitive crates.
+### 3. Repair Contract Hardening
 
-Priority areas:
+Repair must remain explicit and policy-light.
 
-- reduce repeated copying across fetch -> store -> install flows
-- prefer hardlink, rename, or direct registration where semantics allow it
-- benchmark state snapshot rewriting under realistic registry sizes
-- benchmark advanced fetch modes instead of assuming concurrency helps
-- avoid rematerializing extracted trees when store ownership is already sufficient
+Needed outputs:
 
-Current progress:
+- repair plans that are inspectable before application
+- clear statement of what is safe to retry
+- clearer boundaries between repair of stale facts and repair of owned materialized state
 
-- store import and install staging now prefer hardlink-or-copy where the filesystem allows it
-- copy-heavy transitions still need measurement, but the default path is now less wasteful on same-device flows
-- `pulith-state` now has dedicated growth benchmarks so snapshot rewriting cost can be measured before changing storage architecture
-- install workflow tests now cover interrupted install recovery through backup/restore snapshots
-- `pulith-install` now includes criterion benchmarks for large fetch/store/install and archive extract/store/install flows
-- `pulith-fetch` now includes criterion benchmarks for multi-source priority and race strategy overhead
-- transition benchmarks now measure hardlink-or-copy against copy-only for same-device store/install artifact movement
-- current benchmark runs indicate the crossover favors copy-only for small files but shifts toward hardlink-or-copy once artifacts reach larger multi-megabyte sizes
-- store/import/install paths now apply that evidence with a size-threshold strategy rather than always attempting hardlinks first
-- additional threshold-variant benchmarks now exist for tuning, though current results are noisy enough that the chosen cutoff should remain provisional until repeated on calmer filesystems/CI runners
-- `pulith-install` now exposes a typed fetch-receipt to stored-install-input bridge so callers need less manual path and file-name glue
-- the fetch -> store bridge in `pulith-install` now preserves `StoreProvenance` (origin URL/local path and optional fetch checksum metadata) instead of dropping receipt context during import
-- `pulith-install` now also exposes a typed archive-extraction -> stored-extract bridge so archive metadata is preserved when extracted trees are registered in `pulith-store`
-- resource/source/install integration now carries more version intent: source specs can be derived from resources directly, and install staging validates resolved versions against exact and requirement selectors
-- `pulith-source` now also exposes direct planned-source constructors from locators and requested/resolved resources, reducing the remaining source -> fetch planning glue for workflow callers and thin backends
-- `pulith-resource` now derives shared `pulith-version::SelectionPolicy` values from exact, requirement, and common alias selectors, so version preference intent is no longer trapped in stringly selector handling
-- upgrade installs now behave more intentionally: they require an existing install root and preserve `Active` lifecycle state when replacing an already-active install in place
-- rollback now restores the prior activation snapshot as well as the prior install/root record state, including cleanup of activation targets created only by the reverted install
-- workspace-level integration tests now cover a full local archive fetch -> extract -> store -> install path, not just direct extraction and direct local-file fetch cases
-- `pulith-install` now has a typed fetched-archive-extraction -> stored-extract helper, so callers no longer need to manually stitch together fetch receipts, archive reports, store registration, and provenance merging for that common path
-- recent internal cleanup also reduced repeated selector/planning/activation/provenance code across `pulith-resource`, `pulith-source`, and `pulith-install`, keeping the current API surface lighter-weight to maintain
-- `pulith-store` now provides semantic lookup helpers keyed by `ResolvedResource` + `KeyDerivation`, which fits the current direction of reducing path/key reconstruction without moving install policy into the store layer
-- `pulith-state` now provides semantic resolved-resource upsert helpers and richer patch composition, which reduces repeated lifecycle record construction while keeping persistence policy-light
-- `pulith-state` now also provides per-resource state capture/restore helpers, which makes rollback and recovery flows more composable and less dependent on workflow-local record juggling
-- `pulith-state` now also provides initial per-resource inspection helpers, which turns detect/explain behavior into an explicit semantic operation rather than an install-local concern
-- `pulith-state` now also provides explicit per-resource repair planning/application for stale facts, which starts to turn reconciliation into a semantic operation without forcing policy-heavy repair into `pulith-install`
-- `pulith-state` now also detects activation ownership conflicts, which begins to model shared-target conflict semantics without forcing cleanup policy into install or state persistence itself
-- `pulith-state` now also exposes store-key references, and `pulith-store` can now plan protected prune operations from those references, which starts to make retention/prune safety explicit instead of implicit
-- `pulith-state` now also exposes lifecycle-based store retention helpers, which lets callers derive protected prune sets from semantic state rather than hand-maintaining key lists
-- `pulith-state` now also composes those retention helpers with store orphan inspection to produce explicit metadata retention plans, which moves cleanup planning closer to semantic state without collapsing store responsibilities
-- `pulith-resource` now also offers preferred resolved-candidate selection through shared version-selection policy, and the backend example carries that helper into a real adapter-facing path
-- workspace integration coverage now includes repeated copy-based activation over the same file target, which strengthens the explicit contract story for non-link activator behavior across platforms
-- workspace integration coverage now also includes archive-inclusive replace/activate/rollback recovery, which strengthens the recovery contract beyond direct directory materialization paths
-- workspace integration coverage now also includes repeated symlink-based file activation over the same target, which rounds out the contract story for file activation across both link-based and copy-based modes
-- `pulith-store` now also supports orphaned-metadata inspection before pruning, which makes cleanup behavior more inspectable and better aligned with the emerging reconciliation/ownership story
-- activation contract tests now cover replacement of pre-existing file and directory targets, strengthening cross-platform expectations around symlink/junction-backed activation
-- activation target replacement now treats existing links more carefully, using link-aware removal so reinstall flows can replace prior symlink/junction activations without tripping over platform-specific directory-link semantics
-- removal paths now clear Windows read-only attributes before replacing prior install or activation targets, so replacement flows are less likely to fail on permission-shaped leftovers from earlier installs
-- Windows file activations now report a dedicated symlink-privilege error when link creation is denied, making the remaining platform-specific activator choice more explicit to callers
-- `pulith-install` now includes explicit copy-based file activators as a policy choice beside link activators, so Windows callers can opt into file-copy activation without making fallback behavior implicit
+### 4. Ownership and Retention Semantics
 
-## Integrated Testing Direction
+Retention helpers exist, but broader ownership semantics are still incomplete.
 
-The next quality step is more integrated testing, not more crate surface.
+Needed outputs:
 
-Required test layers:
+- ownership models for install roots and activation targets
+- conflict reports that prevent ambiguous destructive replacement
+- composable protected-prune plans that reference semantic state and provenance
 
-- end-to-end pipeline tests:
-  - resource -> source -> fetch -> store -> install -> activate
-  - resource -> source -> fetch -> archive -> store -> install
-- cross-platform contract tests:
-  - windows replace behavior
-  - symlink/junction activation differences
-  - path sanitization behavior
-- persistence and recovery tests:
-  - interrupted install recovery
-  - partial state recovery
-  - repeated activation idempotence
-- reconciliation and ownership tests:
-  - detect drift between persisted state and filesystem reality
-  - reject ambiguous ownership/conflict cases before destructive cleanup
-  - explain prune/repair decisions through durable facts
-- performance tests:
-  - large artifact fetch/extract/install
-  - store registration of large trees
-  - state growth behavior
+### 5. Explainability
 
-## Refactor Priorities
+Receipts and records exist, but they do not yet form a complete explanation story.
 
-1. connect `pulith-source` planning directly to `pulith-fetch`
-2. define shared receipts and handoff types across fetch, store, archive, and install
-3. add replace / upgrade / rollback semantics to `pulith-install`
-4. integrate `pulith-version` selection semantics more directly into source and install flows
-5. add workspace-level end-to-end integration tests
+Needed outputs:
+
+- selection explanations for source/version choice
+- activation and repair explanations tied to state facts
+- clearer durable evidence for operator-facing tools
+
+### 6. Contract Testing
+
+Coverage is strongest for install-centered flows but still incomplete.
+
+Needed outputs:
+
+- more Windows-specific activation contract tests
+- more reconciliation and ownership tests
+- more cross-crate end-to-end examples that exercise the intended public API shape
+
+### 7. Performance Evidence
+
+Performance direction is reasonable, but several decisions still rely on provisional evidence.
+
+Needed outputs:
+
+- steadier benchmark runs for hardlink/copy thresholds
+- larger-state benchmarks for `pulith-state`
+- evidence-driven decisions before redesigning storage internals or fetch strategy behavior
+
+## Concrete Design Direction
+
+The next design phase should follow this shape.
+
+### Phase 1: Finish Semantic Query and Handoff Helpers
+
+Goal: remove the remaining repeated key/path/record glue between crates.
+
+Deliverables:
+
+- stable helper families for resource -> store lookup and resource -> state lookup
+- stable receipt-to-registration helpers across fetch, archive, store, and install
+- less manual reconstruction in examples and backend adapters
+
+### Phase 2: Promote Discovery To A First-Class Public Surface
+
+Goal: make inspect/detect/report behavior explicit and reusable.
+
+Deliverables:
+
+- stable inspection report types in `pulith-state`
+- public helpers for store/install/activation/state drift inspection
+- tests that prove inspect-only paths do not mutate state
+
+### Phase 3: Mature Repair, Ownership, and Retention
+
+Goal: make corrective behavior explicit without hiding policy.
+
+Deliverables:
+
+- inspectable repair plans
+- ownership and conflict report types
+- retention/protection plans that explain why content is protected or removable
+
+### Phase 4: Tighten Planner and Adapter Integration
+
+Goal: make real manager composition feel direct.
+
+Deliverables:
+
+- broader use of shared version-selection helpers
+- thinner source -> fetch composition for common planner paths
+- stronger example/back-end coverage that demonstrates intended usage rather than internal crate knowledge
+
+### Phase 5: Harden Contracts and Guarantees
+
+Goal: make Pulith trustworthy because its contracts are tested and documented, not because the implementation looks careful.
+
+Deliverables:
+
+- explicit docs for retry, rollback, recovery, and platform divergence
+- cross-platform contract tests for remaining activation differences
+- documented non-guarantees where Pulith intentionally leaves policy to callers
 
 ## Architectural Conclusion
 
-Pulith does not need fewer crates right now.
+Pulith does not need a new top-level architecture.
 
-It needs stronger semantic consistency and more trustworthy composition between the crates it already has.
+It needs tighter semantics at crate boundaries, stronger manager-facing behavior families outside the install path, and clearer guarantees about inspection, repair, ownership, retention, and explanation.
 
-The split is mostly correct. The next phase should therefore focus on integration tightening, manager-facing ergonomics, stronger safety guarantees, clearer consistency semantics, and performance evidence for the composed system.
-
-## Out of Scope
-
-- package format definitions unless they are broadly reusable
-- repository hosting
-- authentication servers
-- license management
-- dependency resolution
+The current crate split is still the right one. The next work should refine composition, contracts, and evidence inside that split.
 
 ## References
 
 - `README.md`
 - `docs/AGENT.md`
+- `docs/roadmap.md`
 - `docs/design/platform.md`
 - `docs/design/version.md`
 - `docs/design/shim.md`

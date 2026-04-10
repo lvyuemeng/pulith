@@ -13,7 +13,10 @@ use pulith_resource::{
     ValidUrl,
 };
 use pulith_source::PlannedSources;
-use pulith_state::{ResourceLifecycle, ResourceRecordPatch, StateReady};
+use pulith_state::{
+    OwnershipReason, OwnershipSeverity, ResourceInspectionFinding, ResourceLifecycle,
+    ResourceRecordPatch, StateReady, StoreRetentionPolicy,
+};
 use pulith_store::{StoreKey, StoreMetadataRecord, StoreReady, StoreRoots};
 
 fn resolved_resource(locator: ResourceLocator) -> pulith_resource::ResolvedResource {
@@ -306,6 +309,207 @@ fn repeated_symlink_activation_replaces_existing_file_target() {
     let snapshot = state.load().unwrap();
     assert_eq!(snapshot.resources.len(), 1);
     assert_eq!(snapshot.resources[0].lifecycle, ResourceLifecycle::Active);
+}
+
+#[test]
+fn installed_resource_can_be_inspected_for_drift_without_mutation() {
+    let temp = tempfile::tempdir().unwrap();
+    let local_source_path = temp.path().join("source.bin");
+    fs::write(&local_source_path, b"runtime-binary").unwrap();
+
+    let resource = resolved_resource(ResourceLocator::LocalPath(local_source_path.clone()));
+    let fetched = fetch_local_resource_to(
+        &local_source_path,
+        &temp.path().join("downloads/runtime.bin"),
+    );
+
+    let store = StoreReady::initialize(StoreRoots::new(
+        temp.path().join("store/artifacts"),
+        temp.path().join("store/extracts"),
+        temp.path().join("store/metadata"),
+    ))
+    .unwrap();
+    let key = StoreKey::logical("runtime-bin").unwrap();
+    let install_input = InstallInput::store_fetched_artifact(&store, &key, &fetched).unwrap();
+
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let install_root = temp.path().join("installs/runtime");
+    let activation_target = temp.path().join("active/runtime");
+    PlannedInstall::new(
+        InstallReady::new(state.clone()),
+        InstallSpec::new(resource.clone(), install_input, install_root.clone()).activation(
+            ActivationTarget {
+                path: activation_target.clone(),
+            },
+        ),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .activate(&SymlinkActivator)
+    .unwrap()
+    .finish();
+
+    fs::remove_dir_all(&install_root).unwrap();
+    fs::remove_file(store.metadata_path(&key)).unwrap();
+    let missing_activation_target = temp.path().join("active/missing-runtime");
+    state
+        .remove_activation_records(&resource.spec().id)
+        .unwrap();
+    state
+        .record_activation(&resource.spec().id, missing_activation_target.clone())
+        .unwrap();
+
+    let resource_id = resource.spec().id.clone();
+    let before = state.load().unwrap();
+    let inspection = state.inspect_resource(&resource_id, Some(&store)).unwrap();
+    let after = state.load().unwrap();
+
+    assert_eq!(before, after);
+    assert_eq!(inspection.summary.total_findings, 3);
+    assert_eq!(inspection.summary.error_count, 2);
+    assert_eq!(inspection.summary.warning_count, 1);
+    assert!(
+        inspection
+            .findings
+            .contains(&ResourceInspectionFinding::MissingInstallPath {
+                resource: resource_id.clone(),
+                path: install_root,
+            })
+    );
+    assert!(
+        inspection
+            .findings
+            .contains(&ResourceInspectionFinding::MissingActivationTarget {
+                resource: resource_id.clone(),
+                target: missing_activation_target,
+            })
+    );
+    assert!(
+        inspection
+            .findings
+            .contains(&ResourceInspectionFinding::MissingStoreMetadata {
+                resource: resource_id,
+                key,
+            })
+    );
+}
+
+#[test]
+fn ownership_and_retention_plan_is_explicit_and_stable() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let store = StoreReady::initialize(StoreRoots::new(
+        temp.path().join("store/artifacts"),
+        temp.path().join("store/extracts"),
+        temp.path().join("store/metadata"),
+    ))
+    .unwrap();
+
+    let runtime_a = ResourceId::parse("example/runtime-a").unwrap();
+    let runtime_b = ResourceId::parse("example/runtime-b").unwrap();
+    let active_key = StoreKey::logical("runtime-active").unwrap();
+    let fetched_key = StoreKey::logical("runtime-fetched").unwrap();
+    let orphaned_key = StoreKey::logical("runtime-orphaned").unwrap();
+    let shared_target = temp.path().join("active/shared-runtime");
+
+    fs::create_dir_all(shared_target.parent().unwrap()).unwrap();
+    fs::write(&shared_target, b"active").unwrap();
+
+    for key in [&active_key, &fetched_key, &orphaned_key] {
+        store.put_artifact_bytes(key, b"payload").unwrap();
+        fs::remove_file(store.artifact_path(key)).unwrap();
+    }
+
+    state
+        .ensure_resource_record(
+            runtime_a.clone(),
+            pulith_resource::VersionSelector::alias("lts").unwrap(),
+        )
+        .unwrap();
+    state
+        .patch_resource_record(
+            &runtime_a,
+            ResourceRecordPatch::artifact_key(Some(active_key.clone()))
+                .with_lifecycle(ResourceLifecycle::Active),
+        )
+        .unwrap();
+    state
+        .ensure_resource_record(
+            runtime_b.clone(),
+            pulith_resource::VersionSelector::alias("lts").unwrap(),
+        )
+        .unwrap();
+    state
+        .patch_resource_record(
+            &runtime_b,
+            ResourceRecordPatch::artifact_key(Some(fetched_key.clone()))
+                .with_lifecycle(ResourceLifecycle::Fetched),
+        )
+        .unwrap();
+
+    state
+        .record_activation(&runtime_b, shared_target.clone())
+        .unwrap();
+    state
+        .record_activation(&runtime_a, shared_target.clone())
+        .unwrap();
+
+    let plan = state
+        .plan_ownership_and_retention(&store, StoreRetentionPolicy::ActiveOnly)
+        .unwrap();
+    let stable_plan = state
+        .plan_ownership_and_retention(&store, StoreRetentionPolicy::ActiveOnly)
+        .unwrap();
+
+    assert_eq!(plan, stable_plan);
+
+    assert_eq!(plan.ownership.entries.len(), 1);
+    assert_eq!(
+        plan.ownership.entries[0].severity,
+        OwnershipSeverity::Warning
+    );
+    assert_eq!(plan.ownership.entries[0].target, shared_target);
+    assert_eq!(
+        plan.ownership.entries[0].reasons,
+        vec![OwnershipReason::SharedActivationTarget {
+            target: plan.ownership.entries[0].target.clone(),
+            owners: vec![runtime_a.clone(), runtime_b.clone()],
+        }]
+    );
+
+    assert_eq!(plan.retention.protected_keys.len(), 1);
+    assert_eq!(plan.retention.protected_keys[0].key, active_key);
+    assert_eq!(
+        plan.retention.protected_keys[0].reasons,
+        vec![OwnershipReason::StateStoreReference {
+            key: plan.retention.protected_keys[0].key.clone(),
+            owner: runtime_a,
+            lifecycle: ResourceLifecycle::Active,
+        }]
+    );
+
+    assert_eq!(plan.retention.removable_metadata.len(), 2);
+    assert_eq!(plan.retention.removable_metadata[0].record.key, fetched_key);
+    assert_eq!(
+        plan.retention.removable_metadata[0].reasons,
+        vec![OwnershipReason::RetentionPolicyExcludesLifecycle {
+            policy: StoreRetentionPolicy::ActiveOnly,
+            resource: runtime_b,
+            lifecycle: ResourceLifecycle::Fetched,
+        }]
+    );
+    assert_eq!(
+        plan.retention.removable_metadata[1].record.key,
+        orphaned_key
+    );
+    assert_eq!(
+        plan.retention.removable_metadata[1].reasons,
+        vec![OwnershipReason::UnreferencedStoreMetadata {
+            key: plan.retention.removable_metadata[1].record.key.clone(),
+        }]
+    );
 }
 
 #[test]
@@ -1013,5 +1217,142 @@ fn interrupted_install_recovery_restores_previous_snapshot() {
             .unwrap()
             .lifecycle,
         ResourceLifecycle::Installed
+    );
+}
+
+#[test]
+fn recovery_contract_backup_restore_recovers_install_and_state_facts() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let ready = InstallReady::new(state.clone());
+    let install_root = temp.path().join("installs/runtime");
+    let activation_target = temp.path().join("active/runtime");
+
+    let initial_source = temp.path().join("src-initial");
+    fs::create_dir_all(&initial_source).unwrap();
+    fs::write(initial_source.join("runtime.bin"), b"v1").unwrap();
+
+    let initial_resource = RequestedResource::new(
+        ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::LocalPath(initial_source.clone()),
+        )
+        .version(pulith_resource::VersionSelector::exact("1.0.0").unwrap()),
+    )
+    .resolve(
+        ResolvedVersion::new("1.0.0").unwrap(),
+        ResolvedLocator::LocalPath(initial_source.clone()),
+        None,
+    );
+
+    PlannedInstall::new(
+        ready.clone(),
+        InstallSpec::new(
+            initial_resource,
+            InstallInput::from_archive_extraction(
+                initial_source.clone(),
+                pulith_archive::ArchiveReport {
+                    format: pulith_archive::ArchiveFormat::Zip,
+                    entry_count: 1,
+                    total_bytes: 2,
+                    entries: vec![],
+                },
+            ),
+            install_root.clone(),
+        )
+        .activation(ActivationTarget {
+            path: activation_target.clone(),
+        }),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .activate(&FileActivator)
+    .unwrap()
+    .finish();
+
+    let resource_id = ResourceId::parse("example/runtime").unwrap();
+    let before = state.load().unwrap();
+    let backup = ready
+        .create_backup(&resource_id, &install_root, temp.path().join("backups"))
+        .unwrap();
+
+    fs::remove_dir_all(&install_root).unwrap();
+    fs::create_dir_all(&install_root).unwrap();
+    fs::write(install_root.join("runtime.bin"), b"partial").unwrap();
+    state
+        .patch_resource_record(
+            &resource_id,
+            ResourceRecordPatch::lifecycle(ResourceLifecycle::Failed),
+        )
+        .unwrap();
+    state.remove_activation_records(&resource_id).unwrap();
+
+    ready.restore_backup(&backup).unwrap();
+
+    let after = state.load().unwrap();
+    assert_eq!(fs::read(install_root.join("runtime.bin")).unwrap(), b"v1");
+    assert_eq!(after, before);
+}
+
+#[test]
+fn activation_contract_replace_updates_target_and_history_cross_platform() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let activation_target = temp.path().join("active/runtime.exe");
+
+    for (version, payload) in [
+        ("1.0.0", b"runtime-v1".as_slice()),
+        ("1.1.0", b"runtime-v2".as_slice()),
+    ] {
+        let source_dir = temp.path().join(format!("runtime-src-{version}"));
+        write_runtime_tree(&source_dir, "bin/runtime.exe", payload);
+
+        let resource =
+            resolved_resource_version(ResourceLocator::LocalPath(source_dir.clone()), version);
+
+        PlannedInstall::new(
+            InstallReady::new(state.clone()),
+            InstallSpec::new(
+                resource,
+                InstallInput::from_archive_extraction(
+                    source_dir.clone(),
+                    archive_report(payload.len() as u64),
+                ),
+                temp.path().join("installs/runtime"),
+            )
+            .replace_existing()
+            .activation(ActivationTarget {
+                path: activation_target.clone(),
+            }),
+        )
+        .stage()
+        .unwrap()
+        .commit()
+        .unwrap()
+        .activate(&ShimCopyActivator::new(
+            ShimCommand::new("runtime", "bin/runtime.exe").unwrap(),
+        ))
+        .unwrap()
+        .finish();
+    }
+
+    let resource_id = ResourceId::parse("example/runtime").unwrap();
+    let activations = state.list_activation_records(&resource_id).unwrap();
+    assert_eq!(fs::read(&activation_target).unwrap(), b"runtime-v2");
+    assert_eq!(activations.len(), 2);
+    assert!(
+        activations
+            .iter()
+            .all(|record| record.target == activation_target)
+    );
+    assert_eq!(
+        state
+            .get_resource_record(&resource_id)
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ResourceLifecycle::Active
     );
 }

@@ -62,6 +62,21 @@ Activation is expressed as a trait:
 - the crate also ships explicit copy-based file activators for privilege-sensitive Windows cases
 - shim-oriented activators can compose on the same interface through `pulith-shim::TargetResolver`
 
+## Guarantees / Non-Guarantees
+
+Guarantees:
+
+- retrying replace/upgrade installs is safe when a rollback snapshot exists; commit/rollback paths restore the previous install root on failure boundaries where a snapshot was captured
+- explicit rollback restores both install content and captured `pulith-state` facts for that resource (resource record + activation history)
+- activation replacement is explicit: existing activation targets are removed before a new link/copy target is written, for both file-like and directory-like targets
+- Windows file symlink privilege failures are surfaced as `InstallError::WindowsFileSymlinkPrivilege` instead of hidden fallback behavior
+
+Non-guarantees:
+
+- rollback is not available for create-only flows or any flow where no previous install snapshot exists (`InstallError::RollbackUnavailable`)
+- backup/restore scope is per-resource install tree + state facts; it does not restore unrelated resources or caller-owned side effects outside those boundaries
+- `pulith-install` does not define fetch retry policy and does not provide multi-step rollback journals beyond a single previous-install snapshot
+
 ## Current Scope
 
 - stage from stored artifact or extracted directory handle

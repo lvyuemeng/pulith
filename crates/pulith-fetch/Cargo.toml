@@ -11,6 +11,7 @@ brotli = ["dep:brotli"]
 
 [dependencies]
 pulith-fs = { path = "../pulith-fs" }
+pulith-resource = { path = "../pulith-resource" }
 pulith-source = { path = "../pulith-source" }
 pulith-verify = { path = "../pulith-verify" }
 
