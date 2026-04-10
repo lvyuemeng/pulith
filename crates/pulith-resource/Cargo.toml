@@ -11,7 +11,7 @@ keywords = ["resource", "locator", "version", "identity"]
 categories = ["data-structures"]
 
 [dependencies]
-pulith-version = { path = "../pulith-version" }
+pulith-version = { path = "../pulith-version", version = "0.1.0" }
 serde.workspace = true
 thiserror.workspace = true
 url.workspace = true

@@ -20,7 +20,7 @@ sha256 = ["dep:sha2", "dep:hex"]
 blake3 = ["dep:blake3"]
 
 [dependencies]
-pulith-fs = { path = "../pulith-fs" }
+pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
 thiserror.workspace = true
 tempfile.workspace = true
 

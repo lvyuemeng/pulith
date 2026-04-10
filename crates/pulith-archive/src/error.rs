@@ -40,6 +40,15 @@ pub enum Error {
     #[error("failed to create directory: {path}: {source}")]
     DirectoryCreationFailed { path: PathBuf, source: io::Error },
 
+    #[error("archive entry limit exceeded: observed {observed}, limit {limit}")]
+    EntryLimitExceeded { observed: usize, limit: usize },
+
+    #[error("archive byte limit exceeded: observed {observed_bytes}, limit {limit_bytes}")]
+    ByteLimitExceeded {
+        observed_bytes: u64,
+        limit_bytes: u64,
+    },
+
     #[error(transparent)]
     Io(#[from] io::Error),
 }

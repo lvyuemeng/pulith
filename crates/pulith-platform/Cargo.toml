@@ -11,7 +11,7 @@ keywords = ["platform", "shell", "environment", "os"]
 categories = ["os::unix-apis", "os::windows-apis"]
 
 [dependencies]
-pulith-fs = { path = "../pulith-fs" }
+pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
 
 home = "0.5.12"
 query-shell = "0.3"

@@ -19,6 +19,8 @@ pub struct ExtractOptions {
     pub hash_strategy: HashStrategy,
     pub strip_components: usize,
     pub expected_total_bytes: Option<u64>,
+    pub max_entries: Option<usize>,
+    pub max_total_bytes: Option<u64>,
     pub on_progress: Option<Arc<dyn Fn(Progress) + Send + Sync>>,
 }
 
@@ -48,6 +50,16 @@ impl ExtractOptions {
 
     pub fn expected_total_bytes(mut self, bytes: u64) -> Self {
         self.expected_total_bytes = Some(bytes);
+        self
+    }
+
+    pub fn max_entries(mut self, count: usize) -> Self {
+        self.max_entries = Some(count);
+        self
+    }
+
+    pub fn max_total_bytes(mut self, bytes: u64) -> Self {
+        self.max_total_bytes = Some(bytes);
         self
     }
 
@@ -421,6 +433,8 @@ mod tests {
         assert_eq!(options.hash_strategy, HashStrategy::None);
         assert_eq!(options.strip_components, 0);
         assert!(options.expected_total_bytes.is_none());
+        assert!(options.max_entries.is_none());
+        assert!(options.max_total_bytes.is_none());
         assert!(options.on_progress.is_none());
     }
 
@@ -430,12 +444,16 @@ mod tests {
             .permission_strategy(PermissionStrategy::ReadOnly)
             .hash_strategy(HashStrategy::Sha256)
             .strip_components(1)
-            .expected_total_bytes(1024);
+            .expected_total_bytes(1024)
+            .max_entries(256)
+            .max_total_bytes(4 * 1024 * 1024);
 
         assert_eq!(options.perm_strategy, PermissionStrategy::ReadOnly);
         assert_eq!(options.hash_strategy, HashStrategy::Sha256);
         assert_eq!(options.strip_components, 1);
         assert_eq!(options.expected_total_bytes, Some(1024));
+        assert_eq!(options.max_entries, Some(256));
+        assert_eq!(options.max_total_bytes, Some(4 * 1024 * 1024));
     }
 
     #[test]

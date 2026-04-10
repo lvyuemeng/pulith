@@ -65,9 +65,28 @@ pub fn extract<S: EntrySource>(
     let mut bytes_processed = 0u64;
 
     for pending in source.entries()? {
+        let next_entry_count = entries.len() + 1;
+        if let Some(limit) = options.max_entries
+            && next_entry_count > limit
+        {
+            return Err(Error::EntryLimitExceeded {
+                observed: next_entry_count,
+                limit,
+            });
+        }
+
         let mut pending = pending?;
         bytes_processed += pending.size;
         total_bytes += pending.size;
+
+        if let Some(limit_bytes) = options.max_total_bytes
+            && total_bytes > limit_bytes
+        {
+            return Err(Error::ByteLimitExceeded {
+                observed_bytes: total_bytes,
+                limit_bytes,
+            });
+        }
 
         let mut entry = Entry::new(
             pending.original_path.clone(),
@@ -457,5 +476,77 @@ mod tests {
 
         let result = extract(&mut source, temp_dir.path(), &ExtractOptions::default());
         assert!(matches!(result, Err(Error::SymlinkEscape { .. })));
+    }
+
+    #[test]
+    fn extract_rejects_when_entry_limit_exceeded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut source = TestSource {
+            entries: vec![
+                Ok(PendingEntry {
+                    original_path: PathBuf::from("bin/a"),
+                    size: 1,
+                    mode: None,
+                    kind: EntryKind::File,
+                    reader: Some(Box::new(Cursor::new(b"a".to_vec()))),
+                }),
+                Ok(PendingEntry {
+                    original_path: PathBuf::from("bin/b"),
+                    size: 1,
+                    mode: None,
+                    kind: EntryKind::File,
+                    reader: Some(Box::new(Cursor::new(b"b".to_vec()))),
+                }),
+            ],
+        };
+
+        let result = extract(
+            &mut source,
+            temp_dir.path(),
+            &ExtractOptions::default().max_entries(1),
+        );
+        assert!(matches!(
+            result,
+            Err(Error::EntryLimitExceeded {
+                observed: 2,
+                limit: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn extract_rejects_when_total_byte_limit_exceeded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut source = TestSource {
+            entries: vec![
+                Ok(PendingEntry {
+                    original_path: PathBuf::from("bin/a"),
+                    size: 4,
+                    mode: None,
+                    kind: EntryKind::File,
+                    reader: Some(Box::new(Cursor::new(b"aaaa".to_vec()))),
+                }),
+                Ok(PendingEntry {
+                    original_path: PathBuf::from("bin/b"),
+                    size: 4,
+                    mode: None,
+                    kind: EntryKind::File,
+                    reader: Some(Box::new(Cursor::new(b"bbbb".to_vec()))),
+                }),
+            ],
+        };
+
+        let result = extract(
+            &mut source,
+            temp_dir.path(),
+            &ExtractOptions::default().max_total_bytes(7),
+        );
+        assert!(matches!(
+            result,
+            Err(Error::ByteLimitExceeded {
+                observed_bytes: 8,
+                limit_bytes: 7
+            })
+        ));
     }
 }
