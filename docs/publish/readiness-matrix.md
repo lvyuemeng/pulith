@@ -1,36 +1,35 @@
 # Publish Readiness Matrix
 
-## Scope
+Current source of truth for crates.io publish gating.
 
-This matrix tracks Block I publish readiness for public-target crates.
+## Stage Summary
 
-Public targets:
+| Stage | Crates | Gate state | Blocker |
+|---|---|---|---|
+| 1 | `pulith-fs`, `pulith-version`, `pulith-verify`, `pulith-shim` | blocked | `pulith-version` must pass clean-worktree crates.io dry-run (latest retry failed on dirty files) |
+| 2 | `pulith-resource`, `pulith-platform`, `pulith-archive` | blocked | stage 1 not published + stage-2 crate files currently dirty |
+| 3 | `pulith-source`, `pulith-store` | waiting | stage 2 publish not complete |
+| 4 | `pulith-fetch`, `pulith-state` | waiting | stage 3 publish not complete |
+| 5 | `pulith-install` | waiting | stage 4 publish not complete |
 
-- `pulith-fs`, `pulith-version`, `pulith-resource`, `pulith-source`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-store`, `pulith-state`, `pulith-install`, `pulith-platform`, `pulith-shim`
+## Stage 1 Detail
 
-Internal/non-publish:
+| Crate | Version | Last crates.io dry-run | Status |
+|---|---|---|---|
+| `pulith-fs` | `0.1.0` | pass | ready |
+| `pulith-version` | `0.1.0` | fail (dirty `crates/pulith-version/Cargo.toml`, `crates/pulith-version/src/version.rs`) | blocked |
+| `pulith-verify` | `0.1.0` | pass | ready |
+| `pulith-shim` | `0.1.0` | pass | ready |
 
-- `pulith-backend-example`, `pulith-shim-bin`, `runtime-manager-example`
+## Stage 2 Detail
 
-## Status
+| Crate | Version | Last crates.io dry-run | Status |
+|---|---|---|---|
+| `pulith-resource` | `0.1.0` | fail (dirty `crates/pulith-resource/Cargo.toml`) | blocked |
+| `pulith-platform` | `0.1.0` | fail (dirty `crates/pulith-platform/Cargo.toml`) | blocked |
+| `pulith-archive` | `0.2.0` | fail (dirty files under `crates/pulith-archive/*`) | blocked |
 
-| Crate | Publish intent | Metadata normalized | Mirror dry-run evidence | crates.io-targeted dry-run |
-|---|---|---|---|---|
-| `pulith-fs` | public | yes | blocked by source replacement | pending |
-| `pulith-version` | public | yes | blocked by source replacement | pending |
-| `pulith-resource` | public | yes | blocked by source replacement | pending |
-| `pulith-source` | public | yes | blocked by source replacement | pending |
-| `pulith-verify` | public | yes | blocked by source replacement | pending |
-| `pulith-archive` | public | yes | blocked by source replacement | pending |
-| `pulith-fetch` | public | yes | blocked by source replacement | pending |
-| `pulith-store` | public | yes | blocked by source replacement | pending |
-| `pulith-state` | public | yes | blocked by source replacement | pending |
-| `pulith-install` | public | yes | blocked by source replacement | pending |
-| `pulith-platform` | public | yes | blocked by source replacement | pending |
-| `pulith-shim` | public | yes | blocked by source replacement | pending |
+## Operational Links
 
-## Notes
-
-- source replacement (`crates-io` -> `ustc`) in this environment blocks direct crates.io dry-run verification.
-- prior dry-run attempt evidence is captured in `docs/publish/block-h-2026-04.md`.
-- final release gate requires rerun in a crates.io-direct environment and updating this matrix.
+- overview: `docs/publish/overview.md`
+- checklist: `docs/publish/checklist.md`

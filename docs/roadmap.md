@@ -2,60 +2,49 @@
 
 ## Goal
 
-Make Pulith a trustworthy, mechanism-first substrate for real resource managers through stronger composition, clearer contracts, and test-backed behavior.
+Make Pulith a trustworthy, mechanism-first substrate for real resource managers through stronger composition, explicit contracts, and test-backed behavior.
 
 ## Current Stage
 
-- Milestone 3: repair/ownership/retention maturation (in progress)
-- Milestone 4: planner/adapter integration (completed)
 - Milestone 5: contract and publish hardening (active)
 
 Block status:
 
-- [x] Block A - Discovery Surface Stabilization
-- [x] Block B - Ownership / Retention Hardening
-- [x] Block C - Recovery Contract Publication
-- [x] Block D - Milestone 4 Planner/Adapter Integration Kickoff
-- [x] Block E - Milestone 4 Broader Adapter Coverage
-- [x] Block F - Milestone 5 Hardening Kickoff
-- [x] Block G - Milestone 5 Evidence Expansion
-- [x] Block H - API Stabilization Evidence
-- [ ] Block I - Pre-Publish Environment and Metadata Hardening (active)
+- [x] Block A-K completed (stabilization, integration, API evidence, metadata hardening)
+- [x] Block L - Clean-Worktree Publish Decisioning (completed)
+- [ ] Block M - Stage 1 Gate Clearance and Publish Execution (active)
 
-## What Is Already Done
+## Current Reality
 
-- cross-platform CI/doc warning enforcement and contract-focused test expansion
-- recovery/rollback/activation guarantees tightened and documented
-- archive traversal/symlink-escape protections test-backed
-- manager-like reconcile/apply integration tests added
-- version parser edge-case corpus improved
-- publish intent split finalized (public vs internal crates)
-- package metadata normalized for public-target crates
+- publish train definition and readiness matrix are in place
+- stage 1 crates.io dry-runs were executed without `--allow-dirty`
+- current stage-1 decision is **no-go** because `pulith-version` was dirty during dry-run validation
+- latest `pulith-version` stage-1 retry still fails on dirty crate files (gate unchanged)
+- publish docs are compacted into overview/checklist/matrix and aligned with current gates
 
 Evidence:
 
-- benchmark notes: `docs/benchmarks/block-g-2026-04.md`
-- publish dry-run evidence: `docs/publish/block-h-2026-04.md`
+- `docs/publish/readiness-matrix.md`
+- `docs/publish/overview.md`
+- `docs/publish/checklist.md`
 
-## Immediate Block (Block I)
+## Active Block (Block M)
 
 Execution checklist:
 
-- [ ] establish crates.io-direct dry-run environment (independent from mirror replacement)
-- [ ] rerun publish dry-runs for public-target crates with both mirror path and crates.io path recorded
-- [x] add one compact publish-readiness matrix (crate -> publish intent -> metadata -> dry-run status)
+- [ ] clear stage-1 gate by re-running `pulith-version` crates.io dry-run from clean worktree (no `--allow-dirty`)
+- [ ] update stage summary in matrix/checklist from blocked to stage-ready after clean rerun passes
+- [x] execute stage-2 dry-runs in dependency order and record blocker state in readiness matrix
+- [x] compact publish docs and remove outdated per-block evidence files
+- [x] proceed next phase by retrying stage-1 gate command and recording current blocker
 
 Exit criteria:
 
-- crates.io-targeted dry-run evidence exists for every public-target crate
-- mirror-based and crates.io-based dry-run outcomes are both documented
-- publish-readiness matrix is checked in and linked from this roadmap
+- stage 1 is marked go with explicit clean-worktree evidence
+- stage-2 crates have crates.io dry-run outcomes recorded against exact versions
+- docs remain internally consistent across overview, checklist, and matrix
 
-Readiness matrix:
-
-- `docs/publish/readiness-matrix.md`
-
-## Public vs Internal Split
+## Publish Scope
 
 Public-target crates:
 
@@ -67,31 +56,10 @@ Internal/non-publish crates:
 - `pulith-shim-bin`
 - `runtime-manager-example`
 
-## Decisions from External Review
-
-Accepted and already acted on:
-
-- cross-shell CI/doc enforcement
-- archive safety contract testing (traversal/absolute path/symlink escape)
-- stronger end-to-end integration evidence
-- error-boundary guidance for cross-crate wrapping
-
-Partially accepted (ongoing):
-
-- expand version parser corpus/property confidence
-- keep dispatch decisions explicit before API freeze
-- keep shim invocation-time resolution guarantees explicit
-
-## Risks
-
-- publish confidence blocked by environment-specific registry replacement behavior
-- over-claiming guarantees beyond current tests
-- accidental policy leakage into helper crates
-
-## Success Criteria
+## Release Criteria
 
 Pulith is ready for first publish wave when:
 
-- public-target crates pass documented crates.io-targeted dry-runs
-- docs, tests, and behavior align on guarantees/non-guarantees
-- cross-platform contract behavior remains explicit and test-backed
+- stage-by-stage crates.io dry-runs pass in documented dependency order
+- stage decisions (go/no-go) are evidence-backed and checked in
+- docs, tests, and runtime behavior stay aligned on guarantees and boundaries
