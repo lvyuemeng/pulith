@@ -429,6 +429,8 @@ impl VersionKind {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::{
         Partial, SelectionPolicy, VersionKind, VersionKindType, VersionPreference,
         VersionRequirement, select_preferred,
@@ -586,6 +588,31 @@ mod tests {
                 VersionKind::parse(input).is_err(),
                 "input should fail: {input}"
             );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn semver_roundtrip_is_stable(major in 0u64..1000, minor in 0u64..1000, patch in 0u64..1000) {
+            let input = format!("{major}.{minor}.{patch}");
+            let parsed = VersionKind::parse(&input).unwrap();
+            prop_assert_eq!(parsed.to_string(), input);
+        }
+
+        #[test]
+        fn semver_ordering_tracks_numeric_components(
+            a_major in 0u64..100,
+            a_minor in 0u64..100,
+            a_patch in 0u64..100,
+            b_major in 0u64..100,
+            b_minor in 0u64..100,
+            b_patch in 0u64..100,
+        ) {
+            let left = VersionKind::parse(&format!("{a_major}.{a_minor}.{a_patch}")).unwrap();
+            let right = VersionKind::parse(&format!("{b_major}.{b_minor}.{b_patch}")).unwrap();
+
+            let tuple_cmp = (a_major, a_minor, a_patch).cmp(&(b_major, b_minor, b_patch));
+            prop_assert_eq!(left.cmp(&right), tuple_cmp);
         }
     }
 }
