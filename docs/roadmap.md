@@ -18,8 +18,8 @@ Block status:
 
 - publish train definition and readiness matrix are in place
 - stage 1 crates.io dry-runs were executed without `--allow-dirty`
-- current stage-1 decision is **no-go** because `pulith-version` was dirty during dry-run validation
-- latest `pulith-version` stage-1 retry still fails on dirty crate files (gate unchanged)
+- stage-1 clean-worktree dry-run gate is now satisfied for all stage-1 crates
+- current publish blocker moved to stage-1 actual publish and downstream dependency-order availability
 - publish docs are compacted into overview/checklist/matrix and aligned with current gates
 
 Evidence:
@@ -32,15 +32,16 @@ Evidence:
 
 Execution checklist:
 
-- [ ] clear stage-1 gate by re-running `pulith-version` crates.io dry-run from clean worktree (no `--allow-dirty`)
-- [ ] update stage summary in matrix/checklist from blocked to stage-ready after clean rerun passes
+- [x] clear stage-1 gate by re-running `pulith-version` crates.io dry-run from clean worktree (no `--allow-dirty`)
+- [x] update stage summary in matrix/checklist from blocked to stage-ready after clean rerun passes
 - [x] execute stage-2 dry-runs in dependency order and record blocker state in readiness matrix
 - [x] compact publish docs and remove outdated per-block evidence files
 - [x] proceed next phase by retrying stage-1 gate command and recording current blocker
+- [x] clear stage-2 crate dirty-state blocker and re-run stage-2 dry-runs to confirm dependency-order gating
 
 Exit criteria:
 
-- stage 1 is marked go with explicit clean-worktree evidence
+- stage 1 is marked stage-ready with explicit clean-worktree evidence
 - stage-2 crates have crates.io dry-run outcomes recorded against exact versions
 - docs remain internally consistent across overview, checklist, and matrix
 

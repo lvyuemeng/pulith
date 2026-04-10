@@ -24,7 +24,8 @@ Internal/non-publish crates:
 
 ## Current Status
 
-- stage 1 decision: no-go (clean-worktree gate not satisfied for `pulith-version`)
-- stage 2 attempts currently blocked by dirty crate files in stage-2 targets
+- stage 1 gate: stage-ready (all stage-1 crates have clean-worktree crates.io dry-run pass)
+- stage 2 dry-runs now reach dependency gating and fail on missing published stage-1 crates in resolved registry path
+- stage-1 actual publish is pending and is the next release-order gate
 - canonical detailed status: `docs/publish/readiness-matrix.md`
 - active operational checklist: `docs/publish/checklist.md`
