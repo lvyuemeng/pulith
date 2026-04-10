@@ -1,270 +1,224 @@
-# Pulith Coding Specifications
+# Pulith Engineering Guide
+
+This document defines coding, testing, CI, and publishing expectations for contributors.
+It is aligned with `docs/design.md` and `docs/roadmap.md`.
 
 ## Language and Tooling
 
 - **Rust Edition**: 2024
-- **Minimum Rust Version**: 1.88.0
-- **Formatting**: `cargo fmt` with default configuration
-- **Linting**: `cargo clippy` with strict warnings
-- **Documentation**: `cargo doc` for API documentation
+- **MSRV**: 1.88.0
+- **Formatter**: `cargo fmt --all`
+- **Linter**: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- **Docs**: `cargo doc --workspace --all-features --no-deps` with `RUSTDOCFLAGS=-D warnings`
+- **Task runner**: `just` (`just --list` for available commands)
 
-## Philosophy
+## Philosophy (Design-Aligned)
 
-### 1. Guiding Philosophy
+### 1) Mechanism-first, policy-free core
 
-- F1 — Functions First.
+Pulith provides composable primitives and workflows, not a hidden framework.
 
-Behavior is expressed as output = f(input). Avoid hidden state, magic side effects, and behaviorful objects.
+- Keep crate APIs mechanism-oriented and explicit.
+- Do not embed manager policy (ranking, trust, channels, cleanup decisions) in helpers.
+- Prefer data and typed contracts over implicit conventions.
 
-- F2 — Immutability by Default.
-Core data is immutable; mutation is allowed only at system boundaries (I/O, caches, buffers).
+### 2) Explicit composition contract
 
-- F3 — Pure Core, Impure Edge.
-All reasoning lives in a pure core. All effects (model calls, tools, storage, logging) live at the edge.
+Code and APIs should support this pipeline directly:
 
-- F4 — Explicit Effects.
-If a function has effects or uses randomness, this must be explicit in its interface.
+1. describe resource semantics
+2. plan or derive sources
+3. fetch and verify material
+4. register/store or extract
+5. install and optionally activate
+6. persist lifecycle facts
+7. inspect drift and apply explicit repair plans
 
-- F5 — Composition Over Orchestration.
-Prefer composable pipelines over ad-hoc control flow or global state.
+If a change forces callers to rebuild key/path/provenance glue manually, the design likely needs adjustment.
 
-### 2. Structure Philosophy
+### 3) Pure reasoning, explicit effects
 
-- Data Layer (Pure): Explicit, immutable types (Query, State, Plan, Action, Event).
+- Keep decision logic deterministic where possible.
+- Keep I/O, network, filesystem, and platform effects at clear boundaries.
+- Surface side effects and randomness in interfaces and types.
+- Prefer typed receipts/reports over ad hoc reconstruction.
 
-- Core (Pure): Deterministic transformations over data (update, plan, rank).
+### 4) Guarantees and non-guarantees must stay honest
 
-- Effect Layer: Only place for I/O, tools, persistence, and model sampling.
+- Only claim guarantees backed by tests and documented behavior.
+- Preserve explicit non-guarantees (no dependency solving, no hidden repair, no global rollback journal).
+- Platform differences should surface as typed, explainable behavior.
 
-- Orchestrator: Thin loop wiring pure logic to effects; holds no intelligence.
-
-- You should name data structure by **functionality**.
-
-### 3. Efficiency (Pragmatic FP) Philosophy
-
-- E1 — Structural Sharing: Use persistent data to avoid deep copies.
-
-- E2 — Laziness: Defer computation when possible.
-
-- E3 — Batch at Boundaries: Group model/tool calls.
-
-- E4 — Pure Hot Path, Mutable Cold Path: Keep reasoning pure; allow mutation only in caches/buffers.
-
-- E5 — Cost-Aware Planning: Plans should consider latency, token budget, and tool cost.
-
-## Workspace Structure
+## Architecture and Workspace
 
 ```text
 pulith/
-├── Cargo.toml           # Workspace manifest
+├── Cargo.toml                 # Workspace manifest
+├── justfile                   # Local command entrypoints
 ├── crates/
-│   ├── pulith-*/       # Individual crates
+│   ├── pulith-*/              # Library and adapter crates
 │   └── ...
-└── Cargo.lock          # Lock file (committed)
+├── examples/
+│   └── runtime-manager/       # Composition reference
+└── .github/workflows/         # CI and benchmark workflows
 ```
 
-- modules structure should be named based on functionality.
-- modules counts should be small as much as possible rather diversified.
-- use `name.rs + name/*` module layout.
+Crate roles should remain narrow and composable:
+
+- **Primitive**: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`
+- **Semantic**: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`
+- **Workflow**: `pulith-install`
+- **Adapter/example**: `pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
+
+Module guidance:
+
+- Name modules and types by functionality.
+- Keep module count small and cohesive.
+- Prefer `name.rs + name/*` layout for growing modules.
 
 ## Dependencies
 
-- **Workspace Dependencies**: Declare in root `Cargo.toml` under `[workspace.dependencies]`
-- **Crate Dependencies**: Reference workspace deps or add crate-specific ones
-- **Feature Gates**: Gate heavy dependencies (HTTP, archive formats, crypto) behind features
-- **Version Pinning**: Use `=` for critical dependencies, `*` for flexible matching
+- Declare shared dependencies in workspace root under `[workspace.dependencies]`.
+- Reuse workspace dependencies from crates when possible.
+- Gate heavy or optional behavior behind features.
+- Pin versions intentionally when stability or compatibility requires it.
 
-## Error Handling
+## Error Handling and Boundaries
 
-### Error Types
+### Error model
 
-```rust
-use thiserror::Error;
+- Library code returns concrete crate-local error enums (`thiserror`).
+- Application/binary code may use `anyhow` for top-level orchestration.
+- Do not use `unwrap()`, `expect()`, or `panic!()` in library code paths.
 
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("contextual message")]
-    Variant { field: Type },
+### Boundary guideline (cross-crate)
 
-    #[error(transparent)]
-    External(#[from] external::Error),
-}
-```
+When one Pulith crate composes another:
 
-### Propagation
-
-- **Application code**: Use `anyhow` with `?` operator
-- **Library code**: Return concrete error types
-- **Never** use `unwrap()`, `expect()`, or `panic!()` in library code
+- own one public error enum per crate;
+- wrap direct dependency errors as source-bearing variants (`#[from]`/`#[source]`);
+- keep crate-specific policy/contract errors explicit;
+- avoid mirroring every nested dependency variant in upper layers.
 
 ## Async and Concurrency
 
-- **Runtime**: Use shared `tokio` runtime from a centralized task pool
-- **Pattern**: `POOL.block_on(async { ... })` for blocking async calls
-- **Never** spawn new runtimes in library code
-- **Thread Safety**: All public types must be `Send + Sync`
+- Use shared runtime strategy; do not spawn ad hoc runtimes in libraries.
+- Keep public types `Send + Sync` where cross-thread composition is expected.
+- Prefer deterministic coordination and bounded concurrency for reproducible behavior.
 
 ## Cross-Platform Requirements
 
-### Path Handling
-
-- Use `PathBuf`, never `String` for paths
-- Use `std::path::Path` for parameters
-- Handle path separators (Windows backslash, Unix forward slash)
-
-### OS-Specific Code
-
-```rust
-#[cfg(target_os = "windows")]
-fn windows_specific() { ... }
-
-#[cfg(target_os = "linux")]
-fn linux_specific() { ... }
-
-#[cfg(not(windows))]
-fn non_windows() { ... }
-```
-
-### Platform Detection
-
-Use `pulith_platform` for OS and distribution detection.
+- Use `Path`/`PathBuf` for all filesystem paths.
+- Keep OS-specific code behind `cfg` gates.
+- Prefer `pulith-platform` for platform/distro detection and normalization.
+- Write explicit tests for platform contracts (especially Windows activation behavior).
+- In core crates, prefer `pulith-fs` for atomic/transactional filesystem behavior; `std::fs` is acceptable in top-level example orchestration paths where those guarantees are not being implemented.
 
 ## Serialization
 
-- **Format**: Binary with `postcard`, JSON with `serde_json`
-- **Derive**: Use `#[derive(Serialize, Deserialize)]`
-- **Skipping**: Use `#[serde(skip)]` for non-serialized fields
-- **Visibility**: Keep serialized representation as implementation detail
-
-## Code Organization
-
-### Naming Conventions
-
-| Element | Convention | Example |
-|---------|------------|---------|
-| Crates | `pulith-*` | `pulith-version` |
-| Traits | PascalCase | `Source`, `Tracker` |
-| Errors | `Error` suffix | `VersionError` |
-| Builders | `*Builder` | `ProgressTrackerBuilder` |
-| Modules | snake_case | `reg`, `ui` |
-| Constants | SCREAMING_SNAKE_CASE | `MAX_RETRY_COUNT` |
-
-### Visibility
-
-- **Public API**: Mark with `pub` at crate root
-- **Internal**: Use `pub(crate)` for intra-crate public
-- **Private**: Omit `pub` for module-private items
+- Use `serde` derive for stable structured data.
+- Use `postcard`/binary or JSON intentionally per boundary contract.
+- Keep serialized layout as an implementation contract, not accidental public API.
 
 ## Testing
 
-### Requirements
+### Required layers
 
-- **Unit Tests**: In `#[cfg(test)]` modules alongside code
-- **Integration Tests**: In `tests/` directory
-- **Property Tests**: For parsing and comparison logic
-- **Coverage**: Aim for 80%+ coverage on critical paths
+- **Unit tests**: colocated `#[cfg(test)]` modules for local behavior.
+- **Integration tests**: `tests/` for crate/public API composition.
+- **Contract tests**: guarantee-focused behavior (archive safety, recovery, activation).
+- **Property/corpus tests**: parser/selector correctness (notably version behavior).
+- **Benchmarks**: criterion benches for threshold decisions and regressions.
 
-### Testing Strategy
+### Local test commands
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+- `just test` -> `cargo test --workspace --all-features`
+- `just ci` -> local CI parity (`quality + verify`)
+- Targeted benches:
+  - `cargo bench -p pulith-fetch --bench multi_source`
+  - `cargo bench -p pulith-install --bench pipeline`
+  - `cargo bench -p pulith-install --bench copy_transition`
 
-    #[test]
-    fn test_version_parsing() { ... }
+### Test quality expectations
 
-    #[test]
-    fn test_version_comparison() { ... }
-}
-```
+- Add tests for every behavior-affecting change.
+- Prefer contract-oriented assertions over implementation-detail assertions.
+- Keep guarantees/non-guarantees in docs synchronized with executable tests.
+
+### Benchmark evidence expectations
+
+- benchmark-driven changes must include command lines and environment notes (OS, CPU class, storage context)
+- avoid changing thresholds from a single noisy run; use repeated runs and summarize spread
+- when thresholds change, document interpretation in `docs/roadmap.md` or crate-level design docs
+- check in benchmark notes under `docs/benchmarks/` for milestone/block evidence
+
+## CI
+
+CI is defined in `.github/workflows/ci.yml` and must remain aligned with local `just` tasks.
+
+Current required checks:
+
+- **Lint job (Ubuntu)**: fmt check, clippy `-D warnings`, docs build with rustdoc warnings denied.
+- **Test matrix**: `cargo test --workspace --all-features` on Linux, Windows, and macOS.
+- **MSRV job**: `cargo check --workspace --all-features` on Rust 1.88.0.
+- **Security and dependency checks**:
+  - `cargo audit`
+  - `cargo deny --all-features check advisories bans sources`
+  - `cargo tree --workspace --all-features -d`
+
+Benchmark workflow lives in `.github/workflows/benchmark.yml` and is run on demand.
+
+## Publish and crates.io Readiness
+
+Pulith is in active hardening. Publishing should be deliberate and checklist-driven.
+
+### Release policy
+
+- Publish only crates intended for external consumption.
+- Mark internal-only crates/examples/binaries with `publish = false` when not meant for crates.io.
+- Keep crate metadata complete (`description`, `license`, `repository`, `readme`, categories/keywords as appropriate).
+- Current internal/non-publish examples include `runtime-manager-example`, `pulith-shim-bin`, and `pulith-backend-example`.
+
+### Pre-publish checklist
+
+1. Run `just ci` locally and ensure parity with GitHub CI.
+2. Verify docs build cleanly with rustdoc warnings denied.
+3. Confirm API and error-boundary contracts are documented.
+4. Ensure tests cover changed guarantees, including platform-specific behavior.
+5. Dry-run publish for each crate:
+   - `cargo publish -p <crate> --dry-run`
+6. Confirm internal-only crates/examples are marked `publish = false`.
+7. Mirror-friendly workflow: use your configured mirror registry for fast iteration dry-runs (for example `--registry ustc` when configured), then run a final crates.io-targeted dry-run (`--registry crates-io`) in release validation.
+
+### Publish ordering
+
+- Publish in dependency order (lower-level crates first).
+- After each publish, validate downstream crates still dry-run cleanly before proceeding.
 
 ## Documentation
 
-### Public API
-
-All public items must have `///` documentation:
-
-```rust
-/// Parses a version string into a [`Version`].
-///
-/// # Errors
-///
-/// Returns [`VersionError`] if the string is not a valid version.
-///
-/// # Examples
-///
-/// ```
-/// use pulith_version::Version;
-///
-/// let version = "1.2.3".parse().unwrap();
-/// assert_eq!(version.major, 1);
-/// ```
-pub fn parse_version(s: &str) -> Result<Version, VersionError> { ... }
-```
-
-### Error Documentation
-
-Document error variants with `#[error(...)]`:
-
-```rust
-#[derive(Error, Debug)]
-pub enum VersionError {
-    #[error("invalid version format: {0}")]
-    InvalidFormat(String),
-
-    #[error("unknown version scheme: {0}")]
-    UnknownScheme(String),
-}
-```
+- All public items require `///` docs.
+- Public APIs that can fail should include `# Errors` sections.
+- Include runnable examples where practical.
+- Keep `docs/design.md`, crate design docs, and behavior/tests consistent.
 
 ## Code Style
 
-### Imports
+- Group imports by standard library, third-party, and crate-local modules.
+- Run `cargo fmt` before commit.
+- Keep lines readable (target ~100 columns unless rustfmt formats differently).
+- Avoid unexplained `#[allow(...)]` attributes and magic numbers.
 
-```rust
-// Standard library
-use std::path::{Path, PathBuf};
+## Pull Request Expectations
 
-// Third party
-use anyhow::{Context, Result};
-use thiserror::Error;
-
-// Crate local
-use crate::module::Item;
-```
-
-### Formatting
-
-- Run `cargo fmt` before committing
-- Maximum line width: 100 characters
-- Use Rust-analyzer or similar IDE support
-
-### Anti-Patterns to Avoid
-
-- `unwrap()`, `expect()`, `panic!()` in library code
-- Spawning new async runtimes
-- Using `String` instead of `PathBuf` for paths
-- `#[allow(dead_code)]` without explanation
-- Magic numbers (use constants)
-
-## Pull Requests
-
-1. **Branch**: `feature/<short-description>`
-2. **Size**: Keep changes small and focused
-3. **Tests**: Include tests for new functionality
-4. **Docs**: Update documentation for API changes
-5. **CI**: Ensure all checks pass
+1. Keep PRs scoped and reviewable.
+2. Include tests and docs updates for behavioral/API changes.
+3. Ensure CI passes across all required jobs.
+4. Preserve mechanism-first boundaries; avoid policy leakage into core crates.
 
 ## References
 
-- [README.md](../README.md) - Project overview and getting started
-- [design.md](./design.md) - Design specification and crate architecture
-- [docs/design/*.md](./design/) - Detailed design documents for each crate
-- [docs/design/verify.md](./design/verify.md) - Content verification design
-- [docs/design/fetch.md](./design/fetch.md) - HTTP fetching design
-- [docs/design/fs.md](./design/fs.md) - Filesystem primitives design
-- [docs/design/archive.md](./design/archive.md) - Archive handling design
-- [docs/design/version.md](./design/version.md) - Version parsing design
-- [docs/design/platform.md](./design/platform.md) - Platform utilities design
-- [docs/design/shim.md](./design/shim.md) - Shim generation design
+- [README.md](../README.md)
+- [docs/design.md](./design.md)
+- [docs/roadmap.md](./roadmap.md)
+- [docs/design/](./design/) (crate-level design docs)

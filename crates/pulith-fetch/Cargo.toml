@@ -3,6 +3,12 @@ name = "pulith-fetch"
 version = "0.2.0"
 edition = "2024"
 description = "HTTP downloading with streaming verification and atomic placement"
+license = "Apache-2.0"
+repository = "https://github.com/anomalyco/pulith"
+documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/fetch.md"
+readme = "README.md"
+keywords = ["fetch", "download", "http", "streaming"]
+categories = ["network-programming", "filesystem"]
 
 [features]
 default = ["reqwest"]

@@ -1569,6 +1569,80 @@ mod tests {
     }
 
     #[test]
+    fn restore_resource_state_only_affects_target_resource_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+
+        let runtime_a = ResourceId::parse("example/runtime-a").unwrap();
+        let runtime_b = ResourceId::parse("example/runtime-b").unwrap();
+
+        state
+            .ensure_resource_record(runtime_a.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &runtime_a,
+                ResourceRecordPatch::install_path(Some(PathBuf::from("/opt/runtime-a")))
+                    .with_lifecycle(ResourceLifecycle::Installed),
+            )
+            .unwrap();
+        state
+            .record_activation(&runtime_a, PathBuf::from("/active/runtime-a"))
+            .unwrap();
+
+        state
+            .ensure_resource_record(runtime_b.clone(), VersionSelector::alias("stable").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &runtime_b,
+                ResourceRecordPatch::install_path(Some(PathBuf::from("/opt/runtime-b")))
+                    .with_lifecycle(ResourceLifecycle::Active),
+            )
+            .unwrap();
+        state
+            .record_activation(&runtime_b, PathBuf::from("/active/runtime-b"))
+            .unwrap();
+
+        let captured_a = state.capture_resource_state(&runtime_a).unwrap();
+
+        state
+            .patch_resource_record(
+                &runtime_a,
+                ResourceRecordPatch::install_path(Some(PathBuf::from("/tmp/stale-runtime-a")))
+                    .with_lifecycle(ResourceLifecycle::Failed),
+            )
+            .unwrap();
+        state.remove_activation_records(&runtime_a).unwrap();
+
+        state
+            .patch_resource_record(
+                &runtime_b,
+                ResourceRecordPatch::install_path(Some(PathBuf::from("/opt/runtime-b-updated")))
+                    .with_lifecycle(ResourceLifecycle::Installed),
+            )
+            .unwrap();
+
+        state.restore_resource_state(&captured_a).unwrap();
+
+        let restored_a = state.get_resource_record(&runtime_a).unwrap().unwrap();
+        assert_eq!(restored_a.lifecycle, ResourceLifecycle::Installed);
+        assert_eq!(
+            restored_a.install_path,
+            Some(PathBuf::from("/opt/runtime-a"))
+        );
+        assert_eq!(state.list_activation_records(&runtime_a).unwrap().len(), 1);
+
+        let preserved_b = state.get_resource_record(&runtime_b).unwrap().unwrap();
+        assert_eq!(preserved_b.lifecycle, ResourceLifecycle::Installed);
+        assert_eq!(
+            preserved_b.install_path,
+            Some(PathBuf::from("/opt/runtime-b-updated"))
+        );
+        assert_eq!(state.list_activation_records(&runtime_b).unwrap().len(), 1);
+    }
+
+    #[test]
     fn resource_inspection_reports_missing_runtime_state() {
         let temp = tempfile::tempdir().unwrap();
         let state = StateReady::initialize(temp.path().join("state.json")).unwrap();

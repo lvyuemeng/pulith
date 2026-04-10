@@ -3,6 +3,12 @@ name = "pulith-install"
 version = "0.1.0"
 edition = "2024"
 description = "Composable installation workflow primitives for Pulith"
+license = "Apache-2.0"
+repository = "https://github.com/anomalyco/pulith"
+documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/install.md"
+readme = "README.md"
+keywords = ["install", "activation", "rollback", "workflow"]
+categories = ["filesystem", "development-tools"]
 
 [dependencies]
 pulith-archive = { path = "../pulith-archive" }

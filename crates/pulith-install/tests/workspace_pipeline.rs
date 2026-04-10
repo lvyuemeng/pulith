@@ -513,6 +513,91 @@ fn ownership_and_retention_plan_is_explicit_and_stable() {
 }
 
 #[test]
+fn manager_like_reconcile_apply_cycle_repairs_and_prunes_statefully() {
+    let temp = tempfile::tempdir().unwrap();
+    let local_source_path = temp.path().join("source.bin");
+    fs::write(&local_source_path, b"runtime-binary").unwrap();
+
+    let resource = resolved_resource(ResourceLocator::LocalPath(local_source_path.clone()));
+    let fetched = fetch_local_resource_to(
+        &local_source_path,
+        &temp.path().join("downloads/runtime.bin"),
+    );
+
+    let store = StoreReady::initialize(StoreRoots::new(
+        temp.path().join("store/artifacts"),
+        temp.path().join("store/extracts"),
+        temp.path().join("store/metadata"),
+    ))
+    .unwrap();
+    let key = StoreKey::logical("runtime-reconcile").unwrap();
+    let install_input = InstallInput::store_fetched_artifact(&store, &key, &fetched).unwrap();
+
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let install_root = temp.path().join("installs/runtime");
+    let activation_target = temp.path().join("active/runtime");
+
+    PlannedInstall::new(
+        InstallReady::new(state.clone()),
+        InstallSpec::new(resource.clone(), install_input, install_root.clone()).activation(
+            ActivationTarget {
+                path: activation_target.clone(),
+            },
+        ),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .activate(&SymlinkActivator)
+    .unwrap()
+    .finish();
+
+    if install_root.exists() {
+        fs::remove_dir_all(&install_root).unwrap();
+    }
+    if activation_target.exists() {
+        let metadata = fs::symlink_metadata(&activation_target).unwrap();
+        if metadata.file_type().is_symlink() || metadata.file_type().is_file() {
+            fs::remove_file(&activation_target).unwrap();
+        } else {
+            fs::remove_dir_all(&activation_target).unwrap();
+        }
+    }
+    let artifact_root = store.artifact_path(&key);
+    if artifact_root.exists() {
+        fs::remove_dir_all(&artifact_root).unwrap();
+    }
+
+    let resource_id = resource.spec().id.clone();
+    let before = state.inspect_resource(&resource_id, Some(&store)).unwrap();
+    assert!(before.summary.total_findings >= 2);
+
+    let repair = state
+        .plan_resource_state_repair(&resource_id, Some(&store))
+        .unwrap();
+    assert!(!repair.actions.is_empty());
+    state.apply_resource_state_repair(&repair).unwrap();
+
+    let after = state.inspect_resource(&resource_id, Some(&store)).unwrap();
+    assert_eq!(after.summary.total_findings, 0);
+
+    let ownership_retention = state
+        .plan_ownership_and_retention(&store, StoreRetentionPolicy::InstalledAndActive)
+        .unwrap();
+    let protected_keys = ownership_retention
+        .retention
+        .protected_keys
+        .iter()
+        .map(|entry| entry.key.clone())
+        .collect::<Vec<_>>();
+    let prune = store
+        .prune_missing_with_protection(&protected_keys)
+        .unwrap();
+    assert!(prune.removed_metadata >= 1);
+}
+
+#[test]
 fn archive_extract_store_install_pipeline() {
     let temp = tempfile::tempdir().unwrap();
 

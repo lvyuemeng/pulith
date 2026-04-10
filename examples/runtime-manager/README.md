@@ -24,21 +24,27 @@ The goal is not to be feature-complete. The goal is to show a practical multi-cr
 The example composes Pulith crates as a thin integration layer:
 
 1. `pulith-resource`
+
 - defines the runtime semantically (`resource-id`, version, locator)
 
 2. `pulith-source` + `pulith-fetch`
+
 - plans the source and fetches the archive into a workspace download area
 
 3. `pulith-archive`
+
 - extracts the fetched archive into a temporary extracted tree
 
 4. `pulith-store`
+
 - registers the extracted tree with provenance so it can be inspected and reused safely
 
 5. `pulith-install`
+
 - stages the install, commits it into the managed install root, and activates it
 
 6. `pulith-state`
+
 - records lifecycle facts, supports inspection, repair planning, and retention-aware cleanup planning
 
 ## What It Demonstrates

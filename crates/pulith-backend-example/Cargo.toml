@@ -3,6 +3,7 @@ name = "pulith-backend-example"
 version = "0.1.0"
 edition = "2024"
 description = "Thin backend example crate for Pulith's adapter-first architecture"
+publish = false
 
 [dependencies]
 pulith-fetch = { path = "../pulith-fetch" }

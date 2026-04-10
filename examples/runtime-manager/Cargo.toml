@@ -3,6 +3,7 @@ name = "runtime-manager-example"
 version = "0.1.0"
 edition = "2024"
 description = "Practical integration example for Pulith crates"
+publish = false
 
 [dependencies]
 pulith-archive = { path = "../../crates/pulith-archive" }

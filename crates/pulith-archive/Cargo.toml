@@ -3,8 +3,10 @@ name = "pulith-archive"
 version = "0.2.0"
 edition = "2024"
 description = "Archive extraction with path sanitization and transactional staging"
+license = "Apache-2.0"
 repository = "https://github.com/anomalyco/pulith"
 documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/archive.md"
+readme = "README.md"
 keywords = ["archive", "extract", "unzip", "tar"]
 categories = ["compression", "filesystem"]
 

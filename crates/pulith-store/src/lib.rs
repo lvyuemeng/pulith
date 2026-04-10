@@ -251,16 +251,16 @@ impl StoreReady {
         let file_name = source
             .file_name()
             .ok_or_else(|| StoreError::MissingFileName(source.to_path_buf()))?;
+        let artifact_root = self.artifact_path(key);
+        if artifact_root.exists() {
+            std::fs::remove_dir_all(&artifact_root)?;
+        }
         let workspace_root = tempfile::tempdir()?;
         let workspace = Workspace::new(
             workspace_root.path().join("artifact"),
-            self.roots.artifacts.clone(),
+            artifact_root.clone(),
         )?;
-        stage_artifact_file(
-            &workspace,
-            source,
-            PathBuf::from(key.relative_name()).join(file_name),
-        )?;
+        stage_artifact_file(&workspace, source, PathBuf::from(file_name))?;
         workspace.commit()?;
 
         let artifact = StoredArtifact {

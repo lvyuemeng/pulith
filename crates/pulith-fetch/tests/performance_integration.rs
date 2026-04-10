@@ -118,7 +118,7 @@ async fn test_large_file_performance() {
 
     let temp_dir = create_temp_dir();
     let workspace_root = temp_dir.join("workspace");
-    std::fs::create_dir(&workspace_root).unwrap();
+    std::fs::create_dir_all(&workspace_root).unwrap();
     let destination = temp_dir.join("output").join("large_file.bin");
     std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
 
@@ -204,13 +204,13 @@ async fn test_concurrent_performance() {
 
     let temp_dir = create_temp_dir();
     let workspace_root = temp_dir.join("workspace");
-    std::fs::create_dir(&workspace_root).unwrap();
+    std::fs::create_dir_all(&workspace_root).unwrap();
 
     let mut handles = Vec::new();
 
     for i in 0..NUM_DOWNLOADS {
         let workspace_root = workspace_root.join(format!("workspace_{}", i));
-        std::fs::create_dir(&workspace_root).unwrap();
+        std::fs::create_dir_all(&workspace_root).unwrap();
         let temp_dir_clone = temp_dir.clone();
 
         let handle = tokio::spawn(async move {
@@ -283,7 +283,7 @@ async fn test_memory_usage_under_load() {
 
     let temp_dir = create_temp_dir();
     let workspace_root = temp_dir.join("workspace");
-    std::fs::create_dir(&workspace_root).unwrap();
+    std::fs::create_dir_all(&workspace_root).unwrap();
 
     let initial_memory = get_memory_usage();
 
@@ -291,7 +291,7 @@ async fn test_memory_usage_under_load() {
 
     for i in 0..NUM_CONCURRENT {
         let workspace_root = workspace_root.join(format!("workspace_{}", i));
-        std::fs::create_dir(&workspace_root).unwrap();
+        std::fs::create_dir_all(&workspace_root).unwrap();
         let temp_dir_clone = temp_dir.clone();
 
         let handle = tokio::spawn(async move {
@@ -395,7 +395,7 @@ async fn test_performance_scaling() {
     for size in file_sizes {
         let temp_dir = create_temp_dir();
         let workspace_root = temp_dir.join("workspace");
-        std::fs::create_dir(&workspace_root).unwrap();
+        std::fs::create_dir_all(&workspace_root).unwrap();
         // Create a unique destination directory for each test
         let dest_dir = temp_dir.join(format!("scale_dest_{}", size));
         std::fs::create_dir_all(&dest_dir).unwrap();

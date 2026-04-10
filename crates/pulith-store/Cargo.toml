@@ -3,6 +3,12 @@ name = "pulith-store"
 version = "0.1.0"
 edition = "2024"
 description = "Composable local artifact storage for Pulith"
+license = "Apache-2.0"
+repository = "https://github.com/anomalyco/pulith"
+documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/store.md"
+readme = "README.md"
+keywords = ["artifact", "store", "provenance", "metadata"]
+categories = ["filesystem", "data-structures"]
 
 [dependencies]
 pulith-fs = { path = "../pulith-fs" }

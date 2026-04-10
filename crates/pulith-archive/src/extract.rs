@@ -400,4 +400,62 @@ mod tests {
         let result = extract(&mut source, temp_dir.path(), &ExtractOptions::default());
         assert!(matches!(result, Err(Error::AbsoluteSymlinkTarget { .. })));
     }
+
+    #[test]
+    fn extract_rejects_relative_escape_entry_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut source = TestSource {
+            entries: vec![Ok(PendingEntry {
+                original_path: PathBuf::from("../../escape.txt"),
+                size: 4,
+                mode: None,
+                kind: EntryKind::File,
+                reader: Some(Box::new(Cursor::new(b"evil".to_vec()))),
+            })],
+        };
+
+        let result = extract(&mut source, temp_dir.path(), &ExtractOptions::default());
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[test]
+    fn extract_rejects_absolute_entry_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let absolute = if cfg!(windows) {
+            PathBuf::from("C:/escape.txt")
+        } else {
+            PathBuf::from("/escape.txt")
+        };
+        let mut source = TestSource {
+            entries: vec![Ok(PendingEntry {
+                original_path: absolute,
+                size: 4,
+                mode: None,
+                kind: EntryKind::File,
+                reader: Some(Box::new(Cursor::new(b"evil".to_vec()))),
+            })],
+        };
+
+        let result = extract(&mut source, temp_dir.path(), &ExtractOptions::default());
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[test]
+    fn extract_rejects_symlink_target_escape() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut source = TestSource {
+            entries: vec![Ok(PendingEntry {
+                original_path: PathBuf::from("bin/tool-link"),
+                size: 0,
+                mode: None,
+                kind: EntryKind::Symlink {
+                    target: PathBuf::from("../../escape"),
+                },
+                reader: None,
+            })],
+        };
+
+        let result = extract(&mut source, temp_dir.path(), &ExtractOptions::default());
+        assert!(matches!(result, Err(Error::SymlinkEscape { .. })));
+    }
 }

@@ -820,13 +820,13 @@ fn restore_backup(backup_path: &Path, install_root: &Path) -> Result<()> {
 }
 
 fn map_activation_link_error(
-    installed_path: &Path,
-    target: &Path,
+    _installed_path: &Path,
+    _target: &Path,
     error: pulith_fs::Error,
 ) -> InstallError {
     #[cfg(windows)]
     {
-        if !installed_path.is_dir()
+        if !_installed_path.is_dir()
             && matches!(
                 &error,
                 pulith_fs::Error::Write { source, .. }
@@ -834,8 +834,8 @@ fn map_activation_link_error(
             )
         {
             return InstallError::WindowsFileSymlinkPrivilege {
-                installed_path: installed_path.to_path_buf(),
-                target: target.to_path_buf(),
+                installed_path: _installed_path.to_path_buf(),
+                target: _target.to_path_buf(),
             };
         }
     }
@@ -843,10 +843,10 @@ fn map_activation_link_error(
     InstallError::Fs(error)
 }
 
-fn prepare_path_for_removal(path: &Path) -> Result<()> {
+fn prepare_path_for_removal(_path: &Path) -> Result<()> {
     #[cfg(windows)]
     {
-        clear_readonly_recursive(path)?;
+        clear_readonly_recursive(_path)?;
     }
 
     Ok(())
@@ -1914,6 +1914,24 @@ mod tests {
                 installed_path: mapped_installed_path,
                 target: mapped_target,
             } if mapped_installed_path == installed_path && mapped_target == target
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_activation_permission_denied_stays_fs_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let installed_path = temp.path().join("runtime-dir");
+        std::fs::create_dir_all(&installed_path).unwrap();
+        let target = temp.path().join("bin/runtime-link");
+        let error = pulith_fs::Error::Write {
+            path: target.clone(),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied"),
+        };
+
+        assert!(matches!(
+            map_activation_link_error(&installed_path, &target, error),
+            InstallError::Fs(pulith_fs::Error::Write { .. })
         ));
     }
 

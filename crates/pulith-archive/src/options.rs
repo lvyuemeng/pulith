@@ -306,17 +306,43 @@ fn normalize_path(path: &Path) -> Result<PathBuf> {
     let normalized_separators = path.to_string_lossy().replace('\\', "/");
     let path = Path::new(&normalized_separators);
     let mut result = PathBuf::new();
+    let mut prefix: Option<std::ffi::OsString> = None;
+    let mut has_root = false;
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
 
     for component in path.components() {
         match component {
             Component::ParentDir => {
-                result.pop();
+                if let Some(last) = parts.last() {
+                    if last != std::ffi::OsStr::new("..") {
+                        parts.pop();
+                    } else if !has_root {
+                        parts.push(std::ffi::OsString::from(".."));
+                    }
+                } else if !has_root {
+                    parts.push(std::ffi::OsString::from(".."));
+                }
             }
-            Component::Normal(part) => result.push(part),
-            Component::RootDir => result.push("/"),
-            Component::Prefix(prefix) => result.push(prefix.as_os_str()),
+            Component::Normal(part) => parts.push(part.to_os_string()),
+            Component::RootDir => {
+                has_root = true;
+                parts.clear();
+            }
+            Component::Prefix(found_prefix) => {
+                prefix = Some(found_prefix.as_os_str().to_os_string());
+            }
             Component::CurDir => {} // ignore current dir
         }
+    }
+
+    if let Some(p) = prefix {
+        result.push(p);
+    }
+    if has_root {
+        result.push(Path::new("/"));
+    }
+    for part in parts {
+        result.push(part);
     }
 
     Ok(result)
@@ -546,6 +572,13 @@ mod tests {
     }
 
     #[test]
+    fn zip_slip_relative_escape_protection() {
+        let options = ExtractOptions::default();
+        let result = options.sanitize_path("../../etc/passwd", test_base_path());
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[test]
     fn symlink_target_sanitization() {
         let options = ExtractOptions::default();
         let target = "../lib";
@@ -574,6 +607,12 @@ mod tests {
     fn path_normalization() {
         let result = normalize_path(Path::new("foo//bar\\baz/../qux")).unwrap();
         assert_eq!(result, Path::new("foo/bar/qux"));
+    }
+
+    #[test]
+    fn path_normalization_preserves_leading_parent_segments() {
+        let result = normalize_path(Path::new("../../escape")).unwrap();
+        assert_eq!(result, Path::new("../../escape"));
     }
 
     #[test]

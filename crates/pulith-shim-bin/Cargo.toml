@@ -3,6 +3,7 @@ name = "pulith-shim-bin"
 version = "0.1.0"
 edition = "2024"
 description = "Template for pulith shim binary"
+publish = false
 
 [dependencies]
 pulith-shim = { path = "./pulith-shim" }

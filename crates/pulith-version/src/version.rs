@@ -533,4 +533,59 @@ mod tests {
 
         assert_eq!(selected.to_string(), "20.12.1");
     }
+
+    #[test]
+    fn semver_requirement_does_not_match_calver_values() {
+        let requirement = VersionRequirement::parse("^1.2").unwrap();
+        assert!(!requirement.matches(&VersionKind::parse("2024.01.15").unwrap()));
+    }
+
+    #[test]
+    fn highest_stable_falls_back_to_latest_when_only_prerelease_exists() {
+        let versions = vec![
+            VersionKind::parse("1.2.3-alpha.1").unwrap(),
+            VersionKind::parse("1.2.3-alpha.2").unwrap(),
+        ];
+
+        let selected = select_preferred(
+            &versions,
+            &SelectionPolicy {
+                requirement: VersionRequirement::Any,
+                preference: VersionPreference::HighestStable,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selected.to_string(), "1.2.3-alpha.2");
+    }
+
+    #[test]
+    fn lts_preference_prefers_lts_partial_entries() {
+        let versions = vec![
+            VersionKind::parse("22").unwrap(),
+            VersionKind::parse("20lts").unwrap(),
+            VersionKind::parse("18lts").unwrap(),
+        ];
+
+        let selected = select_preferred(
+            &versions,
+            &SelectionPolicy {
+                requirement: VersionRequirement::Any,
+                preference: VersionPreference::Lts,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selected.to_string(), "20lts");
+    }
+
+    #[test]
+    fn malformed_version_inputs_are_rejected() {
+        for input in ["", "abc", "1.2.3.4"] {
+            assert!(
+                VersionKind::parse(input).is_err(),
+                "input should fail: {input}"
+            );
+        }
+    }
 }

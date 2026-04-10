@@ -3,8 +3,10 @@ name = "pulith-fs"
 version = "0.1.0"
 edition = "2024"
 description = "Cross-platform atomic filesystem primitives"
+license = "Apache-2.0"
 repository = "https://github.com/anomalyco/pulith"
-documentation = "https://github.com/anomalyco/pulith/blob/main/pulith-fs/README.md"
+documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/fs.md"
+readme = "README.md"
 keywords = ["filesystem", "atomic", "cross-platform"]
 categories = ["os::unix-apis", "os::windows-apis"]
 

@@ -3,8 +3,10 @@ name = "pulith-verify"
 version = "0.1.0"
 edition = "2024"
 description = "Content verification primitives for downloaded artifacts"
+license = "Apache-2.0"
 repository = "https://github.com/anomalyco/pulith"
 documentation = "https://github.com/anomalyco/pulith/blob/main/docs/design/verify.md"
+readme = "README.md"
 keywords = ["hash", "checksum", "verification", "crypto"]
 categories = ["cryptography"]
 

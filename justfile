@@ -1,4 +1,5 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+export RUSTDOCFLAGS := "-D warnings"
 
 default:
     just --list
@@ -19,7 +20,7 @@ test:
     cargo test --workspace --all-features
 
 doc:
-    $env:RUSTDOCFLAGS='-D warnings'; cargo doc --workspace --all-features --no-deps
+    cargo doc --workspace --all-features --no-deps
 
 audit:
     cargo audit
