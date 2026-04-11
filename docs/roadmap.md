@@ -69,7 +69,7 @@ Execution checklist:
 - [x] remove rigid mutation-surface markers from install core; retain extension-stage composition pattern
 - [x] complete HTTP transport contract in `pulith-fetch` (resume offset, explicit retry policy, progress surface)
 - [x] expand archive formats in `pulith-archive` (`tar.xz`, `tar.zst`) with path-traversal/escape fixtures
-- [ ] add tracing baseline across fetch/install hot paths
+- [x] add tracing baseline across fetch/install hot paths
 - [ ] add real URL end-to-end integration path (`fetch->verify->extract->install->activate->inspect`)
 
 Exit criteria:
@@ -93,6 +93,8 @@ Latest evidence update:
 - `crates/pulith-archive/Cargo.toml` enables `xz` and `zstd` in default feature set
 - `crates/pulith-archive/src/format.rs` adds filename-based format detection covering `.tar.xz` and `.tar.zst`
 - `crates/pulith-archive/src/extract.rs` tests now include malicious tar.xz/tar.zst fixtures for relative escape, absolute path, and symlink escape rejection
+- `crates/pulith-fetch/src/fetch/fetcher.rs` now has tracing instrumentation on `head`, `fetch_with_receipt`, retry attempt path, and source-try path
+- `crates/pulith-install/src/lib.rs` now has tracing instrumentation on `stage`, `commit`, `activate`, and rollback hot paths
 
 ---
 

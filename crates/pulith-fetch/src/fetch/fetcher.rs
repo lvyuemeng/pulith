@@ -43,6 +43,7 @@ impl<C: HttpClient> Fetcher<C> {
     }
 
     /// Get the total bytes from a HEAD request.
+    #[tracing::instrument(skip(self), fields(url = %url))]
     pub async fn head(&self, url: &str) -> Result<Option<u64>> {
         self.client
             .head(url)
@@ -54,6 +55,7 @@ impl<C: HttpClient> Fetcher<C> {
     ///
     /// This function downloads the file with progress reporting, verification,
     /// and atomic placement using pulith-fs workspace.
+    #[tracing::instrument(skip(self, options), fields(url = %url, destination = %destination.display()))]
     pub async fn fetch_with_receipt(
         &self,
         url: &str,
@@ -84,6 +86,7 @@ impl<C: HttpClient> Fetcher<C> {
         }
     }
 
+    #[tracing::instrument(skip(self, options), fields(url = %url, destination = %destination.display(), retry_count = retry_count))]
     async fn fetch_with_receipt_attempt(
         &self,
         url: &str,
@@ -281,6 +284,7 @@ impl<C: HttpClient> Fetcher<C> {
     }
 
     /// Try to fetch from a single source with verification.
+    #[tracing::instrument(skip(self, source, options), fields(source = %source.url, destination = %destination.display()))]
     pub async fn try_source(
         &self,
         source: &crate::DownloadSource,

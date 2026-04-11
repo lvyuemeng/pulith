@@ -720,6 +720,7 @@ impl PlannedInstall {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(resource = ?self.spec.resource.spec().id, install_root = %self.spec.install_root.display(), mode = ?self.spec.mode))]
     pub fn stage(self) -> Result<StagedInstall> {
         self.spec.resource.validate_version_selection()?;
         let temp = tempfile::tempdir()?;
@@ -739,6 +740,7 @@ impl PlannedInstall {
 }
 
 impl StagedInstall {
+    #[tracing::instrument(skip(self), fields(resource = ?self.spec.resource.spec().id, install_root = %self.spec.install_root.display(), mode = ?self.spec.mode))]
     pub fn commit(self) -> Result<InstalledInstall> {
         let install_root = self.spec.install_root.clone();
         if let Some(parent) = install_root.parent() {
@@ -805,6 +807,7 @@ impl StagedInstall {
 }
 
 impl InstalledInstall {
+    #[tracing::instrument(skip(self, activator), fields(resource = ?self.spec.resource.spec().id, install_root = %self.state.install_root.display()))]
     pub fn activate<A: Activator>(self, activator: &A) -> Result<ActivatedInstall> {
         let target = self
             .spec
@@ -845,6 +848,7 @@ impl InstalledInstall {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(resource = ?self.spec.resource.spec().id, install_root = %self.state.install_root.display()))]
     pub fn rollback(self) -> Result<RollbackReceipt> {
         let rollback = self
             .state
@@ -874,6 +878,7 @@ impl InstalledInstall {
 }
 
 impl ActivatedInstall {
+    #[tracing::instrument(skip(self), fields(resource = ?self.spec.resource.spec().id, install_root = %self.state.install_root.display(), target = %self.state.activation.target.display()))]
     pub fn rollback(self) -> Result<RollbackReceipt> {
         let rollback = self
             .state
