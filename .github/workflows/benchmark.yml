@@ -35,7 +35,7 @@ jobs:
         run: cargo bench -p pulith-install --bench copy_transition -- --sample-size 10 --measurement-time 1
 
       - name: Upload criterion reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criterion-reports
           path: target/criterion
