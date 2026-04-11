@@ -2,22 +2,24 @@ use std::fs;
 use std::io::{Cursor, Write};
 use std::path::Path;
 
-use pulith_archive::{ArchiveFormat, ArchiveReport, ExtractOptions, extract_from_reader};
+use pulith_archive::{ArchiveReport, ExtractOptions, extract_from_reader};
 use pulith_fetch::{Fetcher, MultiSourceFetcher, ReqwestClient};
 use pulith_install::{
-    ActivationReceipt, ActivationRequest, ActivationTarget, Activator, InstallInput, InstallReady,
-    InstallSpec, PlannedInstall, ShimCommand, ShimCopyActivator, SymlinkActivator,
+    ActivationReceipt, ActivationRequest, ActivationTarget, Activator, InstallCapabilities,
+    InstallInput, InstallPlanLimitation, InstallPlanningRequest, InstallReady, InstallSpec,
+    InstallWorkflowVariant, InstallWritableScope, PlannedInstall, ShimCommand, ShimCopyActivator,
+    SymlinkActivator,
 };
 use pulith_resource::{
-    RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
-    ValidUrl,
+    Metadata, RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator,
+    ResourceSpec, ValidUrl,
 };
 use pulith_source::PlannedSources;
 use pulith_state::{
     OwnershipReason, OwnershipSeverity, ResourceInspectionFinding, ResourceLifecycle,
     ResourceRecordPatch, StateReady, StoreRetentionPolicy,
 };
-use pulith_store::{StoreKey, StoreMetadataRecord, StoreReady, StoreRoots};
+use pulith_store::{StoreKey, StoreMetadataRecord, StoreProvenance, StoreReady, StoreRoots};
 
 fn resolved_resource(locator: ResourceLocator) -> pulith_resource::ResolvedResource {
     resolved_resource_version(locator, "1.0.0")
@@ -38,13 +40,131 @@ fn resolved_resource_version(
     )
 }
 
-fn archive_report(total_bytes: u64) -> ArchiveReport {
-    ArchiveReport {
-        format: ArchiveFormat::Zip,
-        entry_count: 1,
-        total_bytes,
-        entries: vec![],
-    }
+fn install_input_from_fetched_artifact(
+    store: &StoreReady,
+    key: &StoreKey,
+    fetched: &pulith_fetch::FetchReceipt,
+) -> InstallInput {
+    let stored = store.register_artifact(key, fetched).unwrap();
+    InstallInput::from_stored_artifact(stored).unwrap()
+}
+
+fn install_input_from_archive_extract(
+    store: &StoreReady,
+    key: &StoreKey,
+    extract_root: &Path,
+    report: &ArchiveReport,
+) -> InstallInput {
+    let extracted = store.register_extract(key, (extract_root, report)).unwrap();
+    InstallInput::ExtractedArtifact(extracted)
+}
+
+fn install_input_from_fetched_archive_extract(
+    store: &StoreReady,
+    key: &StoreKey,
+    fetched: &pulith_fetch::FetchReceipt,
+    extract_root: &Path,
+    report: &ArchiveReport,
+) -> InstallInput {
+    let extracted = store
+        .register_extract(key, (fetched, extract_root, report))
+        .unwrap();
+    InstallInput::ExtractedArtifact(extracted)
+}
+
+#[test]
+fn install_plan_offline_fallback_boundary_is_explicit() {
+    let temp = tempfile::tempdir().unwrap();
+    let file_path = temp.path().join("runtime.bin");
+    fs::write(&file_path, b"runtime").unwrap();
+    let resource = resolved_resource(ResourceLocator::LocalPath(file_path.clone()));
+
+    let spec =
+        InstallSpec::new_with_input(resource, file_path, temp.path().join("installs/runtime"))
+            .unwrap();
+
+    let plan = spec.plan(InstallPlanningRequest {
+        desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
+        required_scope: InstallWritableScope::User,
+        capabilities: InstallCapabilities::default(),
+    });
+
+    assert!(!plan.can_proceed);
+    assert!(
+        plan.limitations
+            .contains(&InstallPlanLimitation::OfflineCapabilityRequired)
+    );
+}
+
+#[test]
+fn install_plan_activation_unavailable_boundary_is_explicit() {
+    let temp = tempfile::tempdir().unwrap();
+    let file_path = temp.path().join("runtime.bin");
+    fs::write(&file_path, b"runtime").unwrap();
+    let resource = resolved_resource(ResourceLocator::LocalPath(file_path.clone()));
+
+    let spec =
+        InstallSpec::new_with_input(resource, file_path, temp.path().join("installs/runtime"))
+            .unwrap()
+            .activation(ActivationTarget {
+                path: temp.path().join("active/runtime"),
+            });
+
+    let plan = spec.plan(InstallPlanningRequest {
+        desired_variant: InstallWorkflowVariant::DirectLocalArtifact,
+        required_scope: InstallWritableScope::User,
+        capabilities: InstallCapabilities {
+            activation_available: false,
+            ..InstallCapabilities::default()
+        },
+    });
+
+    assert!(!plan.can_proceed);
+    assert!(
+        plan.limitations
+            .contains(&InstallPlanLimitation::ActivationUnavailable)
+    );
+}
+
+#[test]
+fn partial_uninstall_repair_boundary_is_explicit() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let install_root = temp.path().join("installs/runtime");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(source_dir.join("runtime.bin"), b"v1").unwrap();
+
+    let resource = resolved_resource(ResourceLocator::LocalPath(source_dir.clone()));
+    PlannedInstall::new(
+        InstallReady::new(state.clone()),
+        InstallSpec::new(
+            resource,
+            InstallInput::from_extracted_tree(source_dir),
+            install_root.clone(),
+        ),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .finish();
+
+    let id = ResourceId::parse("example/runtime").unwrap();
+    InstallReady::new(state.clone())
+        .uninstall_resource(
+            &id,
+            pulith_install::UninstallOptions {
+                remove_install_root: true,
+                remove_activation_targets: false,
+                remove_state_record: false,
+                remove_activation_records: false,
+            },
+        )
+        .unwrap();
+
+    let repair = state.plan_resource_state_repair(&id, None).unwrap();
+    assert!(!repair.actions.is_empty());
 }
 
 fn write_runtime_tree(root: &Path, relative_path: &str, bytes: &[u8]) {
@@ -127,7 +247,7 @@ fn local_source_fetch_store_install_activate_pipeline() {
     ))
     .unwrap();
     let key = StoreKey::logical("runtime-bin").unwrap();
-    let install_input = InstallInput::store_fetched_artifact(&store, &key, &fetched).unwrap();
+    let install_input = install_input_from_fetched_artifact(&store, &key, &fetched);
 
     let metadata_path = store.metadata_path(&key);
     let metadata_record: StoreMetadataRecord =
@@ -168,6 +288,85 @@ fn local_source_fetch_store_install_activate_pipeline() {
 }
 
 #[test]
+fn absorption_helpers_reduce_pipeline_glue_and_preserve_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let local_source_path = temp.path().join("source.bin");
+    fs::write(&local_source_path, b"runtime-binary").unwrap();
+
+    let resource = resolved_resource(ResourceLocator::LocalPath(local_source_path.clone()));
+    let fetched = fetch_local_resource_to(
+        &local_source_path,
+        &temp.path().join("downloads/runtime.bin"),
+    );
+
+    let store = StoreReady::initialize(StoreRoots::new(
+        temp.path().join("store/artifacts"),
+        temp.path().join("store/extracts"),
+        temp.path().join("store/metadata"),
+    ))
+    .unwrap();
+    let key = StoreKey::logical("runtime-bin-absorbed").unwrap();
+    let stored = store
+        .register_artifact(
+            &key,
+            (
+                fetched.destination.as_path(),
+                StoreProvenance {
+                    origin: Some(local_source_path.to_string_lossy().to_string()),
+                    metadata: Metadata::from([(
+                        "pipeline.style".to_string(),
+                        "absorbed".to_string(),
+                    )]),
+                },
+            ),
+        )
+        .unwrap();
+
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+    let receipt = PlannedInstall::new(
+        InstallReady::new(state.clone()),
+        InstallSpec::new_with_input(
+            resource.clone(),
+            stored,
+            temp.path().join("installs/runtime"),
+        )
+        .unwrap(),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .finish();
+
+    state
+        .upsert_resource((
+            &resource,
+            ResourceRecordPatch::artifact_key(Some(key.clone())).with_metadata(Metadata::from([(
+                "pipeline.style".to_string(),
+                "absorbed".to_string(),
+            )])),
+        ))
+        .unwrap();
+
+    assert!(receipt.install_root.join("runtime.bin").exists());
+    let metadata = store.get_metadata(&key).unwrap().unwrap();
+    assert_eq!(
+        metadata.provenance.unwrap().origin.as_deref(),
+        Some(local_source_path.to_string_lossy().as_ref())
+    );
+
+    let record = state
+        .get_resource_record(&resource.spec().id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.artifact_key, Some(key));
+    assert_eq!(
+        record.metadata.get("pipeline.style").map(String::as_str),
+        Some("absorbed")
+    );
+}
+
+#[test]
 fn copy_file_activation_pipeline_copies_executable_bytes() {
     let temp = tempfile::tempdir().unwrap();
     let source_dir = temp.path().join("runtime-src");
@@ -180,7 +379,7 @@ fn copy_file_activation_pipeline_copies_executable_bytes() {
         ready,
         InstallSpec::new(
             resource,
-            InstallInput::from_archive_extraction(source_dir.clone(), archive_report(14)),
+            InstallInput::from_extracted_tree(source_dir.clone()),
             temp.path().join("installs/runtime"),
         )
         .activation(ActivationTarget {
@@ -225,10 +424,7 @@ fn repeated_copy_activation_replaces_existing_file_target() {
             InstallReady::new(state.clone()),
             InstallSpec::new(
                 resource,
-                InstallInput::from_archive_extraction(
-                    source_dir.clone(),
-                    archive_report(payload.len() as u64),
-                ),
+                InstallInput::from_extracted_tree(source_dir.clone()),
                 temp.path().join("installs/runtime"),
             )
             .replace_existing()
@@ -280,7 +476,7 @@ fn repeated_symlink_activation_replaces_existing_file_target() {
         ))
         .unwrap();
         let key = StoreKey::logical(format!("runtime-bin-{version}")).unwrap();
-        let install_input = InstallInput::store_fetched_artifact(&store, &key, &fetched).unwrap();
+        let install_input = install_input_from_fetched_artifact(&store, &key, &fetched);
 
         PlannedInstall::new(
             InstallReady::new(state.clone()),
@@ -330,7 +526,7 @@ fn installed_resource_can_be_inspected_for_drift_without_mutation() {
     ))
     .unwrap();
     let key = StoreKey::logical("runtime-bin").unwrap();
-    let install_input = InstallInput::store_fetched_artifact(&store, &key, &fetched).unwrap();
+    let install_input = install_input_from_fetched_artifact(&store, &key, &fetched);
 
     let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
     let install_root = temp.path().join("installs/runtime");
@@ -531,7 +727,7 @@ fn manager_like_reconcile_apply_cycle_repairs_and_prunes_statefully() {
     ))
     .unwrap();
     let key = StoreKey::logical("runtime-reconcile").unwrap();
-    let install_input = InstallInput::store_fetched_artifact(&store, &key, &fetched).unwrap();
+    let install_input = install_input_from_fetched_artifact(&store, &key, &fetched);
 
     let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
     let install_root = temp.path().join("installs/runtime");
@@ -623,8 +819,7 @@ fn archive_extract_store_install_pipeline() {
     ))
     .unwrap();
     let key = StoreKey::logical("runtime-extract").unwrap();
-    let install_input =
-        InstallInput::store_archive_extraction(&store, &key, &extract_root, &report).unwrap();
+    let install_input = install_input_from_archive_extract(&store, &key, &extract_root, &report);
 
     let metadata_record: StoreMetadataRecord =
         serde_json::from_slice(&fs::read(store.metadata_path(&key)).unwrap()).unwrap();
@@ -695,14 +890,8 @@ fn local_archive_fetch_extract_store_install_pipeline() {
     ))
     .unwrap();
     let key = StoreKey::logical("runtime-archive-extract").unwrap();
-    let install_input = InstallInput::store_fetched_archive_extraction(
-        &store,
-        &key,
-        &fetched,
-        &extract_root,
-        &report,
-    )
-    .unwrap();
+    let install_input =
+        install_input_from_fetched_archive_extract(&store, &key, &fetched, &extract_root, &report);
 
     let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
     let ready = InstallReady::new(state.clone());
@@ -758,7 +947,7 @@ fn archive_replace_activate_rollback_restores_previous_activation_snapshot() {
         InstallReady::new(state.clone()),
         InstallSpec::new(
             initial_resource,
-            InstallInput::from_archive_extraction(initial_tree.clone(), archive_report(2)),
+            InstallInput::from_extracted_tree(initial_tree.clone()),
             install_root.clone(),
         )
         .activation(ActivationTarget {
@@ -792,14 +981,8 @@ fn archive_replace_activate_rollback_restores_previous_activation_snapshot() {
     ))
     .unwrap();
     let key = StoreKey::logical("runtime-rollback-archive").unwrap();
-    let install_input = InstallInput::store_fetched_archive_extraction(
-        &store,
-        &key,
-        &fetched,
-        &extract_root,
-        &report,
-    )
-    .unwrap();
+    let install_input =
+        install_input_from_fetched_archive_extract(&store, &key, &fetched, &extract_root, &report);
 
     let rollback = PlannedInstall::new(
         InstallReady::new(state.clone()),
@@ -862,15 +1045,7 @@ fn repeated_activation_switches_active_install() {
         let ready = InstallReady::new(state.clone());
         let spec = InstallSpec::new(
             resource,
-            InstallInput::from_archive_extraction(
-                source_dir.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: version.len() as u64,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(source_dir.clone()),
             temp.path().join("installs/runtime"),
         )
         .replace_existing()
@@ -920,15 +1095,7 @@ fn symlink_activation_replaces_existing_directory_target_across_reinstalls() {
 
         let spec = InstallSpec::new(
             resource,
-            InstallInput::from_archive_extraction(
-                source_dir.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: payload.len() as u64,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(source_dir.clone()),
             temp.path().join("installs/runtime"),
         )
         .replace_existing()
@@ -984,15 +1151,7 @@ fn replace_install_over_readonly_previous_content() {
         InstallReady::new(state),
         InstallSpec::new(
             replacement_resource,
-            InstallInput::from_archive_extraction(
-                replacement_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(replacement_source.clone()),
             install_root.clone(),
         )
         .replace_existing(),
@@ -1038,15 +1197,7 @@ fn upgrade_install_preserves_existing_active_state() {
         InstallReady::new(state.clone()),
         InstallSpec::new(
             initial_resource,
-            InstallInput::from_archive_extraction(
-                initial_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(initial_source.clone()),
             install_root.clone(),
         )
         .activation(ActivationTarget {
@@ -1082,15 +1233,7 @@ fn upgrade_install_preserves_existing_active_state() {
         InstallReady::new(state.clone()),
         InstallSpec::new(
             upgraded_resource,
-            InstallInput::from_archive_extraction(
-                upgraded_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(upgraded_source.clone()),
             install_root.clone(),
         )
         .upgrade_existing(),
@@ -1144,15 +1287,7 @@ fn activated_replace_rollback_restores_previous_activation_snapshot() {
         InstallReady::new(state.clone()),
         InstallSpec::new(
             initial_resource,
-            InstallInput::from_archive_extraction(
-                initial_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(initial_source.clone()),
             install_root.clone(),
         )
         .activation(ActivationTarget {
@@ -1188,15 +1323,7 @@ fn activated_replace_rollback_restores_previous_activation_snapshot() {
         InstallReady::new(state.clone()),
         InstallSpec::new(
             replacement_resource,
-            InstallInput::from_archive_extraction(
-                replacement_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(replacement_source.clone()),
             install_root.clone(),
         )
         .replace_existing()
@@ -1259,15 +1386,7 @@ fn interrupted_install_recovery_restores_previous_snapshot() {
         ready.clone(),
         InstallSpec::new(
             initial_resource,
-            InstallInput::from_archive_extraction(
-                initial_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(initial_source.clone()),
             install_root.clone(),
         ),
     )
@@ -1334,15 +1453,7 @@ fn recovery_contract_backup_restore_recovers_install_and_state_facts() {
         ready.clone(),
         InstallSpec::new(
             initial_resource,
-            InstallInput::from_archive_extraction(
-                initial_source.clone(),
-                pulith_archive::ArchiveReport {
-                    format: pulith_archive::ArchiveFormat::Zip,
-                    entry_count: 1,
-                    total_bytes: 2,
-                    entries: vec![],
-                },
-            ),
+            InstallInput::from_extracted_tree(initial_source.clone()),
             install_root.clone(),
         )
         .activation(ActivationTarget {
@@ -1401,10 +1512,7 @@ fn activation_contract_replace_updates_target_and_history_cross_platform() {
             InstallReady::new(state.clone()),
             InstallSpec::new(
                 resource,
-                InstallInput::from_archive_extraction(
-                    source_dir.clone(),
-                    archive_report(payload.len() as u64),
-                ),
+                InstallInput::from_extracted_tree(source_dir.clone()),
                 temp.path().join("installs/runtime"),
             )
             .replace_existing()

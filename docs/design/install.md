@@ -25,7 +25,18 @@ It does not define one global package model. It defines typed workflow steps tha
 - `InstalledInstall`
 - `ActivatedInstall`
 - `InstallMode`
+- `InstallWorkflowVariant`
+- `InstallWritableScope`
+- `InstallCapabilities`
+- `InstallPlanningRequest`
+- `InstallPlanLimitation`
+- `InstallPlanReport`
+- `LifecycleOperationPhase`
+- `LifecycleOperationDetails`
+- `LifecycleOperationReceipt`
 - `RollbackReceipt`
+- `UninstallOptions`
+- `UninstallReceipt`
 - `Activator`
 - `SymlinkActivator`
 - `CopyFileActivator`
@@ -53,6 +64,23 @@ Compile-time states:
 
 This keeps ordering explicit without turning persistence models into compile-time state machines.
 
+## Variant Capability Planning
+
+`pulith-install` provides a read-only capability planning surface before mutation:
+
+- `InstallSpec::plan(InstallPlanningRequest) -> InstallPlanReport`
+- planning is side-effect-free and can be used by callers to block or reroute workflow execution
+
+Planning dimensions:
+
+- desired workflow variant (`DirectLocalArtifact`, `PreStagedStore`, `AirGappedMirrorCache`, `ScopedInstall`)
+- required writable scope (`User` or `System`)
+- declared capabilities (`offline`, `activation_available`, `writable_scope`, `rollback_expected`)
+
+Typed limitations are emitted through `InstallPlanLimitation` so fallback boundaries are explicit and machine-readable.
+
+Non-filesystem side effects (registry/service/env) should be modeled as caller-owned extension stages around install planning/execution, preserving pipeline composability without rigid core surface enums.
+
 ## Activation Boundary
 
 Activation is expressed as a trait:
@@ -70,20 +98,24 @@ Guarantees:
 - explicit rollback restores both install content and captured `pulith-state` facts for that resource (resource record + activation history)
 - activation replacement is explicit: existing activation targets are removed before a new link/copy target is written, for both file-like and directory-like targets
 - Windows file symlink privilege failures are surfaced as `InstallError::WindowsFileSymlinkPrivilege` instead of hidden fallback behavior
+- uninstall composition is explicit and scope-controlled: default uninstall removes install root + activation targets + matching state facts, while `UninstallOptions` can preserve selected surfaces
 
 Non-guarantees:
 
 - rollback is not available for create-only flows or any flow where no previous install snapshot exists (`InstallError::RollbackUnavailable`)
 - backup/restore scope is per-resource install tree + state facts; it does not restore unrelated resources or caller-owned side effects outside those boundaries
 - `pulith-install` does not define fetch retry policy and does not provide multi-step rollback journals beyond a single previous-install snapshot
+- uninstall does not implicitly prune store artifacts/metadata; store retention/prune remains explicit caller policy
 
 ## Current Scope
 
-- stage from stored artifact or extracted directory handle
-- stage from fetch receipts and direct archive extraction outputs
-- register fetched artifacts or extracted archive trees into `pulith-store` through typed workflow helpers that preserve provenance/metadata sidecars
-- register fetched archive extractions into `pulith-store` through a typed workflow helper that merges fetch provenance with archive metadata
+- stage from semantic install sources only: `StagedFile`, `StoredArtifact`, `ExtractedArtifact`, `ExtractedTree`
+- keep fetch/archive materialization outside `pulith-install`; callers compose store registration first, then install using semantic handles
+- use `IntoInstallInput` as the canonical pipe boundary so install staging does not absorb fetch/archive transport types
+- provide typed read-only variant planning (`InstallPlanReport`) so downgrade/fallback reasons are explicit before mutation
 - commit into install root atomically through `pulith-fs::Workspace`
+- stage file transitions with install-tuned adaptive copy/link behavior (1 MiB copy-only threshold baseline for install staging)
+- avoid duplicate per-file metadata probes during directory staging by reusing directory entry size metadata for adaptive transitions
 - support create-only, replace, and upgrade install modes
 - support rollback to the previous install snapshot after replacement
 - restore previous activation history when rolling back replaced or upgraded installs, including cleanup of activation targets created only by the reverted activation step
@@ -96,6 +128,8 @@ Non-guarantees:
 - offer explicit copy-based activators for file targets instead of hiding file-link fallback inside the default link activators
 - provide shim-oriented activation adapters without embedding resolver policy into `pulith-install`
 - provide optional backup/restore helpers for install roots and matching state facts
+- provide composed uninstall helper (`uninstall_resource`) with explicit scope options instead of hidden global cleanup policy
+- provide additive unified lifecycle receipt envelope (`LifecycleOperationReceipt`) with operation context + phase-specific details, while keeping operation-specific receipts available
 - repeated copy-based activation over the same target is covered in workspace integration tests so non-link activation behavior is treated as a first-class contract, not a fallback afterthought
 - archive-inclusive replace/activate/rollback recovery is also covered in workspace integration tests so recovery guarantees are exercised across both extracted-directory and fetched-archive flows
 - repeated symlink-based file activation over the same target is also covered in workspace integration tests so file-target link activation is exercised as its own contract, not inferred from directory-link behavior

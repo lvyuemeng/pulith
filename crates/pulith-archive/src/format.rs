@@ -62,6 +62,35 @@ impl Read for Decoder {
         self.inner.read(buf)
     }
 }
+
+/// Detect archive format from file extension.
+///
+/// Recognized extensions:
+/// - `.zip`
+/// - `.tar`, `.tar.gz`, `.tgz`
+/// - `.tar.xz`, `.txz`
+/// - `.tar.zst`, `.tzst`
+pub fn detect_from_filename(path: &std::path::Path) -> Option<ArchiveFormat> {
+    let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
+
+    if name.ends_with(".zip") {
+        return Some(ArchiveFormat::Zip);
+    }
+    if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        return Some(ArchiveFormat::Tar(TarCompress::Gzip));
+    }
+    if name.ends_with(".tar.xz") || name.ends_with(".txz") {
+        return Some(ArchiveFormat::Tar(TarCompress::Xz));
+    }
+    if name.ends_with(".tar.zst") || name.ends_with(".tzst") {
+        return Some(ArchiveFormat::Tar(TarCompress::Zstd));
+    }
+    if name.ends_with(".tar") {
+        return Some(ArchiveFormat::Tar(TarCompress::None));
+    }
+
+    None
+}
 pub fn detect_format(data: &[u8]) -> Option<ArchiveFormat> {
     match data {
         [0x50, 0x4B, 0x03, 0x04, ..] => Some(ArchiveFormat::Zip),
@@ -258,6 +287,34 @@ mod tests {
         let mut output = String::new();
         decoder.read_to_string(&mut output).unwrap();
         assert_eq!(output, "hello");
+    }
+
+    #[test]
+    fn detect_from_filename_variants() {
+        assert_eq!(
+            detect_from_filename(std::path::Path::new("runtime.zip")),
+            Some(ArchiveFormat::Zip)
+        );
+        assert_eq!(
+            detect_from_filename(std::path::Path::new("runtime.tar.gz")),
+            Some(ArchiveFormat::Tar(TarCompress::Gzip))
+        );
+        assert_eq!(
+            detect_from_filename(std::path::Path::new("runtime.tar.xz")),
+            Some(ArchiveFormat::Tar(TarCompress::Xz))
+        );
+        assert_eq!(
+            detect_from_filename(std::path::Path::new("runtime.tar.zst")),
+            Some(ArchiveFormat::Tar(TarCompress::Zstd))
+        );
+        assert_eq!(
+            detect_from_filename(std::path::Path::new("runtime.tar")),
+            Some(ArchiveFormat::Tar(TarCompress::None))
+        );
+        assert_eq!(
+            detect_from_filename(std::path::Path::new("runtime.unknown")),
+            None
+        );
     }
 
     #[test]

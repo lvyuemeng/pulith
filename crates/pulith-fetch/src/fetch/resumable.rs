@@ -223,11 +223,9 @@ impl<C: HttpClient + 'static> ResumableFetcher<C> {
             }
         }
 
-        // Create fetch options with Range header
+        // Create fetch options with explicit resume offset.
         let mut resume_options = options.clone();
-        let mut headers: Vec<_> = resume_options.headers.iter().cloned().collect();
-        headers.push(("Range".to_string(), checkpoint.range_header()));
-        resume_options.headers = Arc::from(headers);
+        resume_options.resume_offset = Some(checkpoint.downloaded_bytes);
 
         // Set up progress callback for resumed download
         let checkpoint_path_clone = checkpoint_path.to_path_buf();

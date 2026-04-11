@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 
-use pulith_fetch::FetchReceipt;
 use pulith_install::{
     ActivationTarget, InstallInput, InstallSpec, ShimCommand, ShimCopyActivator, ShimLinkActivator,
 };
@@ -119,12 +118,12 @@ impl ManagedBinarySpec {
         spec
     }
 
-    pub fn install_spec_from_fetch_receipt(
+    pub fn install_spec_from_fetched_file(
         &self,
         resource: ResolvedResource,
-        receipt: &FetchReceipt,
-    ) -> InstallSpec {
-        self.install_spec(resource, InstallInput::from_fetch_receipt(receipt.clone()))
+        fetched_path: impl Into<PathBuf>,
+    ) -> Result<InstallSpec> {
+        Ok(self.install_spec(resource, InstallInput::from_file_path(fetched_path.into())?))
     }
 
     pub fn shim_command(&self, command: impl Into<String>) -> Result<ShimCommand> {
@@ -270,15 +269,7 @@ mod tests {
         );
         let install = spec.install_spec(
             resolved,
-            InstallInput::from_fetch_receipt(pulith_fetch::FetchReceipt {
-                source: pulith_fetch::FetchSource::Url(
-                    "https://example.com/runtime.zip".to_string(),
-                ),
-                destination: PathBuf::from("/downloads/runtime.zip"),
-                bytes_downloaded: 10,
-                total_bytes: Some(10),
-                sha256_hex: None,
-            }),
+            InstallInput::from_file_path("/downloads/runtime.zip").unwrap(),
         );
 
         assert_eq!(install.install_root, PathBuf::from("/installs/runtime"));
@@ -292,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_binary_builds_install_spec_from_fetch_receipt() {
+    fn managed_binary_builds_install_spec_from_fetched_file() {
         let spec = managed_binary(
             "example/runtime",
             ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.bin").unwrap()),
@@ -308,23 +299,18 @@ mod tests {
             ResolvedLocator::Url(ValidUrl::parse("https://example.com/runtime.bin").unwrap()),
             None,
         );
-        let receipt = pulith_fetch::FetchReceipt {
-            source: pulith_fetch::FetchSource::Url("https://example.com/runtime.bin".to_string()),
-            destination: PathBuf::from("/downloads/runtime.bin"),
-            bytes_downloaded: 32,
-            total_bytes: Some(32),
-            sha256_hex: None,
-        };
-
-        let install = spec.install_spec_from_fetch_receipt(resolved, &receipt);
+        let install = spec
+            .install_spec_from_fetched_file(resolved, "/downloads/runtime.bin")
+            .unwrap();
 
         assert_eq!(install.install_root, PathBuf::from("/installs/runtime"));
         assert!(install.activation.is_some());
         match install.input {
-            InstallInput::FetchedArtifact { receipt: saved, .. } => {
-                assert_eq!(saved.destination, PathBuf::from("/downloads/runtime.bin"))
+            InstallInput::StagedFile { source, file_name } => {
+                assert_eq!(source, PathBuf::from("/downloads/runtime.bin"));
+                assert_eq!(file_name, "runtime.bin");
             }
-            _ => panic!("expected fetch receipt input"),
+            _ => panic!("expected staged file input"),
         }
     }
 

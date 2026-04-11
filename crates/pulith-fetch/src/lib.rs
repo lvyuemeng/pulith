@@ -23,8 +23,8 @@ pub use codec::{
     TransformError, verify_checksum, verify_signature,
 };
 pub use config::{
-    DownloadSource, FetchOptions, FetchPhase, MultiSourceOptions, SourceSelectionStrategy,
-    SourceType,
+    DownloadSource, FetchOptions, FetchPhase, MultiSourceOptions, RetryPolicy,
+    SourceSelectionStrategy, SourceType,
 };
 pub use fetch::{
     BatchDownloadJob, BatchFetcher, BatchOptions, ConditionalFetcher, ConditionalOptions,

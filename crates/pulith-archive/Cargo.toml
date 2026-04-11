@@ -11,7 +11,7 @@ keywords = ["archive", "extract", "unzip", "tar"]
 categories = ["compression", "filesystem"]
 
 [features]
-default = ["zip", "tar", "sha256", "blake3"]
+default = ["zip", "tar", "xz", "zstd", "sha256", "blake3"]
 zip = ["dep:zip"]
 tar = ["dep:tar", "dep:flate2"]
 xz = ["dep:xz2"]
@@ -27,8 +27,8 @@ tempfile.workspace = true
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 blake3 = { workspace = true, optional = true }
-tar = { version = "0.4.45", optional = true }
-xz2 = { version = "0.1.7", optional = true }
-zstd = { version = "0.13.3", optional = true }
+tar = { workspace = true, optional = true }
+xz2 = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }

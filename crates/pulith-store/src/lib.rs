@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pulith_archive::entry::ArchiveReport;
+use pulith_fetch::{FetchReceipt, FetchSource};
 use pulith_fs::{
     DEFAULT_COPY_ONLY_THRESHOLD_BYTES, FallBack, HardlinkOrCopyOptions, Workspace, atomic_write,
     copy_dir_all,
@@ -12,6 +14,127 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, StoreError>;
+
+#[derive(Debug, Clone)]
+pub struct ArtifactRegistration {
+    pub source: PathBuf,
+    pub provenance: Option<StoreProvenance>,
+}
+
+pub trait IntoArtifactRegistration {
+    fn into_artifact_registration(self) -> ArtifactRegistration;
+}
+
+impl IntoArtifactRegistration for PathBuf {
+    fn into_artifact_registration(self) -> ArtifactRegistration {
+        ArtifactRegistration {
+            source: self,
+            provenance: None,
+        }
+    }
+}
+
+impl IntoArtifactRegistration for &Path {
+    fn into_artifact_registration(self) -> ArtifactRegistration {
+        ArtifactRegistration {
+            source: self.to_path_buf(),
+            provenance: None,
+        }
+    }
+}
+
+impl IntoArtifactRegistration for (&Path, StoreProvenance) {
+    fn into_artifact_registration(self) -> ArtifactRegistration {
+        ArtifactRegistration {
+            source: self.0.to_path_buf(),
+            provenance: Some(self.1),
+        }
+    }
+}
+
+impl IntoArtifactRegistration for (&Path, Option<StoreProvenance>) {
+    fn into_artifact_registration(self) -> ArtifactRegistration {
+        ArtifactRegistration {
+            source: self.0.to_path_buf(),
+            provenance: self.1,
+        }
+    }
+}
+
+impl IntoArtifactRegistration for &FetchReceipt {
+    fn into_artifact_registration(self) -> ArtifactRegistration {
+        ArtifactRegistration {
+            source: self.destination.clone(),
+            provenance: Some(StoreProvenance::from_fetch_receipt(self)),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtractRegistration {
+    pub source_dir: PathBuf,
+    pub provenance: Option<StoreProvenance>,
+}
+
+pub trait IntoExtractRegistration {
+    fn into_extract_registration(self) -> ExtractRegistration;
+}
+
+impl IntoExtractRegistration for PathBuf {
+    fn into_extract_registration(self) -> ExtractRegistration {
+        ExtractRegistration {
+            source_dir: self,
+            provenance: None,
+        }
+    }
+}
+
+impl IntoExtractRegistration for &Path {
+    fn into_extract_registration(self) -> ExtractRegistration {
+        ExtractRegistration {
+            source_dir: self.to_path_buf(),
+            provenance: None,
+        }
+    }
+}
+
+impl IntoExtractRegistration for (&Path, StoreProvenance) {
+    fn into_extract_registration(self) -> ExtractRegistration {
+        ExtractRegistration {
+            source_dir: self.0.to_path_buf(),
+            provenance: Some(self.1),
+        }
+    }
+}
+
+impl IntoExtractRegistration for (&Path, Option<StoreProvenance>) {
+    fn into_extract_registration(self) -> ExtractRegistration {
+        ExtractRegistration {
+            source_dir: self.0.to_path_buf(),
+            provenance: self.1,
+        }
+    }
+}
+
+impl IntoExtractRegistration for (&Path, &ArchiveReport) {
+    fn into_extract_registration(self) -> ExtractRegistration {
+        ExtractRegistration {
+            source_dir: self.0.to_path_buf(),
+            provenance: Some(StoreProvenance::from_archive_report(self.1)),
+        }
+    }
+}
+
+impl IntoExtractRegistration for (&FetchReceipt, &Path, &ArchiveReport) {
+    fn into_extract_registration(self) -> ExtractRegistration {
+        ExtractRegistration {
+            source_dir: self.1.to_path_buf(),
+            provenance: Some(StoreProvenance::from_fetched_archive_extraction(
+                self.0, self.2,
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -276,6 +399,15 @@ impl StoreReady {
         Ok(artifact)
     }
 
+    pub fn register_artifact(
+        &self,
+        key: &StoreKey,
+        registration: impl IntoArtifactRegistration,
+    ) -> Result<StoredArtifact> {
+        let registration = registration.into_artifact_registration();
+        self.import_artifact_with_provenance(key, registration.source, registration.provenance)
+    }
+
     pub fn register_extract_dir(
         &self,
         key: &StoreKey,
@@ -309,6 +441,19 @@ impl StoreReady {
             artifact.provenance.as_ref(),
         )?;
         Ok(artifact)
+    }
+
+    pub fn register_extract(
+        &self,
+        key: &StoreKey,
+        registration: impl IntoExtractRegistration,
+    ) -> Result<ExtractedArtifact> {
+        let registration = registration.into_extract_registration();
+        self.register_extract_dir_with_provenance(
+            key,
+            registration.source_dir,
+            registration.provenance,
+        )
     }
 
     fn persist_provenance(
@@ -433,6 +578,62 @@ pub struct StoreProvenance {
     pub metadata: Metadata,
 }
 
+impl StoreProvenance {
+    pub fn from_fetch_receipt(receipt: &FetchReceipt) -> Self {
+        let origin = match &receipt.source {
+            FetchSource::Url(url) => Some(url.clone()),
+            FetchSource::LocalPath(path) => Some(path.to_string_lossy().into_owned()),
+        };
+
+        let mut metadata = Metadata::new();
+        if let Some(sha256_hex) = &receipt.sha256_hex {
+            metadata.insert("fetch.sha256".to_string(), sha256_hex.clone());
+        }
+
+        Self { origin, metadata }
+    }
+
+    pub fn from_archive_report(report: &ArchiveReport) -> Self {
+        Self {
+            origin: None,
+            metadata: archive_metadata(report),
+        }
+    }
+
+    pub fn from_fetched_archive_extraction(receipt: &FetchReceipt, report: &ArchiveReport) -> Self {
+        let mut metadata = Metadata::new();
+        metadata.extend(fetch_metadata(receipt));
+        metadata.extend(archive_metadata(report));
+
+        Self {
+            origin: Self::from_fetch_receipt(receipt).origin,
+            metadata,
+        }
+    }
+}
+
+fn fetch_metadata(receipt: &FetchReceipt) -> Metadata {
+    let mut metadata = Metadata::new();
+    if let Some(sha256_hex) = &receipt.sha256_hex {
+        metadata.insert("fetch.sha256".to_string(), sha256_hex.clone());
+    }
+    metadata
+}
+
+fn archive_metadata(report: &ArchiveReport) -> Metadata {
+    Metadata::from([
+        ("archive.format".to_string(), format!("{:?}", report.format)),
+        (
+            "archive.entry_count".to_string(),
+            report.entry_count.to_string(),
+        ),
+        (
+            "archive.total_bytes".to_string(),
+            report.total_bytes.to_string(),
+        ),
+    ])
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StoredKind {
     Artifact,
@@ -511,9 +712,99 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulith_archive::{ArchiveFormat, ArchiveReport};
+    use pulith_fetch::{FetchReceipt, FetchSource};
     use pulith_resource::{
         RequestedResource, ResolvedLocator, ResourceLocator, ResourceSpec, ValidUrl,
     };
+
+    #[test]
+    fn store_provenance_from_fetch_receipt_translates_source_and_digest() {
+        let receipt = FetchReceipt {
+            source: FetchSource::Url("https://example.com/runtime.zip".to_string()),
+            destination: PathBuf::from("/tmp/runtime.zip"),
+            bytes_downloaded: 12,
+            total_bytes: Some(12),
+            sha256_hex: Some("abc123".to_string()),
+        };
+
+        let provenance = StoreProvenance::from_fetch_receipt(&receipt);
+        assert_eq!(
+            provenance.origin.as_deref(),
+            Some("https://example.com/runtime.zip")
+        );
+        assert_eq!(
+            provenance.metadata.get("fetch.sha256").map(String::as_str),
+            Some("abc123")
+        );
+    }
+
+    #[test]
+    fn store_provenance_from_archive_report_populates_archive_metadata() {
+        let report = ArchiveReport {
+            format: ArchiveFormat::Zip,
+            entry_count: 2,
+            total_bytes: 42,
+            entries: vec![],
+        };
+
+        let provenance = StoreProvenance::from_archive_report(&report);
+        assert_eq!(
+            provenance
+                .metadata
+                .get("archive.format")
+                .map(String::as_str),
+            Some("Zip")
+        );
+        assert_eq!(
+            provenance
+                .metadata
+                .get("archive.entry_count")
+                .map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            provenance
+                .metadata
+                .get("archive.total_bytes")
+                .map(String::as_str),
+            Some("42")
+        );
+    }
+
+    #[test]
+    fn store_provenance_from_fetched_archive_extraction_merges_fetch_and_archive() {
+        let receipt = FetchReceipt {
+            source: FetchSource::Url("https://example.com/runtime.zip".to_string()),
+            destination: PathBuf::from("/tmp/runtime.zip"),
+            bytes_downloaded: 12,
+            total_bytes: Some(12),
+            sha256_hex: Some("abc123".to_string()),
+        };
+        let report = ArchiveReport {
+            format: ArchiveFormat::Zip,
+            entry_count: 2,
+            total_bytes: 42,
+            entries: vec![],
+        };
+
+        let provenance = StoreProvenance::from_fetched_archive_extraction(&receipt, &report);
+        assert_eq!(
+            provenance.origin.as_deref(),
+            Some("https://example.com/runtime.zip")
+        );
+        assert_eq!(
+            provenance.metadata.get("fetch.sha256").map(String::as_str),
+            Some("abc123")
+        );
+        assert_eq!(
+            provenance
+                .metadata
+                .get("archive.format")
+                .map(String::as_str),
+            Some("Zip")
+        );
+    }
 
     #[test]
     fn store_initializes_and_writes_artifact() {
@@ -698,6 +989,76 @@ mod tests {
         assert_eq!(
             looked_up.provenance.as_ref().unwrap().origin.as_deref(),
             Some("integration-test")
+        );
+    }
+
+    #[test]
+    fn register_artifact_absorbs_path_and_provenance_tuple() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let source = temp.path().join("source.bin");
+        std::fs::write(&source, b"hello").unwrap();
+        let key = StoreKey::logical("runtime-register").unwrap();
+        let artifact = store
+            .register_artifact(
+                &key,
+                (
+                    source.as_path(),
+                    StoreProvenance {
+                        origin: Some("fetch".to_string()),
+                        metadata: Metadata::from([("fetch.sha256".to_string(), "abc".to_string())]),
+                    },
+                ),
+            )
+            .unwrap();
+
+        assert!(artifact.path.exists());
+        assert_eq!(
+            artifact.provenance.unwrap().origin.as_deref(),
+            Some("fetch")
+        );
+    }
+
+    #[test]
+    fn register_extract_absorbs_path_and_provenance_tuple() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let extract_root = temp.path().join("extract-root");
+        std::fs::create_dir_all(extract_root.join("bin")).unwrap();
+        std::fs::write(extract_root.join("bin/tool"), b"hello").unwrap();
+        let key = StoreKey::logical("runtime-extract-register").unwrap();
+        let extract = store
+            .register_extract(
+                &key,
+                (
+                    extract_root.as_path(),
+                    StoreProvenance {
+                        origin: Some("archive".to_string()),
+                        metadata: Metadata::from([(
+                            "archive.format".to_string(),
+                            "tar.gz".to_string(),
+                        )]),
+                    },
+                ),
+            )
+            .unwrap();
+
+        assert!(extract.path.join("bin/tool").exists());
+        assert_eq!(
+            extract.provenance.unwrap().origin.as_deref(),
+            Some("archive")
         );
     }
 

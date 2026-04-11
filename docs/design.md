@@ -2,138 +2,159 @@
 
 ## Vision
 
-Pulith is a mechanism-first Rust ecosystem for resource-management primitives.
-It enables manager authors to compose explicit building blocks without hidden framework policy.
+Pulith is a mechanism-first Rust crate ecosystem for building resource managers.
+It provides reusable primitives and semantic workflow contracts; it does not embed manager policy.
+
+Design priorities:
+
+- semantic APIs over raw path/string glue
+- explicit effects and typed boundaries
+- composable crates over monolithic framework behavior
+- deterministic, test-backed contracts
+- cross-platform behavior as a first-class constraint
 
 ## Scope
 
 In scope:
 
-- resource identity and version intent
-- source planning, fetch, verify, extract, install, activate
-- lifecycle persistence, inspect, repair planning, ownership/retention planning
-- explicit cross-platform behavior for install/activation differences
+- resource identity/version/trust semantics
+- source planning, fetch, verify, extract, store, install, activate
+- lifecycle persistence, inspection, repair planning, retention planning
 
 Out of scope:
 
-- dependency solving and lockfile graph solving
-- repository hosting/auth/authz services
-- manager policy (ranking, trust, channels, hidden auto-repair/cleanup)
+- dependency graph solving and lock orchestration (for now)
+- repository hosting/auth/authz systems
+- hidden ranking/trust/channel/cleanup policy
 
-## Architecture
+## Canonical Pipeline
 
-Crate roles:
+`resource -> source plan -> fetch -> verify -> extract/register -> install -> activate -> state`
+
+Required property: adjacent crates compose through typed method/trait absorption with minimal manual glue.
+
+## Resource Taxonomy Contract
+
+Pulith must support a broad resource spectrum without collapsing semantics into one artifact model:
+
+- binaries (single, bundled, sidecar, platform-specific)
+- runtimes/toolchains/SDKs
+- system/language packages
+- plugins (dynamic/script/protocol/asset)
+- configuration/secret/env resources
+- container/rootfs/OCI resources
+- service/daemon resources
+
+Design implication: API boundaries must carry identity, provenance, activation, and lifecycle facts without assuming one install shape.
+
+## Crate Roles
 
 - Primitive: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`
 - Semantic: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`
 - Workflow: `pulith-install`
-- Internal adapter/examples: `pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager/`
+- Adapter/examples: `pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
 
-Design boundary:
+## API Unification Strategy
 
-- keep crate roles narrow and composable
-- use typed receipts/reports over ad hoc reconstruction
-- add helper APIs that remove glue without embedding manager policy
+Pulith standardizes on **method + trait pipeline composition**.
 
-## Composition Contract
+Rules:
 
-Expected pipeline:
+- prefer trait absorption (`Into*Registration`, `Into*Input`) over free conversion helpers
+- prefer crate-owned methods for semantic composition (for example provenance, report shaping)
+- keep one canonical boundary path per crate role; remove compatibility aliases after migration
+- keep policy out of helpers; helpers convert facts only
 
-1. describe resource semantics
-2. plan/derive sources
-3. fetch and verify material
-4. register/store or extract
-5. install and optionally activate
-6. persist lifecycle facts
-7. inspect drift and apply explicit repair plans
+Applied boundary model:
 
-Required property: adjacent crates compose without manual key/path/provenance glue.
+- `pulith-store`
+  - owns provenance composition semantics
+  - registration APIs absorb fetch/archive evidence via trait inputs
+- `pulith-install`
+  - input API is materialized and transport-agnostic (`StagedFile`, `StoredArtifact`, `ExtractedArtifact`, `ExtractedTree`)
+  - fetch/archive receipts do not cross install boundary
+- `pulith-state`
+  - single inspection model (`ResourceInspectionReport` + `ResourceInspectionFinding`)
+  - no dual legacy/new shape drift
 
-Filesystem boundary:
+## Lifecycle Receipt Model
 
-- core crates use `pulith-fs` when atomic/transactional/cross-platform fs guarantees matter
-- top-level examples may use `std::fs` for orchestration glue
+Lifecycle outputs use a unified envelope:
 
-## Guarantees and Non-Guarantees
+- context: resource, phase, install root, activation target, replacement flag, timestamp
+- payload: phase-specific details
 
-Guaranteed (test-backed):
+Install lifecycle envelope types:
 
-- repeatable baseline source->fetch->store->install->activate flows
-- explicit replace/upgrade/rollback behavior within `pulith-install` snapshot boundaries
-- explicit inspect and repair-plan surfaces
-- lifecycle continuity from resource identity into persisted state facts
-- platform-specific activation limitations surfaced as typed errors
+- `LifecycleOperationPhase`
+- `LifecycleOperationDetails`
+- `LifecycleOperationReceipt`
 
-Not guaranteed:
+This keeps receipts composable and audit-friendly while preserving phase-specific detail records.
 
-- dependency solving or lockfile-grade graph reproducibility
-- global rollback journals beyond per-resource backup/snapshot scope
-- stronger fetch retry/resume semantics than current `pulith-fetch` contract/tests
-- automatic policy decisions for ranking/trust/cleanup
-- archive decompression resource-limit protection is not guaranteed unless callers opt in via extraction limit options
+## Installation Variant Contract (Block Q)
 
-## API Stability Decisions
+First-class variants:
 
-Dispatch strategy:
+- direct local artifact install
+- mirrored/air-gapped fetch+store+install
+- pre-staged store install
+- scoped user/system install
+- replace/rollback install
+- uninstall/reinstall repair
 
-- generic-first for in-process composition extension points (`Activator`, `TargetResolver`, source adapters)
-- dyn-capable boundaries for runtime I/O substitution (HTTP/stream plumbing)
-- no generic<->dyn flip on stabilized public APIs without explicit semver review
+Variant requirements:
 
-Error boundary strategy:
+- explicit capabilities (offline, writable roots, activation support, rollback expectation)
+- preview/read-only planning where feasible
+- provenance + receipt continuity across transitions
+- caller-declared fallback choreography (no hidden downgrade)
+- non-filesystem side effects (registry/service/env) are modeled as caller extension steps around install pipeline, not rigid core enums
 
-- one public error enum per crate
-- wrap direct dependency errors via source-bearing variants (`#[from]`/`#[source]`)
-- keep crate-specific contract errors explicit at each boundary
+## Cross-Crate Invariants
 
-## Publish Intent
+- provenance continuity: installed bytes remain explainable
+- explicit mutation scope: each crate mutates only its own contract boundary
+- deterministic retries for stage/inspect/plan operations
+- explicit fallback/downgrade reasons (typed, visible)
 
-Public-target crates:
+Extension invariant:
 
-- `pulith-fs`, `pulith-version`, `pulith-resource`, `pulith-source`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-store`, `pulith-state`, `pulith-install`, `pulith-platform`, `pulith-shim`
+- `pulith-install` remains filesystem/install-root focused; external side-effect orchestration composes as caller-owned pipeline stages
 
-Internal/non-publish crates:
+## Security and Integrity Baseline
 
-- `pulith-backend-example` (reference adapter crate)
-- `pulith-shim-bin` (internal binary wrapper)
-- `runtime-manager-example` (integration example)
+- checksum verification before extraction/use
+- archive safety (path traversal and escape protection)
+- typed failure surfaces for verification and activation limits
+- no silent fallback across trust/integrity boundaries
 
-## Version Management Strategy
+## Observability Baseline
 
-Pulith uses an independent crate versioning model with release-train coordination.
+- structured instrumentation in mutating/hot-path workflows
+- machine-readable plan/report outputs
+- contextual error chains across crate boundaries
 
-- public crates keep semver-independent versions so low-level crates can ship fixes without forcing lockstep bumps
-- releases are executed in dependency order (bottom-up publish train) so downstream crates can reference published versions cleanly
-- path dependencies in workspace manifests include explicit version requirements to keep publish manifests valid
-- internal/non-publish crates (`publish = false`) are excluded from publish-train version pressure
+## Quality Gates
 
-Practical implication:
+- API gate: boundary changes require updated example + integration test
+- composition gate: runtime example must show reduced manual glue
+- reliability gate: each mutation-path feature includes negative-path coverage
+- performance gate: touched hot paths must run benchmark or strict validation
+- policy gate: no hidden strategy logic in primitives/semantics/workflow crates
 
-- do not require every public crate to pass crates.io dry-run simultaneously before first publish
-- instead, require staged dry-run/publish evidence by dependency layer
+## Current Open Design Decisions
 
-## Current Readiness Snapshot
-
-Strong:
-
-- install replacement/rollback/activation contracts
-- inspect/repair/ownership/retention surfaces
-- end-to-end integration coverage in `workspace_pipeline` tests
-- archive traversal/symlink escape protections are test-backed
-
-Remaining before first publish wave:
-
-- crates.io-direct dry-run path (independent of local mirror replacement)
-- final publish-readiness matrix and verification log per target crate
-- continued corpus/property expansion for version edge cases
-- tune and document default resource-limit recommendations for zip-bomb resistance (API support is now test-backed)
+- lock model introduction (`pulith-lock`) and scope (single-resource vs graph lock)
+- fetch transport expansion (HTTP baseline, then S3/OCI/git/ssh)
+- archive format expansion (`tar.xz`, `tar.zst`) with safety fixtures
+- state backend evolution (JSON/SQLite abstraction)
+- shim resolution hot-path and project-context activation semantics
 
 ## References
 
 - `docs/roadmap.md`
 - `docs/AGENT.md`
-- `docs/design/archive.md`
-- `docs/design/fetch.md`
 - `docs/design/install.md`
+- `docs/design/store.md`
 - `docs/design/state.md`
-- `docs/design/source.md`

@@ -7,8 +7,9 @@ use pulith_archive::{ExtractOptions, extract_from_reader};
 use pulith_backend_example::managed_binary;
 use pulith_fetch::{FetchOptions, Fetcher, MultiSourceFetcher, ReqwestClient};
 use pulith_install::{
-    ActivationReceipt, ActivationRequest, ActivationTarget, Activator, InstallInput, InstallReady,
-    InstallSpec, PlannedInstall,
+    ActivationReceipt, ActivationRequest, ActivationTarget, Activator, InstallCapabilities,
+    InstallInput, InstallPlanningRequest, InstallReady, InstallSpec, InstallWorkflowVariant,
+    InstallWritableScope, LifecycleOperationReceipt, PlannedInstall,
 };
 use pulith_resource::{
     RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
@@ -47,6 +48,32 @@ fn main() -> Result<()> {
             let workspace_root =
                 PathBuf::from(args.next().ok_or_else(|| missing_arg("workspace root"))?);
             install_local_file(&resource_id, &version, &file_path, &workspace_root)
+        }
+        "install-prestaged-store-file" => {
+            let resource_id = args.next().ok_or_else(|| missing_arg("resource id"))?;
+            let version = args.next().ok_or_else(|| missing_arg("version"))?;
+            let file_path = PathBuf::from(args.next().ok_or_else(|| missing_arg("file path"))?);
+            let workspace_root =
+                PathBuf::from(args.next().ok_or_else(|| missing_arg("workspace root"))?);
+            install_prestaged_store_file(&resource_id, &version, &file_path, &workspace_root)
+        }
+        "install-airgapped-archive" => {
+            let resource_id = args.next().ok_or_else(|| missing_arg("resource id"))?;
+            let version = args.next().ok_or_else(|| missing_arg("version"))?;
+            let archive_path =
+                PathBuf::from(args.next().ok_or_else(|| missing_arg("archive path"))?);
+            let workspace_root =
+                PathBuf::from(args.next().ok_or_else(|| missing_arg("workspace root"))?);
+            install_airgapped_archive(&resource_id, &version, &archive_path, &workspace_root)
+        }
+        "install-scoped-local-file" => {
+            let resource_id = args.next().ok_or_else(|| missing_arg("resource id"))?;
+            let version = args.next().ok_or_else(|| missing_arg("version"))?;
+            let file_path = PathBuf::from(args.next().ok_or_else(|| missing_arg("file path"))?);
+            let workspace_root =
+                PathBuf::from(args.next().ok_or_else(|| missing_arg("workspace root"))?);
+            let scope = args.next().unwrap_or_else(|| "user".to_string());
+            install_scoped_local_file(&resource_id, &version, &file_path, &workspace_root, &scope)
         }
         "inspect" => {
             let resource_id = args.next().ok_or_else(|| missing_arg("resource id"))?;
@@ -125,34 +152,35 @@ fn install_local_archive(
         id: ResourceId::parse(resource_id)?,
         version: ResolvedVersion::new(version)?,
     };
-    let install_input = InstallInput::store_fetched_archive_extraction(
-        &store,
-        &key,
-        &receipt,
-        &extract_root,
-        &report,
-    )?;
+    let extracted = store.register_extract(&key, (&receipt, extract_root.as_path(), &report))?;
+    let install_input = InstallInput::ExtractedArtifact(extracted);
 
     let state = init_state(workspace_root)?;
     let install_root = workspace_root.join("installs").join(safe_name(resource_id));
     let activation_target = workspace_root.join("active").join(safe_name(resource_id));
-    let receipt = PlannedInstall::new(
+    let receipt = execute_install_with_plan(
         InstallReady::new(state),
         InstallSpec::new(resource, install_input, install_root)
             .replace_existing()
             .activation(ActivationTarget {
                 path: activation_target,
             }),
-    )
-    .stage()?
-    .commit()?
-    .activate(&PointerFileActivator)?
-    .finish();
+        InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities {
+                rollback_expected: true,
+                ..InstallCapabilities::default()
+            },
+        },
+    )?;
 
     println!("installed: {}", receipt.install_root.display());
-    if let Some(activation) = receipt.activation {
+    if let Some(activation) = receipt.activation.as_ref() {
         println!("activated: {}", activation.target.display());
     }
+    let lifecycle: LifecycleOperationReceipt = receipt.into();
+    println!("lifecycle phase: {:?}", lifecycle.phase);
     Ok(())
 }
 
@@ -202,18 +230,184 @@ fn install_local_file(
     })?;
 
     let state = init_state(workspace_root)?;
-    let install = backend.install_spec_from_fetch_receipt(resource, &fetch_receipt);
-    let receipt = PlannedInstall::new(InstallReady::new(state), install)
+    let install_key = pulith_store::StoreKey::NamedVersion {
+        id: ResourceId::parse(resource_id)?,
+        version: ResolvedVersion::new(version)?,
+    };
+    let stored = init_store(workspace_root)?.register_artifact(&install_key, &fetch_receipt)?;
+    let install = backend.install_spec(resource, InstallInput::from_stored_artifact(stored)?);
+    let receipt = execute_install_with_plan(
+        InstallReady::new(state),
+        install,
+        InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::PreStagedStore,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities::default(),
+        },
+    )?;
+
+    println!("installed: {}", receipt.install_root.display());
+    if let Some(activation) = receipt.activation.as_ref() {
+        println!("activated: {}", activation.target.display());
+    }
+    let lifecycle: LifecycleOperationReceipt = receipt.into();
+    println!("lifecycle phase: {:?}", lifecycle.phase);
+    Ok(())
+}
+
+fn install_prestaged_store_file(
+    resource_id: &str,
+    version: &str,
+    file_path: &Path,
+    workspace_root: &Path,
+) -> Result<()> {
+    let resource = resolved_local_resource(resource_id, version, file_path)?;
+    let store = init_store(workspace_root)?;
+    let install_key = pulith_store::StoreKey::NamedVersion {
+        id: ResourceId::parse(resource_id)?,
+        version: ResolvedVersion::new(version)?,
+    };
+    let stored = store.register_artifact(&install_key, file_path)?;
+    let install_root = workspace_root.join("installs").join(safe_name(resource_id));
+    let activation_target = workspace_root.join("active").join(safe_name(resource_id));
+    let spec = InstallSpec::new_with_input(resource, stored, install_root)?
+        .replace_existing()
+        .activation(ActivationTarget {
+            path: activation_target,
+        });
+
+    let receipt = execute_install_with_plan(
+        InstallReady::new(init_state(workspace_root)?),
+        spec,
+        InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::PreStagedStore,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities {
+                rollback_expected: true,
+                ..InstallCapabilities::default()
+            },
+        },
+    )?;
+
+    println!("installed: {}", receipt.install_root.display());
+    Ok(())
+}
+
+fn install_airgapped_archive(
+    resource_id: &str,
+    version: &str,
+    archive_path: &Path,
+    workspace_root: &Path,
+) -> Result<()> {
+    let resource = resolved_local_resource(resource_id, version, archive_path)?;
+    let extract_root = workspace_root
+        .join("extracted")
+        .join(format!("{}-airgapped", safe_name(resource_id)));
+    fs::create_dir_all(&extract_root)?;
+    let archive_file = fs::File::open(archive_path)?;
+    extract_from_reader(archive_file, &extract_root, &ExtractOptions::default())?;
+
+    let install_root = workspace_root
+        .join("installs")
+        .join(format!("{}-airgapped", safe_name(resource_id)));
+    let spec = InstallSpec::new(
+        resource,
+        InstallInput::from_extracted_tree(extract_root),
+        install_root,
+    )
+    .replace_existing();
+
+    let receipt = execute_install_with_plan(
+        InstallReady::new(init_state(workspace_root)?),
+        spec,
+        InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities {
+                offline: true,
+                rollback_expected: true,
+                activation_available: false,
+                ..InstallCapabilities::default()
+            },
+        },
+    )?;
+
+    println!("installed: {}", receipt.install_root.display());
+    Ok(())
+}
+
+fn install_scoped_local_file(
+    resource_id: &str,
+    version: &str,
+    file_path: &Path,
+    workspace_root: &Path,
+    scope: &str,
+) -> Result<()> {
+    let scope_kind = parse_scope(scope);
+    let resource = resolved_local_resource(resource_id, version, file_path)?;
+    let install_root = workspace_root
+        .join("scopes")
+        .join(scope)
+        .join("installs")
+        .join(safe_name(resource_id));
+    let activation_target = workspace_root
+        .join("scopes")
+        .join(scope)
+        .join("active")
+        .join(safe_name(resource_id));
+    let spec = InstallSpec::new(
+        resource,
+        InstallInput::from_file_path(file_path)?,
+        install_root,
+    )
+    .activation(ActivationTarget {
+        path: activation_target,
+    });
+
+    let receipt = execute_install_with_plan(
+        InstallReady::new(init_state(workspace_root)?),
+        spec,
+        InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::ScopedInstall,
+            required_scope: scope_kind,
+            capabilities: InstallCapabilities {
+                writable_scope: scope_kind,
+                ..InstallCapabilities::default()
+            },
+        },
+    )?;
+
+    println!("installed: {}", receipt.install_root.display());
+    Ok(())
+}
+
+fn execute_install_with_plan(
+    ready: InstallReady,
+    spec: InstallSpec,
+    plan_request: InstallPlanningRequest,
+) -> Result<pulith_install::InstallReceipt> {
+    let plan = spec.plan(plan_request);
+    println!(
+        "plan: desired={:?} actual={:?} proceed={}",
+        plan.desired_variant, plan.actual_variant, plan.can_proceed
+    );
+    for limitation in &plan.limitations {
+        println!("plan limitation: {limitation:?}");
+    }
+
+    if !plan.can_proceed {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "install plan has blocking limitations",
+        )
+        .into());
+    }
+
+    Ok(PlannedInstall::new(ready, spec)
         .stage()?
         .commit()?
         .activate(&PointerFileActivator)?
-        .finish();
-
-    println!("installed: {}", receipt.install_root.display());
-    if let Some(activation) = receipt.activation {
-        println!("activated: {}", activation.target.display());
-    }
-    Ok(())
+        .finish())
 }
 
 fn inspect_resource(resource_id: &str, workspace_root: &Path) -> Result<()> {
@@ -373,6 +567,13 @@ fn parse_retention_policy(policy: &str) -> StoreRetentionPolicy {
     }
 }
 
+fn parse_scope(scope: &str) -> InstallWritableScope {
+    match scope {
+        "system" => InstallWritableScope::System,
+        _ => InstallWritableScope::User,
+    }
+}
+
 fn init_store(workspace_root: &Path) -> Result<StoreReady> {
     Ok(StoreReady::initialize(StoreRoots::new(
         workspace_root.join("store").join("artifacts"),
@@ -425,6 +626,11 @@ fn print_usage() {
     println!("commands:");
     println!("  install-local-archive <resource-id> <version> <archive-path> <workspace-root>");
     println!("  install-local-file <resource-id> <version> <file-path> <workspace-root>");
+    println!("  install-prestaged-store-file <resource-id> <version> <file-path> <workspace-root>");
+    println!("  install-airgapped-archive <resource-id> <version> <archive-path> <workspace-root>");
+    println!(
+        "  install-scoped-local-file <resource-id> <version> <file-path> <workspace-root> [user|system]"
+    );
     println!("  inspect <resource-id> <workspace-root>");
     println!("  repair-plan <resource-id> <workspace-root>");
     println!("  prune-plan <workspace-root> [all|installed-active|active]");

@@ -448,6 +448,13 @@ pub struct Resource<S> {
 pub type RequestedResource = Resource<Requested>;
 pub type ResolvedResource = Resource<Resolved>;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedResourceContext {
+    pub id: ResourceId,
+    pub version: ResolvedVersion,
+    pub locator: ResolvedLocator,
+}
+
 impl RequestedResource {
     pub fn new(spec: ResourceSpec) -> Self {
         Self {
@@ -524,6 +531,14 @@ impl ResolvedResource {
 
     pub fn locator(&self) -> &ResolvedLocator {
         &self.state.locator
+    }
+
+    pub fn context(&self) -> ResolvedResourceContext {
+        ResolvedResourceContext {
+            id: self.spec.id.clone(),
+            version: self.state.version.clone(),
+            locator: self.state.locator.clone(),
+        }
     }
 
     pub fn trust_decision(&self) -> TrustDecision {

@@ -219,12 +219,14 @@ fn bench_fetch_store_install(c: &mut Criterion) {
                             .await
                             .unwrap();
 
-                        let install_input = InstallInput::store_fetched_artifact(
-                            &context.store,
-                            &StoreKey::logical("bench-fetch-artifact").unwrap(),
-                            &fetched,
-                        )
-                        .unwrap();
+                        let stored = context
+                            .store
+                            .register_artifact(
+                                &StoreKey::logical("bench-fetch-artifact").unwrap(),
+                                &fetched,
+                            )
+                            .unwrap();
+                        let install_input = InstallInput::from_stored_artifact(stored).unwrap();
 
                         let receipt = PlannedInstall::new(
                             context.ready,
@@ -270,13 +272,14 @@ fn bench_archive_extract_store_install(c: &mut Criterion) {
                     )
                     .unwrap();
 
-                    let install_input = InstallInput::store_archive_extraction(
-                        &context.store,
-                        &StoreKey::logical("bench-archive-extract").unwrap(),
-                        &extract_root,
-                        &report,
-                    )
-                    .unwrap();
+                    let extracted = context
+                        .store
+                        .register_extract(
+                            &StoreKey::logical("bench-archive-extract").unwrap(),
+                            (extract_root.as_path(), &report),
+                        )
+                        .unwrap();
+                    let install_input = InstallInput::ExtractedArtifact(extracted);
 
                     let receipt = PlannedInstall::new(
                         context.ready,

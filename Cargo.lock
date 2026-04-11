@@ -1574,6 +1574,9 @@ dependencies = [
 name = "pulith-store"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "pulith-archive",
+ "pulith-fetch",
  "pulith-fs",
  "pulith-resource",
  "serde",

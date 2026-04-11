@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::net::http::HttpClient;
 use crate::progress::PerformanceMetrics;
 use crate::progress::Progress;
+use crate::rate::retry_delay;
 
 /// The main fetcher implementation that handles downloading files with verification.
 pub struct Fetcher<C: HttpClient> {
@@ -59,41 +60,77 @@ impl<C: HttpClient> Fetcher<C> {
         destination: &Path,
         options: FetchOptions,
     ) -> Result<FetchReceipt> {
+        let mut attempt = 0u32;
+        loop {
+            match self
+                .fetch_with_receipt_attempt(url, destination, &options, attempt)
+                .await
+            {
+                Ok(receipt) => return Ok(receipt),
+                Err(error) => {
+                    if !matches!(error, Error::Network(_) | Error::Timeout(_)) {
+                        return Err(error);
+                    }
+
+                    if attempt >= options.retry_policy.max_retries {
+                        return Err(Error::MaxRetriesExceeded { count: attempt + 1 });
+                    }
+
+                    let delay = retry_delay(attempt, options.retry_policy.base_backoff);
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    async fn fetch_with_receipt_attempt(
+        &self,
+        url: &str,
+        destination: &Path,
+        options: &FetchOptions,
+        retry_count: u32,
+    ) -> Result<FetchReceipt> {
         let start_time = std::time::Instant::now();
         let mut performance_metrics = PerformanceMetrics::default();
 
-        // Connecting phase
         let connecting_start = std::time::Instant::now();
         self.report_progress(
-            &options,
+            options,
             Progress {
                 phase: FetchPhase::Connecting,
                 bytes_downloaded: 0,
                 total_bytes: None,
-                retry_count: 0,
+                retry_count,
                 performance_metrics: Some(performance_metrics.clone()),
             },
         );
 
-        let total_bytes = self
+        let total_bytes = options.expected_bytes.or(self
             .client
             .head(url)
             .await
-            .map_err(|e| Error::Network(e.to_string()))?;
+            .map_err(|e| Error::Network(e.to_string()))?);
+
         let connecting_duration = connecting_start.elapsed();
         performance_metrics.phase_timings.connecting_ms = connecting_duration.as_millis() as u64;
         performance_metrics.connection_time_ms = Some(connecting_duration.as_millis() as u64);
 
         self.report_progress(
-            &options,
+            options,
             Progress {
                 phase: FetchPhase::Connecting,
                 bytes_downloaded: 0,
                 total_bytes,
-                retry_count: 0,
+                retry_count,
                 performance_metrics: Some(performance_metrics.clone()),
             },
         );
+
+        let mut request_headers: Vec<(String, String)> = options.headers.iter().cloned().collect();
+        if let Some(offset) = options.resume_offset {
+            request_headers.push(("Range".to_string(), format!("bytes={offset}-")));
+        }
 
         let staging_dir = self.workspace_root.join("staging");
         let dest_dir = destination.parent().unwrap_or_else(|| Path::new("."));
@@ -103,29 +140,29 @@ impl<C: HttpClient> Fetcher<C> {
                 .file_name()
                 .unwrap_or_else(|| std::ffi::OsStr::new("download")),
         );
+
         let mut stream = self
             .client
-            .stream(url, &options.headers)
+            .stream(url, &request_headers)
             .await
             .map_err(|e| Error::Network(e.to_string()))?;
         let mut hasher = Sha256Hasher::new();
 
-        // Downloading phase
         let downloading_start = std::time::Instant::now();
         self.report_progress(
-            &options,
+            options,
             Progress {
                 phase: FetchPhase::Downloading,
-                bytes_downloaded: 0,
+                bytes_downloaded: options.resume_offset.unwrap_or(0),
                 total_bytes,
-                retry_count: 0,
+                retry_count,
                 performance_metrics: Some(performance_metrics.clone()),
             },
         );
 
-        let mut bytes_downloaded = 0u64;
+        let mut bytes_downloaded = options.resume_offset.unwrap_or(0);
         let mut last_progress_time = std::time::Instant::now();
-        let mut last_bytes_downloaded = 0u64;
+        let mut last_bytes_downloaded = bytes_downloaded;
         use tokio::io::AsyncWriteExt;
         let mut file = tokio::fs::File::create(&staging_file_path)
             .await
@@ -139,7 +176,6 @@ impl<C: HttpClient> Fetcher<C> {
                 .map_err(|e| Error::Network(e.to_string()))?;
             bytes_downloaded += chunk.len() as u64;
 
-            // Calculate current rate every 100ms
             let now = std::time::Instant::now();
             if now.duration_since(last_progress_time).as_millis() >= 100 {
                 let time_diff = now.duration_since(last_progress_time).as_secs_f64();
@@ -151,19 +187,18 @@ impl<C: HttpClient> Fetcher<C> {
                 last_bytes_downloaded = bytes_downloaded;
             }
 
-            // Calculate average rate
             let total_time = start_time.elapsed().as_secs_f64();
             if total_time > 0.0 {
                 performance_metrics.average_rate_bps = Some(bytes_downloaded as f64 / total_time);
             }
 
             self.report_progress(
-                &options,
+                options,
                 Progress {
                     phase: FetchPhase::Downloading,
                     bytes_downloaded,
                     total_bytes,
-                    retry_count: 0,
+                    retry_count,
                     performance_metrics: Some(performance_metrics.clone()),
                 },
             );
@@ -172,15 +207,14 @@ impl<C: HttpClient> Fetcher<C> {
         let downloading_duration = downloading_start.elapsed();
         performance_metrics.phase_timings.downloading_ms = downloading_duration.as_millis() as u64;
 
-        // Verifying phase
         let verifying_start = std::time::Instant::now();
         self.report_progress(
-            &options,
+            options,
             Progress {
                 phase: FetchPhase::Verifying,
                 bytes_downloaded,
                 total_bytes,
-                retry_count: 0,
+                retry_count,
                 performance_metrics: Some(performance_metrics.clone()),
             },
         );
@@ -200,15 +234,14 @@ impl<C: HttpClient> Fetcher<C> {
 
         drop(file);
 
-        // Committing phase
         let committing_start = std::time::Instant::now();
         self.report_progress(
-            &options,
+            options,
             Progress {
                 phase: FetchPhase::Committing,
                 bytes_downloaded,
                 total_bytes,
-                retry_count: 0,
+                retry_count,
                 performance_metrics: Some(performance_metrics.clone()),
             },
         );
@@ -221,12 +254,12 @@ impl<C: HttpClient> Fetcher<C> {
         performance_metrics.phase_timings.committing_ms = committing_duration.as_millis() as u64;
 
         self.report_progress(
-            &options,
+            options,
             Progress {
                 phase: FetchPhase::Completed,
                 bytes_downloaded,
                 total_bytes,
-                retry_count: 0,
+                retry_count,
                 performance_metrics: Some(performance_metrics),
             },
         );
@@ -443,6 +476,120 @@ mod tests {
         // The result could be ok or err depending on workspace setup
         // We're just testing that it doesn't panic
         assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_retries_with_explicit_retry_policy() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct AlwaysFailingHttpClient {
+            stream_calls: Arc<AtomicU32>,
+        }
+
+        impl HttpClient for AlwaysFailingHttpClient {
+            type Error = MockError;
+
+            async fn stream(
+                &self,
+                _url: &str,
+                _headers: &[(String, String)],
+            ) -> std::result::Result<
+                BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+                Self::Error,
+            > {
+                let _ = self.stream_calls.fetch_add(1, Ordering::SeqCst);
+                Err(MockError("stream always fails".to_string()))
+            }
+
+            async fn head(&self, _url: &str) -> std::result::Result<Option<u64>, Self::Error> {
+                Ok(Some(9))
+            }
+        }
+
+        let stream_calls = Arc::new(AtomicU32::new(0));
+        let client = AlwaysFailingHttpClient {
+            stream_calls: Arc::clone(&stream_calls),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let fetcher = Fetcher::new(client, temp.path());
+
+        let options = FetchOptions::default().retry_policy(crate::RetryPolicy {
+            max_retries: 1,
+            base_backoff: std::time::Duration::from_millis(1),
+        });
+
+        let error = fetcher
+            .fetch_with_receipt(
+                "http://example.com",
+                &temp.path().join("retry.bin"),
+                options,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::MaxRetriesExceeded { count: 2 }));
+        assert_eq!(stream_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_applies_resume_offset_as_range_header() {
+        use std::sync::Mutex;
+
+        struct HeaderCaptureHttpClient {
+            seen_headers: Arc<Mutex<Vec<(String, String)>>>,
+        }
+
+        impl HttpClient for HeaderCaptureHttpClient {
+            type Error = MockError;
+
+            async fn stream(
+                &self,
+                _url: &str,
+                headers: &[(String, String)],
+            ) -> std::result::Result<
+                BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+                Self::Error,
+            > {
+                *self.seen_headers.lock().unwrap() = headers.to_vec();
+                Err(MockError("fail after header capture".to_string()))
+            }
+
+            async fn head(&self, _url: &str) -> std::result::Result<Option<u64>, Self::Error> {
+                Ok(Some(256))
+            }
+        }
+
+        let seen_headers = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+        let client = HeaderCaptureHttpClient {
+            seen_headers: Arc::clone(&seen_headers),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let fetcher = Fetcher::new(client, temp.path());
+
+        let options = FetchOptions::default()
+            .retry_policy(crate::RetryPolicy {
+                max_retries: 0,
+                base_backoff: std::time::Duration::from_millis(1),
+            })
+            .resume_offset(Some(128))
+            .expected_bytes(Some(256));
+
+        let error = fetcher
+            .fetch_with_receipt(
+                "http://example.com",
+                &temp.path().join("resume.bin"),
+                options,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::MaxRetriesExceeded { count: 1 }));
+        let headers = seen_headers.lock().unwrap().clone();
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "Range" && v == "bytes=128-")
+        );
     }
 
     #[test]

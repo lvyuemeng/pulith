@@ -10,23 +10,20 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pulith_archive::entry::ArchiveReport;
-use pulith_fetch::{FetchReceipt, FetchSource};
-use pulith_fs::{
-    DEFAULT_COPY_ONLY_THRESHOLD_BYTES, FallBack, HardlinkOrCopyOptions, Workspace, atomic_symlink,
-    copy_dir_all,
-};
+use pulith_fs::{FallBack, HardlinkOrCopyOptions, Workspace, atomic_symlink, copy_dir_all};
 use pulith_resource::{Metadata, ResolvedResource};
 use pulith_shim::TargetResolver;
 use pulith_state::{
     ActivationRecord, ResourceLifecycle, ResourceRecord, ResourceRecordPatch,
     ResourceStateSnapshot, StateReady,
 };
-use pulith_store::{ExtractedArtifact, StoreKey, StoreProvenance, StoreReady, StoredArtifact};
+use pulith_store::{ExtractedArtifact, StoreKey, StoredArtifact};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, InstallError>;
+
+const INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum InstallError {
@@ -167,6 +164,58 @@ impl InstallReady {
             backup_root: backup.backup_root.clone(),
         })
     }
+
+    /// Removes install + activation + state facts for one resource using explicit options.
+    ///
+    /// This is a composed uninstall primitive: by default it removes install content, activation
+    /// targets, resource record, and activation records for the target resource.
+    pub fn uninstall_resource(
+        &self,
+        id: &pulith_resource::ResourceId,
+        options: UninstallOptions,
+    ) -> Result<UninstallReceipt> {
+        let record = self.state.get_resource_record(id)?;
+        let activations = self.state.list_activation_records(id)?;
+
+        let mut removed_activation_targets = Vec::new();
+        if options.remove_activation_targets {
+            for activation in &activations {
+                if path_entry_exists(&activation.target) {
+                    remove_existing_target(&activation.target)?;
+                    removed_activation_targets.push(activation.target.clone());
+                }
+            }
+        }
+
+        let mut removed_install_root = false;
+        if options.remove_install_root
+            && let Some(install_root) = record.as_ref().and_then(|item| item.install_path.as_ref())
+            && path_entry_exists(install_root)
+        {
+            remove_existing_target(install_root)?;
+            removed_install_root = true;
+        }
+
+        let mut removed_activation_records = 0;
+        if options.remove_activation_records {
+            removed_activation_records = activations.len();
+            self.state.remove_activation_records(id)?;
+        }
+
+        let mut removed_state_record = false;
+        if options.remove_state_record && record.is_some() {
+            self.state.remove_resource_record(id)?;
+            removed_state_record = true;
+        }
+
+        Ok(UninstallReceipt {
+            resource: id.clone(),
+            removed_install_root,
+            removed_activation_targets,
+            removed_state_record,
+            removed_activation_records,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +233,34 @@ pub struct RestoreReceipt {
     pub resource: pulith_resource::ResourceId,
     pub restored_install_root: PathBuf,
     pub backup_root: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UninstallOptions {
+    pub remove_install_root: bool,
+    pub remove_activation_targets: bool,
+    pub remove_state_record: bool,
+    pub remove_activation_records: bool,
+}
+
+impl Default for UninstallOptions {
+    fn default() -> Self {
+        Self {
+            remove_install_root: true,
+            remove_activation_targets: true,
+            remove_state_record: true,
+            remove_activation_records: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UninstallReceipt {
+    pub resource: pulith_resource::ResourceId,
+    pub removed_install_root: bool,
+    pub removed_activation_targets: Vec<PathBuf>,
+    pub removed_state_record: bool,
+    pub removed_activation_records: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,11 +363,79 @@ pub enum InstallMode {
     Upgrade,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstallWorkflowVariant {
+    DirectLocalArtifact,
+    PreStagedStore,
+    AirGappedMirrorCache,
+    ScopedInstall,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstallWritableScope {
+    User,
+    System,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallCapabilities {
+    pub offline: bool,
+    pub activation_available: bool,
+    pub writable_scope: InstallWritableScope,
+    pub rollback_expected: bool,
+}
+
+impl Default for InstallCapabilities {
+    fn default() -> Self {
+        Self {
+            offline: false,
+            activation_available: true,
+            writable_scope: InstallWritableScope::User,
+            rollback_expected: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallPlanningRequest {
+    pub desired_variant: InstallWorkflowVariant,
+    pub required_scope: InstallWritableScope,
+    pub capabilities: InstallCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstallPlanLimitation {
+    VariantInputMismatch {
+        desired: InstallWorkflowVariant,
+        actual: InstallWorkflowVariant,
+    },
+    ActivationUnavailable,
+    OfflineCapabilityRequired,
+    ScopeMismatch {
+        required: InstallWritableScope,
+        available: InstallWritableScope,
+    },
+    RollbackExpectationWithoutReplaceOrUpgrade,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallPlanReport {
+    pub resource: pulith_resource::ResourceId,
+    pub mode: InstallMode,
+    pub desired_variant: InstallWorkflowVariant,
+    pub actual_variant: InstallWorkflowVariant,
+    pub required_scope: InstallWritableScope,
+    pub activation_target: Option<PathBuf>,
+    pub install_root: PathBuf,
+    pub limitations: Vec<InstallPlanLimitation>,
+    pub can_proceed: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum InstallInput {
-    FetchedArtifact {
-        receipt: FetchReceipt,
-        file_name: Option<String>,
+    StagedFile {
+        source: PathBuf,
+        file_name: String,
     },
     StoredArtifact {
         artifact: StoredArtifact,
@@ -299,16 +444,79 @@ pub enum InstallInput {
     ExtractedArtifact(ExtractedArtifact),
     ExtractedTree {
         root: PathBuf,
-        report: Option<ArchiveReport>,
     },
 }
 
+pub trait IntoInstallInput {
+    fn into_install_input(self) -> Result<InstallInput>;
+}
+
+impl IntoInstallInput for InstallInput {
+    fn into_install_input(self) -> Result<InstallInput> {
+        Ok(self)
+    }
+}
+
+impl IntoInstallInput for PathBuf {
+    fn into_install_input(self) -> Result<InstallInput> {
+        InstallInput::from_file_path(self)
+    }
+}
+
+impl IntoInstallInput for &Path {
+    fn into_install_input(self) -> Result<InstallInput> {
+        InstallInput::from_file_path(self)
+    }
+}
+
+impl IntoInstallInput for (PathBuf, String) {
+    fn into_install_input(self) -> Result<InstallInput> {
+        InstallInput::from_file(self.0, self.1)
+    }
+}
+
+impl IntoInstallInput for StoredArtifact {
+    fn into_install_input(self) -> Result<InstallInput> {
+        InstallInput::from_stored_artifact(self)
+    }
+}
+
+impl IntoInstallInput for ExtractedArtifact {
+    fn into_install_input(self) -> Result<InstallInput> {
+        Ok(InstallInput::ExtractedArtifact(self))
+    }
+}
+
 impl InstallInput {
-    pub fn from_fetch_receipt(receipt: FetchReceipt) -> Self {
-        Self::FetchedArtifact {
-            receipt,
-            file_name: None,
+    pub fn workflow_variant(&self) -> InstallWorkflowVariant {
+        match self {
+            Self::StagedFile { .. } => InstallWorkflowVariant::DirectLocalArtifact,
+            Self::StoredArtifact { .. } | Self::ExtractedArtifact(_) => {
+                InstallWorkflowVariant::PreStagedStore
+            }
+            Self::ExtractedTree { .. } => InstallWorkflowVariant::AirGappedMirrorCache,
         }
+    }
+
+    pub fn from_file(source: impl Into<PathBuf>, file_name: impl Into<String>) -> Result<Self> {
+        let file_name = file_name.into();
+        if file_name.is_empty() {
+            return Err(InstallError::EmptyFileName);
+        }
+        Ok(Self::StagedFile {
+            source: source.into(),
+            file_name,
+        })
+    }
+
+    pub fn from_file_path(source: impl AsRef<Path>) -> Result<Self> {
+        let source = source.as_ref().to_path_buf();
+        let file_name = file_name_from_path(&source).ok_or(InstallError::EmptyFileName)?;
+        Self::from_file(source, file_name)
+    }
+
+    pub fn from_extracted_tree(root: impl Into<PathBuf>) -> Self {
+        Self::ExtractedTree { root: root.into() }
     }
 
     pub fn from_stored_artifact(artifact: StoredArtifact) -> Result<Self> {
@@ -319,60 +527,9 @@ impl InstallInput {
         })
     }
 
-    pub fn store_fetched_artifact(
-        store: &StoreReady,
-        key: &StoreKey,
-        receipt: &FetchReceipt,
-    ) -> Result<Self> {
-        let artifact = store.import_artifact_with_provenance(
-            key,
-            &receipt.destination,
-            Some(store_provenance_from_fetch_receipt(receipt)),
-        )?;
-        Self::from_stored_artifact(artifact)
-    }
-
-    pub fn from_archive_extraction(root: PathBuf, report: ArchiveReport) -> Self {
-        Self::ExtractedTree {
-            root,
-            report: Some(report),
-        }
-    }
-
-    pub fn store_archive_extraction(
-        store: &StoreReady,
-        key: &StoreKey,
-        root: impl AsRef<Path>,
-        report: &ArchiveReport,
-    ) -> Result<Self> {
-        let extracted = store.register_extract_dir_with_provenance(
-            key,
-            root,
-            Some(store_provenance_from_archive_report(report)),
-        )?;
-        Ok(Self::ExtractedArtifact(extracted))
-    }
-
-    pub fn store_fetched_archive_extraction(
-        store: &StoreReady,
-        key: &StoreKey,
-        receipt: &FetchReceipt,
-        root: impl AsRef<Path>,
-        report: &ArchiveReport,
-    ) -> Result<Self> {
-        let extracted = store.register_extract_dir_with_provenance(
-            key,
-            root,
-            Some(store_provenance_from_fetched_archive_extraction(
-                receipt, report,
-            )),
-        )?;
-        Ok(Self::ExtractedArtifact(extracted))
-    }
-
     fn store_key(&self) -> Option<&StoreKey> {
         match self {
-            Self::FetchedArtifact { .. } => None,
+            Self::StagedFile { .. } => None,
             Self::StoredArtifact { artifact, .. } => Some(&artifact.key),
             Self::ExtractedArtifact(artifact) => Some(&artifact.key),
             Self::ExtractedTree { .. } => None,
@@ -381,19 +538,11 @@ impl InstallInput {
 
     fn stage_into(&self, workspace: &Workspace) -> Result<()> {
         match self {
-            Self::FetchedArtifact { receipt, file_name } => {
-                if !receipt.destination.exists() {
-                    return Err(InstallError::MissingStoredArtifact(
-                        receipt.destination.clone(),
-                    ));
+            Self::StagedFile { source, file_name } => {
+                if !source.exists() {
+                    return Err(InstallError::MissingStoredArtifact(source.clone()));
                 }
-
-                let target_name = file_name
-                    .clone()
-                    .or_else(|| file_name_from_path(&receipt.destination));
-                let target_name = target_name.ok_or(InstallError::EmptyFileName)?;
-
-                stage_workspace_file(workspace, &receipt.destination, Path::new(&target_name))?;
+                stage_workspace_file(workspace, source, Path::new(file_name))?;
             }
             Self::ExtractedArtifact(artifact) => {
                 if !artifact.path.exists() {
@@ -449,6 +598,18 @@ impl InstallSpec {
         }
     }
 
+    pub fn new_with_input(
+        resource: ResolvedResource,
+        input: impl IntoInstallInput,
+        install_root: PathBuf,
+    ) -> Result<Self> {
+        Ok(Self::new(
+            resource,
+            input.into_install_input()?,
+            install_root,
+        ))
+    }
+
     pub fn replace_existing(mut self) -> Self {
         self.mode = InstallMode::Replace;
         self
@@ -462,6 +623,51 @@ impl InstallSpec {
     pub fn activation(mut self, activation: ActivationTarget) -> Self {
         self.activation = Some(activation);
         self
+    }
+
+    pub fn plan(&self, request: InstallPlanningRequest) -> InstallPlanReport {
+        let actual_variant = self.input.workflow_variant();
+        let mut limitations = Vec::new();
+
+        if actual_variant != request.desired_variant {
+            limitations.push(InstallPlanLimitation::VariantInputMismatch {
+                desired: request.desired_variant,
+                actual: actual_variant,
+            });
+        }
+
+        if self.activation.is_some() && !request.capabilities.activation_available {
+            limitations.push(InstallPlanLimitation::ActivationUnavailable);
+        }
+
+        if request.desired_variant == InstallWorkflowVariant::AirGappedMirrorCache
+            && !request.capabilities.offline
+        {
+            limitations.push(InstallPlanLimitation::OfflineCapabilityRequired);
+        }
+
+        if request.required_scope != request.capabilities.writable_scope {
+            limitations.push(InstallPlanLimitation::ScopeMismatch {
+                required: request.required_scope,
+                available: request.capabilities.writable_scope,
+            });
+        }
+
+        if request.capabilities.rollback_expected && self.mode == InstallMode::CreateOnly {
+            limitations.push(InstallPlanLimitation::RollbackExpectationWithoutReplaceOrUpgrade);
+        }
+
+        InstallPlanReport {
+            resource: self.resource.spec().id.clone(),
+            mode: self.mode,
+            desired_variant: request.desired_variant,
+            actual_variant,
+            required_scope: request.required_scope,
+            activation_target: self.activation.as_ref().map(|item| item.path.clone()),
+            install_root: self.install_root.clone(),
+            can_proceed: limitations.is_empty(),
+            limitations,
+        }
     }
 }
 
@@ -713,7 +919,7 @@ impl<S> InstallFlow<S> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallReceipt {
     pub resource: pulith_resource::ResourceId,
     pub install_root: PathBuf,
@@ -721,10 +927,125 @@ pub struct InstallReceipt {
     pub replaced_previous: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RollbackReceipt {
     pub resource: pulith_resource::ResourceId,
     pub restored_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleOperationPhase {
+    Install,
+    Rollback,
+    Backup,
+    Restore,
+    Uninstall,
+    Activation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleOperationDetails {
+    Install(InstallReceipt),
+    Rollback(RollbackReceipt),
+    Backup(BackupReceipt),
+    Restore(RestoreReceipt),
+    Uninstall(UninstallReceipt),
+    Activation(ActivationReceipt),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleOperationReceipt {
+    pub resource: pulith_resource::ResourceId,
+    pub phase: LifecycleOperationPhase,
+    pub install_root: Option<PathBuf>,
+    pub activation_target: Option<PathBuf>,
+    pub replaced_previous: bool,
+    pub timestamp_unix: u64,
+    pub details: LifecycleOperationDetails,
+}
+
+impl From<InstallReceipt> for LifecycleOperationReceipt {
+    fn from(receipt: InstallReceipt) -> Self {
+        Self {
+            resource: receipt.resource.clone(),
+            phase: LifecycleOperationPhase::Install,
+            install_root: Some(receipt.install_root.clone()),
+            activation_target: receipt.activation.as_ref().map(|item| item.target.clone()),
+            replaced_previous: receipt.replaced_previous,
+            timestamp_unix: now_unix(),
+            details: LifecycleOperationDetails::Install(receipt),
+        }
+    }
+}
+
+impl From<RollbackReceipt> for LifecycleOperationReceipt {
+    fn from(receipt: RollbackReceipt) -> Self {
+        Self {
+            resource: receipt.resource.clone(),
+            phase: LifecycleOperationPhase::Rollback,
+            install_root: Some(receipt.restored_path.clone()),
+            activation_target: None,
+            replaced_previous: false,
+            timestamp_unix: now_unix(),
+            details: LifecycleOperationDetails::Rollback(receipt),
+        }
+    }
+}
+
+impl From<BackupReceipt> for LifecycleOperationReceipt {
+    fn from(receipt: BackupReceipt) -> Self {
+        Self {
+            resource: receipt.resource.clone(),
+            phase: LifecycleOperationPhase::Backup,
+            install_root: Some(receipt.install_root.clone()),
+            activation_target: None,
+            replaced_previous: false,
+            timestamp_unix: receipt.created_at_unix,
+            details: LifecycleOperationDetails::Backup(receipt),
+        }
+    }
+}
+
+impl From<RestoreReceipt> for LifecycleOperationReceipt {
+    fn from(receipt: RestoreReceipt) -> Self {
+        Self {
+            resource: receipt.resource.clone(),
+            phase: LifecycleOperationPhase::Restore,
+            install_root: Some(receipt.restored_install_root.clone()),
+            activation_target: None,
+            replaced_previous: false,
+            timestamp_unix: now_unix(),
+            details: LifecycleOperationDetails::Restore(receipt),
+        }
+    }
+}
+
+impl From<UninstallReceipt> for LifecycleOperationReceipt {
+    fn from(receipt: UninstallReceipt) -> Self {
+        Self {
+            resource: receipt.resource.clone(),
+            phase: LifecycleOperationPhase::Uninstall,
+            install_root: None,
+            activation_target: receipt.removed_activation_targets.first().cloned(),
+            replaced_previous: false,
+            timestamp_unix: now_unix(),
+            details: LifecycleOperationDetails::Uninstall(receipt),
+        }
+    }
+}
+
+impl From<(pulith_resource::ResourceId, ActivationReceipt)> for LifecycleOperationReceipt {
+    fn from((resource, receipt): (pulith_resource::ResourceId, ActivationReceipt)) -> Self {
+        Self {
+            resource,
+            phase: LifecycleOperationPhase::Activation,
+            install_root: Some(receipt.installed_path.clone()),
+            activation_target: Some(receipt.target.clone()),
+            replaced_previous: false,
+            timestamp_unix: now_unix(),
+            details: LifecycleOperationDetails::Activation(receipt),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -787,6 +1108,10 @@ fn remove_existing_target(path: &Path) -> Result<()> {
         std::fs::remove_file(path)?;
     }
     Ok(())
+}
+
+fn path_entry_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
 }
 
 fn link_activation_target(installed_path: &Path, target: &Path) -> Result<ActivationReceipt> {
@@ -918,7 +1243,23 @@ fn stage_workspace_file(workspace: &Workspace, source: &Path, relative_path: &Pa
     workspace.stage_file_by_size(
         source,
         relative_path,
-        DEFAULT_COPY_ONLY_THRESHOLD_BYTES,
+        INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
+        default_link_options(),
+    )?;
+    Ok(())
+}
+
+fn stage_workspace_file_with_size_hint(
+    workspace: &Workspace,
+    source: &Path,
+    relative_path: &Path,
+    source_size_bytes: u64,
+) -> Result<()> {
+    workspace.stage_file_with_size_hint(
+        source,
+        relative_path,
+        source_size_bytes,
+        INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
         default_link_options(),
     )?;
     Ok(())
@@ -934,12 +1275,13 @@ fn copy_directory_into_workspace(
         let path = entry.path();
         let name = entry.file_name();
         let relative_path = relative.join(name);
-        let file_type = entry.file_type()?;
+        let metadata = entry.metadata()?;
+        let file_type = metadata.file_type();
         if file_type.is_dir() {
             workspace.create_dir_all(&relative_path)?;
             copy_directory_into_workspace(workspace, &path, &relative_path)?;
         } else {
-            stage_workspace_file(workspace, &path, &relative_path)?;
+            stage_workspace_file_with_size_hint(workspace, &path, &relative_path, metadata.len())?;
         }
     }
     Ok(())
@@ -965,57 +1307,6 @@ fn sanitize_component(value: &str) -> String {
         .collect()
 }
 
-fn store_provenance_from_fetch_receipt(receipt: &FetchReceipt) -> StoreProvenance {
-    let origin = match &receipt.source {
-        FetchSource::Url(url) => Some(url.clone()),
-        FetchSource::LocalPath(path) => Some(path.to_string_lossy().into_owned()),
-    };
-
-    let mut metadata = Metadata::new();
-    if let Some(sha256_hex) = &receipt.sha256_hex {
-        insert_metadata(&mut metadata, "fetch.sha256", sha256_hex.clone());
-    }
-
-    StoreProvenance { origin, metadata }
-}
-
-fn store_provenance_from_archive_report(report: &ArchiveReport) -> StoreProvenance {
-    let mut metadata = Metadata::new();
-    insert_archive_metadata(&mut metadata, report);
-
-    StoreProvenance {
-        origin: None,
-        metadata,
-    }
-}
-
-fn store_provenance_from_fetched_archive_extraction(
-    receipt: &FetchReceipt,
-    report: &ArchiveReport,
-) -> StoreProvenance {
-    let mut provenance = store_provenance_from_fetch_receipt(receipt);
-    insert_archive_metadata(&mut provenance.metadata, report);
-    provenance
-}
-
-fn insert_archive_metadata(metadata: &mut Metadata, report: &ArchiveReport) {
-    insert_metadata(metadata, "archive.format", format!("{:?}", report.format));
-    insert_metadata(
-        metadata,
-        "archive.entry_count",
-        report.entry_count.to_string(),
-    );
-    insert_metadata(
-        metadata,
-        "archive.total_bytes",
-        report.total_bytes.to_string(),
-    );
-}
-
-fn insert_metadata(metadata: &mut Metadata, key: &str, value: String) {
-    metadata.insert(key.to_string(), value);
-}
-
 fn lifecycle_for_post_commit(
     spec: &InstallSpec,
     rollback: Option<&RollbackState>,
@@ -1039,14 +1330,11 @@ fn restore_previous_state(state: &StateReady, rollback: &RollbackState) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulith_archive::{ArchiveFormat, ArchiveReport};
-    use pulith_fetch::{FetchReceipt, FetchSource};
     use pulith_resource::{
         RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator,
         ResourceSpec, ValidUrl,
     };
     use pulith_state::StateSnapshot;
-    use pulith_store::StoreRoots;
 
     #[derive(Debug, Default)]
     struct FileActivator;
@@ -1169,87 +1457,172 @@ mod tests {
     }
 
     #[test]
-    fn install_input_store_fetched_artifact_bridges_fetch_to_store() {
+    fn install_spec_new_with_input_absorbs_stored_artifact() {
         let temp = tempfile::tempdir().unwrap();
-        let fetched_path = temp.path().join("downloads/runtime.bin");
-        std::fs::create_dir_all(fetched_path.parent().unwrap()).unwrap();
-        std::fs::write(&fetched_path, b"payload").unwrap();
+        let artifact_path = temp.path().join("runtime.tar.gz");
+        std::fs::write(&artifact_path, b"payload").unwrap();
 
-        let store = StoreReady::initialize(StoreRoots::new(
-            temp.path().join("store/artifacts"),
-            temp.path().join("store/extracts"),
-            temp.path().join("store/metadata"),
-        ))
-        .unwrap();
-        let key = StoreKey::logical("runtime").unwrap();
+        let stored = StoredArtifact {
+            key: StoreKey::logical("runtime").unwrap(),
+            path: artifact_path,
+            provenance: None,
+        };
 
-        let input = InstallInput::store_fetched_artifact(
-            &store,
-            &key,
-            &FetchReceipt {
-                source: FetchSource::Url("https://example.com/runtime.bin".to_string()),
-                destination: fetched_path,
-                bytes_downloaded: 7,
-                total_bytes: Some(7),
-                sha256_hex: Some("abc123".to_string()),
-            },
+        let spec = InstallSpec::new_with_input(
+            resolved_resource(),
+            stored,
+            temp.path().join("install/runtime"),
         )
         .unwrap();
 
-        match input {
-            InstallInput::StoredArtifact {
-                artifact,
-                file_name,
-            } => {
-                assert!(artifact.path.exists());
-                assert_eq!(artifact.key, key);
-                assert_eq!(file_name, "runtime.bin");
-                let provenance = artifact.provenance.unwrap();
-                assert_eq!(
-                    provenance.origin.as_deref(),
-                    Some("https://example.com/runtime.bin")
-                );
-                assert_eq!(
-                    provenance.metadata.get("fetch.sha256").map(String::as_str),
-                    Some("abc123")
-                );
-
-                let looked_up = store.get_artifact(&key).unwrap();
-                let looked_up_provenance = looked_up.provenance.unwrap();
-                assert_eq!(
-                    looked_up_provenance.origin.as_deref(),
-                    Some("https://example.com/runtime.bin")
-                );
-                assert_eq!(
-                    looked_up_provenance
-                        .metadata
-                        .get("fetch.sha256")
-                        .map(String::as_str),
-                    Some("abc123")
-                );
+        match spec.input {
+            InstallInput::StoredArtifact { file_name, .. } => {
+                assert_eq!(file_name, "runtime.tar.gz")
             }
             _ => panic!("expected stored artifact install input"),
         }
     }
 
     #[test]
-    fn fetched_artifact_install_places_receipt_file() {
+    fn install_spec_new_with_input_absorbs_staged_file() {
         let temp = tempfile::tempdir().unwrap();
-        let fetched_path = temp.path().join("fetched.bin");
-        std::fs::write(&fetched_path, b"payload").unwrap();
+        let staged_path = temp.path().join("runtime.bin");
+        std::fs::write(&staged_path, b"payload").unwrap();
+
+        let spec = InstallSpec::new_with_input(
+            resolved_resource(),
+            InstallInput::from_file_path(&staged_path).unwrap(),
+            temp.path().join("install/staged"),
+        )
+        .unwrap();
+
+        assert!(matches!(spec.input, InstallInput::StagedFile { .. }));
+    }
+
+    #[test]
+    fn install_spec_new_with_input_absorbs_pathbuf_pipe() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged_path = temp.path().join("runtime.bin");
+        std::fs::write(&staged_path, b"payload").unwrap();
+
+        let spec = InstallSpec::new_with_input(
+            resolved_resource(),
+            staged_path,
+            temp.path().join("install/staged"),
+        )
+        .unwrap();
+
+        assert!(matches!(spec.input, InstallInput::StagedFile { .. }));
+    }
+
+    #[test]
+    fn install_plan_reports_variant_input_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged_path = temp.path().join("runtime.bin");
+        std::fs::write(&staged_path, b"payload").unwrap();
+
+        let spec = InstallSpec::new_with_input(
+            resolved_resource(),
+            staged_path,
+            temp.path().join("install/staged"),
+        )
+        .unwrap();
+
+        let plan = spec.plan(InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::PreStagedStore,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities::default(),
+        });
+
+        assert!(!plan.can_proceed);
+        assert!(
+            plan.limitations
+                .iter()
+                .any(|item| matches!(item, InstallPlanLimitation::VariantInputMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn install_plan_reports_activation_unavailable() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged_path = temp.path().join("runtime.bin");
+        std::fs::write(&staged_path, b"payload").unwrap();
+
+        let spec = InstallSpec::new_with_input(
+            resolved_resource(),
+            staged_path,
+            temp.path().join("install/staged"),
+        )
+        .unwrap()
+        .activation(ActivationTarget {
+            path: temp.path().join("active/runtime"),
+        });
+
+        let plan = spec.plan(InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::DirectLocalArtifact,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities {
+                activation_available: false,
+                ..InstallCapabilities::default()
+            },
+        });
+
+        assert!(!plan.can_proceed);
+        assert!(
+            plan.limitations
+                .contains(&InstallPlanLimitation::ActivationUnavailable)
+        );
+    }
+
+    #[test]
+    fn install_plan_reports_scope_and_offline_requirements() {
+        let temp = tempfile::tempdir().unwrap();
+        let extract_root = temp.path().join("extract-tree");
+        std::fs::create_dir_all(&extract_root).unwrap();
+        std::fs::write(extract_root.join("tool.exe"), b"payload").unwrap();
+
+        let spec = InstallSpec::new(
+            resolved_resource(),
+            InstallInput::from_extracted_tree(extract_root),
+            temp.path().join("install/from-archive"),
+        )
+        .replace_existing();
+
+        let plan = spec.plan(InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
+            required_scope: InstallWritableScope::System,
+            capabilities: InstallCapabilities {
+                offline: false,
+                writable_scope: InstallWritableScope::User,
+                rollback_expected: true,
+                ..InstallCapabilities::default()
+            },
+        });
+
+        assert!(!plan.can_proceed);
+        assert!(
+            plan.limitations
+                .contains(&InstallPlanLimitation::OfflineCapabilityRequired)
+        );
+        assert!(
+            plan.limitations
+                .iter()
+                .any(|item| matches!(item, InstallPlanLimitation::ScopeMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn staged_file_install_places_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged_path = temp.path().join("fetched.bin");
+        std::fs::write(&staged_path, b"payload").unwrap();
 
         let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
         let ready = InstallReady::new(state);
         let spec = InstallSpec::new(
             resolved_resource(),
-            InstallInput::from_fetch_receipt(FetchReceipt {
-                source: FetchSource::Url("https://example.com/runtime.bin".to_string()),
-                destination: fetched_path,
-                bytes_downloaded: 7,
-                total_bytes: Some(7),
-                sha256_hex: None,
-            }),
-            temp.path().join("install/fetched"),
+            InstallInput::from_file_path(&staged_path).unwrap(),
+            temp.path().join("install/staged"),
         );
 
         let receipt = PlannedInstall::new(ready, spec)
@@ -1285,14 +1658,8 @@ mod tests {
         let ready = InstallReady::new(state);
         let spec = InstallSpec::new(
             resource,
-            InstallInput::from_fetch_receipt(FetchReceipt {
-                source: FetchSource::Url("https://example.com/runtime.bin".to_string()),
-                destination: fetched_path,
-                bytes_downloaded: 7,
-                total_bytes: Some(7),
-                sha256_hex: None,
-            }),
-            temp.path().join("install/fetched"),
+            InstallInput::from_file_path(&fetched_path).unwrap(),
+            temp.path().join("install/staged"),
         );
 
         assert!(matches!(
@@ -1304,24 +1671,17 @@ mod tests {
     }
 
     #[test]
-    fn archive_extraction_input_installs_tree() {
+    fn extracted_tree_input_installs_tree() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("extract-tree");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("tool.exe"), b"payload").unwrap();
 
-        let report = ArchiveReport {
-            format: ArchiveFormat::Zip,
-            entry_count: 1,
-            total_bytes: 7,
-            entries: vec![],
-        };
-
         let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
         let ready = InstallReady::new(state);
         let spec = InstallSpec::new(
             resolved_resource(),
-            InstallInput::from_archive_extraction(root, report),
+            InstallInput::from_extracted_tree(root),
             temp.path().join("install/from-archive"),
         );
 
@@ -1333,131 +1693,6 @@ mod tests {
             .finish();
 
         assert!(receipt.install_root.join("tool.exe").exists());
-    }
-
-    #[test]
-    fn install_input_store_archive_extraction_persists_archive_provenance() {
-        let temp = tempfile::tempdir().unwrap();
-        let extract_root = temp.path().join("extract-tree");
-        std::fs::create_dir_all(extract_root.join("bin")).unwrap();
-        std::fs::write(extract_root.join("bin/tool.exe"), b"payload").unwrap();
-
-        let store = StoreReady::initialize(StoreRoots::new(
-            temp.path().join("store/artifacts"),
-            temp.path().join("store/extracts"),
-            temp.path().join("store/metadata"),
-        ))
-        .unwrap();
-        let key = StoreKey::logical("runtime-extract").unwrap();
-        let report = ArchiveReport {
-            format: ArchiveFormat::Zip,
-            entry_count: 1,
-            total_bytes: 7,
-            entries: vec![],
-        };
-
-        let input =
-            InstallInput::store_archive_extraction(&store, &key, &extract_root, &report).unwrap();
-
-        match input {
-            InstallInput::ExtractedArtifact(artifact) => {
-                assert!(artifact.path.join("bin/tool.exe").exists());
-                let provenance = artifact.provenance.unwrap();
-                assert_eq!(provenance.origin, None);
-                assert_eq!(
-                    provenance
-                        .metadata
-                        .get("archive.format")
-                        .map(String::as_str),
-                    Some("Zip")
-                );
-                assert_eq!(
-                    provenance
-                        .metadata
-                        .get("archive.entry_count")
-                        .map(String::as_str),
-                    Some("1")
-                );
-                assert_eq!(
-                    provenance
-                        .metadata
-                        .get("archive.total_bytes")
-                        .map(String::as_str),
-                    Some("7")
-                );
-
-                let looked_up = store.get_extract(&key).unwrap();
-                let looked_up_provenance = looked_up.provenance.unwrap();
-                assert_eq!(
-                    looked_up_provenance
-                        .metadata
-                        .get("archive.format")
-                        .map(String::as_str),
-                    Some("Zip")
-                );
-            }
-            _ => panic!("expected extracted artifact install input"),
-        }
-    }
-
-    #[test]
-    fn install_input_store_fetched_archive_extraction_merges_fetch_and_archive_provenance() {
-        let temp = tempfile::tempdir().unwrap();
-        let extract_root = temp.path().join("extract-tree");
-        std::fs::create_dir_all(extract_root.join("bin")).unwrap();
-        std::fs::write(extract_root.join("bin/tool.exe"), b"payload").unwrap();
-
-        let store = StoreReady::initialize(StoreRoots::new(
-            temp.path().join("store/artifacts"),
-            temp.path().join("store/extracts"),
-            temp.path().join("store/metadata"),
-        ))
-        .unwrap();
-        let key = StoreKey::logical("runtime-fetch-extract").unwrap();
-        let receipt = FetchReceipt {
-            source: FetchSource::Url("https://example.com/runtime.zip".to_string()),
-            destination: temp.path().join("downloads/runtime.zip"),
-            bytes_downloaded: 7,
-            total_bytes: Some(7),
-            sha256_hex: Some("abc123".to_string()),
-        };
-        let report = ArchiveReport {
-            format: ArchiveFormat::Zip,
-            entry_count: 1,
-            total_bytes: 7,
-            entries: vec![],
-        };
-
-        let input = InstallInput::store_fetched_archive_extraction(
-            &store,
-            &key,
-            &receipt,
-            &extract_root,
-            &report,
-        )
-        .unwrap();
-
-        match input {
-            InstallInput::ExtractedArtifact(artifact) => {
-                let provenance = artifact.provenance.unwrap();
-                assert_eq!(
-                    provenance.origin.as_deref(),
-                    Some("https://example.com/runtime.zip")
-                );
-                assert_eq!(
-                    provenance.metadata.get("fetch.sha256").map(String::as_str),
-                    Some("abc123")
-                );
-                assert_eq!(
-                    provenance
-                        .metadata
-                        .get("archive.format")
-                        .map(String::as_str),
-                    Some("Zip")
-                );
-            }
-            _ => panic!("expected extracted artifact install input"),
-        }
     }
 
     #[test]
@@ -1496,6 +1731,40 @@ mod tests {
         assert_eq!(
             std::fs::read(receipt.install_root.join("tool.exe")).unwrap(),
             b"new"
+        );
+    }
+
+    #[test]
+    fn replace_existing_stage_failure_keeps_previous_install_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_root = temp.path().join("install/runtime");
+        std::fs::create_dir_all(&install_root).unwrap();
+        std::fs::write(install_root.join("tool.exe"), b"old").unwrap();
+
+        let missing_stored_artifact = StoredArtifact {
+            key: StoreKey::logical("runtime").unwrap(),
+            path: temp.path().join("store/artifacts/runtime/missing-tool.exe"),
+            provenance: None,
+        };
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let ready = InstallReady::new(state);
+        let spec = InstallSpec::new(
+            resolved_resource(),
+            InstallInput::StoredArtifact {
+                artifact: missing_stored_artifact,
+                file_name: "tool.exe".to_string(),
+            },
+            install_root.clone(),
+        )
+        .replace_existing();
+
+        assert!(matches!(
+            PlannedInstall::new(ready, spec).stage(),
+            Err(InstallError::MissingStoredArtifact(_))
+        ));
+        assert_eq!(
+            std::fs::read(install_root.join("tool.exe")).unwrap(),
+            b"old"
         );
     }
 
@@ -2027,6 +2296,170 @@ mod tests {
         assert_eq!(
             state.list_activation_records(&resource_id).unwrap().len(),
             1
+        );
+    }
+
+    #[test]
+    fn uninstall_resource_removes_install_activation_and_state_by_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_dir = temp.path().join("extract");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("tool.exe"), b"payload").unwrap();
+
+        let resource = resolved_resource();
+        let id = resource.spec().id.clone();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let install_root = temp.path().join("install/runtime");
+        let activation_target = temp.path().join("active/runtime");
+
+        PlannedInstall::new(
+            InstallReady::new(state.clone()),
+            InstallSpec::new(
+                resource,
+                InstallInput::from_extracted_tree(source_dir.clone()),
+                install_root.clone(),
+            )
+            .activation(ActivationTarget {
+                path: activation_target.clone(),
+            }),
+        )
+        .stage()
+        .unwrap()
+        .commit()
+        .unwrap()
+        .activate(&FileActivator)
+        .unwrap()
+        .finish();
+
+        let receipt = InstallReady::new(state.clone())
+            .uninstall_resource(&id, UninstallOptions::default())
+            .unwrap();
+
+        assert!(receipt.removed_install_root);
+        assert_eq!(
+            receipt.removed_activation_targets,
+            vec![activation_target.clone()]
+        );
+        assert!(receipt.removed_state_record);
+        assert_eq!(receipt.removed_activation_records, 1);
+        assert!(!install_root.exists());
+        assert!(!activation_target.exists());
+        assert!(state.get_resource_record(&id).unwrap().is_none());
+        assert!(state.list_activation_records(&id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn uninstall_resource_can_preserve_state_and_activation_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_dir = temp.path().join("extract");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("tool.exe"), b"payload").unwrap();
+
+        let resource = resolved_resource();
+        let id = resource.spec().id.clone();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let install_root = temp.path().join("install/runtime");
+        let activation_target = temp.path().join("active/runtime");
+
+        PlannedInstall::new(
+            InstallReady::new(state.clone()),
+            InstallSpec::new(
+                resource,
+                InstallInput::from_extracted_tree(source_dir.clone()),
+                install_root.clone(),
+            )
+            .activation(ActivationTarget {
+                path: activation_target.clone(),
+            }),
+        )
+        .stage()
+        .unwrap()
+        .commit()
+        .unwrap()
+        .activate(&FileActivator)
+        .unwrap()
+        .finish();
+
+        let receipt = InstallReady::new(state.clone())
+            .uninstall_resource(
+                &id,
+                UninstallOptions {
+                    remove_install_root: true,
+                    remove_activation_targets: false,
+                    remove_state_record: false,
+                    remove_activation_records: false,
+                },
+            )
+            .unwrap();
+
+        assert!(receipt.removed_install_root);
+        assert!(receipt.removed_activation_targets.is_empty());
+        assert!(!receipt.removed_state_record);
+        assert_eq!(receipt.removed_activation_records, 0);
+        assert!(!install_root.exists());
+        assert!(activation_target.exists());
+        assert!(state.get_resource_record(&id).unwrap().is_some());
+        assert_eq!(state.list_activation_records(&id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn uninstall_resource_is_idempotent_when_resource_facts_are_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let id = ResourceId::parse("example/missing-runtime").unwrap();
+
+        let receipt = InstallReady::new(state.clone())
+            .uninstall_resource(&id, UninstallOptions::default())
+            .unwrap();
+
+        assert!(!receipt.removed_install_root);
+        assert!(receipt.removed_activation_targets.is_empty());
+        assert!(!receipt.removed_state_record);
+        assert_eq!(receipt.removed_activation_records, 0);
+        assert!(state.get_resource_record(&id).unwrap().is_none());
+        assert!(state.list_activation_records(&id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn lifecycle_receipt_from_install_receipt_maps_context() {
+        let resource = ResourceId::parse("example/runtime").unwrap();
+        let install_receipt = InstallReceipt {
+            resource: resource.clone(),
+            install_root: PathBuf::from("/installs/runtime"),
+            activation: Some(ActivationReceipt {
+                target: PathBuf::from("/active/runtime"),
+                installed_path: PathBuf::from("/installs/runtime"),
+            }),
+            replaced_previous: true,
+        };
+
+        let lifecycle: LifecycleOperationReceipt = install_receipt.into();
+        assert_eq!(lifecycle.resource, resource);
+        assert_eq!(lifecycle.phase, LifecycleOperationPhase::Install);
+        assert_eq!(
+            lifecycle.activation_target,
+            Some(PathBuf::from("/active/runtime"))
+        );
+        assert!(lifecycle.replaced_previous);
+    }
+
+    #[test]
+    fn lifecycle_receipt_from_uninstall_receipt_maps_context() {
+        let resource = ResourceId::parse("example/runtime").unwrap();
+        let uninstall_receipt = UninstallReceipt {
+            resource: resource.clone(),
+            removed_install_root: true,
+            removed_activation_targets: vec![PathBuf::from("/active/runtime")],
+            removed_state_record: true,
+            removed_activation_records: 2,
+        };
+
+        let lifecycle: LifecycleOperationReceipt = uninstall_receipt.into();
+        assert_eq!(lifecycle.resource, resource);
+        assert_eq!(lifecycle.phase, LifecycleOperationPhase::Uninstall);
+        assert_eq!(
+            lifecycle.activation_target,
+            Some(PathBuf::from("/active/runtime"))
         );
     }
 }

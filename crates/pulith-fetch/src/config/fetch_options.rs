@@ -6,6 +6,26 @@ use crate::progress::Progress;
 
 pub type ProgressCallback = Arc<dyn Fn(&Progress) + Send + Sync>;
 
+/// Explicit retry behavior for transient transfer failures.
+///
+/// Total attempts are `1 + max_retries`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// Number of retries after the initial attempt.
+    pub max_retries: u32,
+    /// Base exponential backoff duration.
+    pub base_backoff: Duration,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_backoff: Duration::from_millis(100),
+        }
+    }
+}
+
 /// Phases of a download operation.
 ///
 /// Downloads progress through these phases in order:
@@ -76,22 +96,14 @@ pub struct FetchOptions {
     /// If provided, the download will be verified and will fail on mismatch.
     pub checksum: Option<[u8; 32]>,
 
-    /// Maximum number of retry attempts for transient failures.
-    ///
-    /// - Includes only retries after the initial attempt
-    /// - Retries are triggered for network errors and 5xx HTTP errors
-    /// - Does not retry for 4xx errors or checksum mismatches
-    /// - Total attempts = 1 (initial) + max_retries
-    ///
-    /// Default: 3
-    pub max_retries: u32,
+    /// Retry execution policy for transient transfer failures.
+    pub retry_policy: RetryPolicy,
 
-    /// Base delay for exponential backoff between retries.
-    ///
-    /// The actual delay for retry N is: `retry_backoff * 2^(N-1)`
-    ///
-    /// Default: 100ms
-    pub retry_backoff: Duration,
+    /// Expected total bytes for this transfer, when known by caller.
+    pub expected_bytes: Option<u64>,
+
+    /// Resume offset in bytes. When set, fetcher will request `Range: bytes=<offset>-`.
+    pub resume_offset: Option<u64>,
 
     /// Custom HTTP headers to include with requests.
     ///
@@ -117,8 +129,9 @@ impl fmt::Debug for FetchOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FetchOptions")
             .field("checksum", &self.checksum)
-            .field("max_retries", &self.max_retries)
-            .field("retry_backoff", &self.retry_backoff)
+            .field("retry_policy", &self.retry_policy)
+            .field("expected_bytes", &self.expected_bytes)
+            .field("resume_offset", &self.resume_offset)
             .field("headers", &self.headers)
             .field("on_progress", &"{ ... }")
             .finish()
@@ -129,8 +142,9 @@ impl Default for FetchOptions {
     fn default() -> Self {
         Self {
             checksum: None,
-            max_retries: 3,
-            retry_backoff: Duration::from_millis(100),
+            retry_policy: RetryPolicy::default(),
+            expected_bytes: None,
+            resume_offset: None,
             headers: Arc::new([]),
             on_progress: None,
         }
@@ -165,7 +179,7 @@ impl FetchOptions {
     /// ```
     #[must_use]
     pub fn max_retries(mut self, max_retries: u32) -> Self {
-        self.max_retries = max_retries;
+        self.retry_policy.max_retries = max_retries;
         self
     }
 
@@ -182,7 +196,28 @@ impl FetchOptions {
     /// ```
     #[must_use]
     pub fn retry_backoff(mut self, retry_backoff: Duration) -> Self {
-        self.retry_backoff = retry_backoff;
+        self.retry_policy.base_backoff = retry_backoff;
+        self
+    }
+
+    #[must_use]
+    /// Set the full retry policy object directly.
+    pub fn retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
+        self.retry_policy = retry_policy;
+        self
+    }
+
+    #[must_use]
+    /// Set expected transfer size for progress/reporting without HEAD lookup.
+    pub fn expected_bytes(mut self, expected_bytes: Option<u64>) -> Self {
+        self.expected_bytes = expected_bytes;
+        self
+    }
+
+    #[must_use]
+    /// Set resume offset in bytes for ranged fetch.
+    pub fn resume_offset(mut self, resume_offset: Option<u64>) -> Self {
+        self.resume_offset = resume_offset;
         self
     }
 
@@ -277,8 +312,13 @@ mod tests {
     fn test_fetch_options_default() {
         let options = FetchOptions::default();
         assert!(options.checksum.is_none());
-        assert_eq!(options.max_retries, 3);
-        assert_eq!(options.retry_backoff, Duration::from_millis(100));
+        assert_eq!(options.retry_policy.max_retries, 3);
+        assert_eq!(
+            options.retry_policy.base_backoff,
+            Duration::from_millis(100)
+        );
+        assert_eq!(options.expected_bytes, None);
+        assert_eq!(options.resume_offset, None);
         assert!(options.headers.is_empty());
         assert!(options.on_progress.is_none());
     }
@@ -296,17 +336,26 @@ mod tests {
     #[test]
     fn test_fetch_options_max_retries() {
         let options = FetchOptions::default().max_retries(5);
-        assert_eq!(options.max_retries, 5);
+        assert_eq!(options.retry_policy.max_retries, 5);
 
         let options = FetchOptions::default().max_retries(0);
-        assert_eq!(options.max_retries, 0);
+        assert_eq!(options.retry_policy.max_retries, 0);
     }
 
     #[test]
     fn test_fetch_options_retry_backoff() {
         let duration = Duration::from_secs(1);
         let options = FetchOptions::default().retry_backoff(duration);
-        assert_eq!(options.retry_backoff, duration);
+        assert_eq!(options.retry_policy.base_backoff, duration);
+    }
+
+    #[test]
+    fn test_fetch_options_resume_and_expected_bytes() {
+        let options = FetchOptions::default()
+            .resume_offset(Some(128))
+            .expected_bytes(Some(512));
+        assert_eq!(options.resume_offset, Some(128));
+        assert_eq!(options.expected_bytes, Some(512));
     }
 
     #[test]
@@ -379,7 +428,7 @@ mod tests {
         let debug_str = format!("{:?}", options);
         assert!(debug_str.contains("FetchOptions"));
         assert!(debug_str.contains("checksum: Some(["));
-        assert!(debug_str.contains("max_retries: 5"));
+        assert!(debug_str.contains("retry_policy"));
         assert!(debug_str.contains("{ ... }"));
     }
 
@@ -393,8 +442,11 @@ mod tests {
             .header("Custom", "header");
 
         assert_eq!(options.checksum, Some(hash));
-        assert_eq!(options.max_retries, 10);
-        assert_eq!(options.retry_backoff, Duration::from_millis(500));
+        assert_eq!(options.retry_policy.max_retries, 10);
+        assert_eq!(
+            options.retry_policy.base_backoff,
+            Duration::from_millis(500)
+        );
         assert_eq!(options.headers.len(), 1);
 
         // Test with headers() replacing
@@ -405,8 +457,11 @@ mod tests {
             .headers(vec![("Another".to_string(), "header".to_string())]);
 
         assert_eq!(options2.checksum, Some(hash));
-        assert_eq!(options2.max_retries, 10);
-        assert_eq!(options2.retry_backoff, Duration::from_millis(500));
+        assert_eq!(options2.retry_policy.max_retries, 10);
+        assert_eq!(
+            options2.retry_policy.base_backoff,
+            Duration::from_millis(500)
+        );
         assert_eq!(options2.headers.len(), 1);
     }
 
@@ -418,7 +473,7 @@ mod tests {
 
         let cloned = options.clone();
         assert_eq!(cloned.checksum, options.checksum);
-        assert_eq!(cloned.max_retries, options.max_retries);
+        assert_eq!(cloned.retry_policy, options.retry_policy);
         assert_eq!(cloned.headers.as_ptr(), options.headers.as_ptr()); // Same Arc
     }
 }

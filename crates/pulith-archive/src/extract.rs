@@ -343,10 +343,75 @@ impl WorkspaceExtraction {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::io::Write;
     use std::path::Path;
     use std::path::PathBuf;
 
     use super::*;
+
+    fn tar_archive_with_file_path(path: &str) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        {
+            let mut builder = ::tar::Builder::new(&mut buffer);
+            let payload = b"evil";
+            let mut header = ::tar::Header::new_gnu();
+            header.set_size(payload.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "safe.txt", &payload[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        overwrite_tar_path(&mut buffer, path);
+        buffer
+    }
+
+    fn overwrite_tar_path(tar: &mut [u8], path: &str) {
+        assert!(tar.len() >= 512);
+        let path_bytes = path.as_bytes();
+        assert!(path_bytes.len() < 100);
+
+        tar[..100].fill(0);
+        tar[..path_bytes.len()].copy_from_slice(path_bytes);
+        tar[148..156].fill(b' ');
+
+        let checksum: u32 = tar[..512].iter().map(|byte| *byte as u32).sum();
+        let checksum_octal = format!("{:06o}\0 ", checksum);
+        tar[148..156].copy_from_slice(checksum_octal.as_bytes());
+    }
+
+    fn tar_archive_with_symlink(path: &str, target: &str) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        {
+            let mut builder = ::tar::Builder::new(&mut buffer);
+            let mut header = ::tar::Header::new_gnu();
+            header.set_entry_type(::tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            header.set_link_name(target).unwrap();
+            header.set_cksum();
+            builder
+                .append_data(&mut header, path, std::io::empty())
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        buffer
+    }
+
+    #[cfg(feature = "xz")]
+    fn compress_xz(data: &[u8]) -> Vec<u8> {
+        let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 6);
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[cfg(feature = "zstd")]
+    fn compress_zstd(data: &[u8]) -> Vec<u8> {
+        let mut encoder = zstd::stream::Encoder::new(Vec::new(), 3).unwrap();
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
 
     struct TestSource {
         entries: Vec<Result<PendingEntry>>,
@@ -548,5 +613,89 @@ mod tests {
                 limit_bytes: 7
             })
         ));
+    }
+
+    #[cfg(feature = "xz")]
+    #[test]
+    fn tar_xz_rejects_relative_escape_entry_fixture() {
+        let tar = tar_archive_with_file_path("../escape");
+        let compressed = compress_xz(&tar);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = extract_from_reader(
+            Cursor::new(compressed),
+            temp_dir.path(),
+            &ExtractOptions::default(),
+        );
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[cfg(feature = "xz")]
+    #[test]
+    fn tar_xz_rejects_absolute_entry_fixture() {
+        let tar = tar_archive_with_file_path("/etc/evil");
+        let compressed = compress_xz(&tar);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = extract_from_reader(
+            Cursor::new(compressed),
+            temp_dir.path(),
+            &ExtractOptions::default(),
+        );
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[cfg(feature = "xz")]
+    #[test]
+    fn tar_xz_rejects_symlink_escape_fixture() {
+        let tar = tar_archive_with_symlink("bin/link", "../../escape");
+        let compressed = compress_xz(&tar);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = extract_from_reader(
+            Cursor::new(compressed),
+            temp_dir.path(),
+            &ExtractOptions::default(),
+        );
+        assert!(matches!(result, Err(Error::SymlinkEscape { .. })));
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn tar_zst_rejects_relative_escape_entry_fixture() {
+        let tar = tar_archive_with_file_path("../escape");
+        let compressed = compress_zstd(&tar);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = extract_from_reader(
+            Cursor::new(compressed),
+            temp_dir.path(),
+            &ExtractOptions::default(),
+        );
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn tar_zst_rejects_absolute_entry_fixture() {
+        let tar = tar_archive_with_file_path("/etc/evil");
+        let compressed = compress_zstd(&tar);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = extract_from_reader(
+            Cursor::new(compressed),
+            temp_dir.path(),
+            &ExtractOptions::default(),
+        );
+        assert!(matches!(result, Err(Error::ZipSlip { .. })));
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn tar_zst_rejects_symlink_escape_fixture() {
+        let tar = tar_archive_with_symlink("bin/link", "../../escape");
+        let compressed = compress_zstd(&tar);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = extract_from_reader(
+            Cursor::new(compressed),
+            temp_dir.path(),
+            &ExtractOptions::default(),
+        );
+        assert!(matches!(result, Err(Error::SymlinkEscape { .. })));
     }
 }

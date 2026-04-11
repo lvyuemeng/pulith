@@ -4,12 +4,41 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pulith_fs::{Transaction, atomic_write};
-use pulith_resource::{Metadata, ResolvedLocator, ResolvedVersion, ResourceId, VersionSelector};
+use pulith_resource::{
+    Metadata, ResolvedLocator, ResolvedResource, ResolvedVersion, ResourceId, VersionSelector,
+};
 use pulith_store::{StoreKey, StoreMetadataRecord, StoreReady};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, StateError>;
+
+pub struct ResourceUpsert<'a> {
+    pub resource: &'a ResolvedResource,
+    pub patch: ResourceRecordPatch,
+}
+
+pub trait IntoResourceUpsert<'a> {
+    fn into_resource_upsert(self) -> ResourceUpsert<'a>;
+}
+
+impl<'a> IntoResourceUpsert<'a> for &'a ResolvedResource {
+    fn into_resource_upsert(self) -> ResourceUpsert<'a> {
+        ResourceUpsert {
+            resource: self,
+            patch: ResourceRecordPatch::default(),
+        }
+    }
+}
+
+impl<'a> IntoResourceUpsert<'a> for (&'a ResolvedResource, ResourceRecordPatch) {
+    fn into_resource_upsert(self) -> ResourceUpsert<'a> {
+        ResourceUpsert {
+            resource: self.0,
+            patch: self.1,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum StateError {
@@ -157,14 +186,6 @@ impl StateReady {
             &full_snapshot.activations,
             store,
         ))
-    }
-
-    pub fn inspect_resource_legacy(
-        &self,
-        id: &ResourceId,
-        store: Option<&StoreReady>,
-    ) -> Result<ResourceInspection> {
-        Ok(self.inspect_resource(id, store)?.into_legacy())
     }
 
     pub fn list_activation_conflicts(&self) -> Result<Vec<ActivationOwnershipConflict>> {
@@ -461,6 +482,14 @@ impl StateReady {
         })
     }
 
+    pub fn upsert_resource<'a>(
+        &self,
+        upsert: impl IntoResourceUpsert<'a>,
+    ) -> Result<StateSnapshot> {
+        let upsert = upsert.into_resource_upsert();
+        self.upsert_resolved_resource(upsert.resource, upsert.patch)
+    }
+
     pub fn append_activation(&self, activation: ActivationRecord) -> Result<StateSnapshot> {
         self.update(|mut snapshot| {
             snapshot.activations.push(activation);
@@ -504,76 +533,65 @@ pub struct ResourceStateSnapshot {
     pub activations: Vec<ActivationRecord>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceInspection {
-    pub snapshot: ResourceStateSnapshot,
-    pub issues: Vec<ResourceInspectionIssue>,
-}
+fn collect_resource_inspection_findings(
+    snapshot: &ResourceStateSnapshot,
+    all_activations: &[ActivationRecord],
+    store: Option<&StoreReady>,
+) -> Vec<ResourceInspectionFinding> {
+    let mut findings = Vec::new();
 
-impl ResourceInspection {
-    pub fn from_snapshot(
-        snapshot: ResourceStateSnapshot,
-        all_activations: &[ActivationRecord],
-        store: Option<&StoreReady>,
-    ) -> Self {
-        let mut issues = Vec::new();
+    if snapshot.record.is_none() {
+        findings.push(ResourceInspectionFinding::MissingResourceRecord {
+            resource: snapshot.resource.clone(),
+        });
+    }
 
-        if snapshot.record.is_none() {
-            issues.push(ResourceInspectionIssue::MissingResourceRecord {
+    if let Some(record) = &snapshot.record {
+        if let Some(install_path) = &record.install_path
+            && !install_path.exists()
+        {
+            findings.push(ResourceInspectionFinding::MissingInstallPath {
                 resource: snapshot.resource.clone(),
+                path: install_path.clone(),
             });
         }
 
-        if let Some(record) = &snapshot.record {
-            if let Some(install_path) = &record.install_path
-                && !install_path.exists()
-            {
-                issues.push(ResourceInspectionIssue::MissingInstallPath {
+        if let (Some(store), Some(key)) = (store, &record.artifact_key) {
+            if !store.has_artifact(key) && !store.has_extract(key) {
+                findings.push(ResourceInspectionFinding::MissingStoreEntry {
                     resource: snapshot.resource.clone(),
-                    path: install_path.clone(),
+                    key: key.clone(),
                 });
             }
-
-            if let (Some(store), Some(key)) = (store, &record.artifact_key) {
-                if !store.has_artifact(key) && !store.has_extract(key) {
-                    issues.push(ResourceInspectionIssue::MissingStoreEntry {
-                        resource: snapshot.resource.clone(),
-                        key: key.clone(),
-                    });
-                }
-                if !store.has_metadata(key) {
-                    issues.push(ResourceInspectionIssue::MissingStoreMetadata {
-                        resource: snapshot.resource.clone(),
-                        key: key.clone(),
-                    });
-                }
-            }
-        }
-
-        for activation in &snapshot.activations {
-            if !activation.target.exists() {
-                issues.push(ResourceInspectionIssue::MissingActivationTarget {
+            if !store.has_metadata(key) {
+                findings.push(ResourceInspectionFinding::MissingStoreMetadata {
                     resource: snapshot.resource.clone(),
-                    target: activation.target.clone(),
-                });
-            }
-
-            let conflicting_owners = conflicting_activation_owners(
-                &snapshot.resource,
-                &activation.target,
-                all_activations,
-            );
-            if !conflicting_owners.is_empty() {
-                issues.push(ResourceInspectionIssue::ActivationTargetConflict {
-                    resource: snapshot.resource.clone(),
-                    target: activation.target.clone(),
-                    conflicting_owners,
+                    key: key.clone(),
                 });
             }
         }
-
-        Self { snapshot, issues }
     }
+
+    for activation in &snapshot.activations {
+        if !activation.target.exists() {
+            findings.push(ResourceInspectionFinding::MissingActivationTarget {
+                resource: snapshot.resource.clone(),
+                target: activation.target.clone(),
+            });
+        }
+
+        let conflicting_owners =
+            conflicting_activation_owners(&snapshot.resource, &activation.target, all_activations);
+        if !conflicting_owners.is_empty() {
+            findings.push(ResourceInspectionFinding::ActivationTargetConflict {
+                resource: snapshot.resource.clone(),
+                target: activation.target.clone(),
+                conflicting_owners,
+            });
+        }
+    }
+
+    findings
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -731,22 +749,12 @@ impl ResourceInspectionReport {
         all_activations: &[ActivationRecord],
         store: Option<&StoreReady>,
     ) -> Self {
-        let legacy = ResourceInspection::from_snapshot(snapshot, all_activations, store);
-        Self::from_legacy(legacy)
-    }
-
-    pub fn from_legacy(inspection: ResourceInspection) -> Self {
-        let mut findings = inspection
-            .issues
-            .iter()
-            .cloned()
-            .map(ResourceInspectionFinding::from)
-            .collect::<Vec<_>>();
+        let mut findings = collect_resource_inspection_findings(&snapshot, all_activations, store);
         findings.sort_by_key(ResourceInspectionFinding::sort_key);
         let summary = ResourceInspectionSummary::from_findings(&findings);
 
         Self {
-            snapshot: inspection.snapshot,
+            snapshot,
             findings,
             summary,
         }
@@ -754,17 +762,6 @@ impl ResourceInspectionReport {
 
     pub fn is_clean(&self) -> bool {
         self.findings.is_empty()
-    }
-
-    pub fn into_legacy(self) -> ResourceInspection {
-        ResourceInspection {
-            snapshot: self.snapshot,
-            issues: self
-                .findings
-                .into_iter()
-                .map(ResourceInspectionIssue::from)
-                .collect(),
-        }
     }
 }
 
@@ -830,96 +827,6 @@ pub enum ResourceRepairAction {
         resource: ResourceId,
         target: PathBuf,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ResourceInspectionIssue {
-    MissingResourceRecord {
-        resource: ResourceId,
-    },
-    MissingInstallPath {
-        resource: ResourceId,
-        path: PathBuf,
-    },
-    MissingActivationTarget {
-        resource: ResourceId,
-        target: PathBuf,
-    },
-    ActivationTargetConflict {
-        resource: ResourceId,
-        target: PathBuf,
-        conflicting_owners: Vec<ResourceId>,
-    },
-    MissingStoreEntry {
-        resource: ResourceId,
-        key: StoreKey,
-    },
-    MissingStoreMetadata {
-        resource: ResourceId,
-        key: StoreKey,
-    },
-}
-
-impl From<ResourceInspectionIssue> for ResourceInspectionFinding {
-    fn from(issue: ResourceInspectionIssue) -> Self {
-        match issue {
-            ResourceInspectionIssue::MissingResourceRecord { resource } => {
-                Self::MissingResourceRecord { resource }
-            }
-            ResourceInspectionIssue::MissingInstallPath { resource, path } => {
-                Self::MissingInstallPath { resource, path }
-            }
-            ResourceInspectionIssue::MissingActivationTarget { resource, target } => {
-                Self::MissingActivationTarget { resource, target }
-            }
-            ResourceInspectionIssue::ActivationTargetConflict {
-                resource,
-                target,
-                conflicting_owners,
-            } => Self::ActivationTargetConflict {
-                resource,
-                target,
-                conflicting_owners,
-            },
-            ResourceInspectionIssue::MissingStoreEntry { resource, key } => {
-                Self::MissingStoreEntry { resource, key }
-            }
-            ResourceInspectionIssue::MissingStoreMetadata { resource, key } => {
-                Self::MissingStoreMetadata { resource, key }
-            }
-        }
-    }
-}
-
-impl From<ResourceInspectionFinding> for ResourceInspectionIssue {
-    fn from(finding: ResourceInspectionFinding) -> Self {
-        match finding {
-            ResourceInspectionFinding::MissingResourceRecord { resource } => {
-                Self::MissingResourceRecord { resource }
-            }
-            ResourceInspectionFinding::MissingInstallPath { resource, path } => {
-                Self::MissingInstallPath { resource, path }
-            }
-            ResourceInspectionFinding::MissingActivationTarget { resource, target } => {
-                Self::MissingActivationTarget { resource, target }
-            }
-            ResourceInspectionFinding::ActivationTargetConflict {
-                resource,
-                target,
-                conflicting_owners,
-            } => Self::ActivationTargetConflict {
-                resource,
-                target,
-                conflicting_owners,
-            },
-            ResourceInspectionFinding::MissingStoreEntry { resource, key } => {
-                Self::MissingStoreEntry { resource, key }
-            }
-            ResourceInspectionFinding::MissingStoreMetadata { resource, key } => {
-                Self::MissingStoreMetadata { resource, key }
-            }
-        }
-    }
 }
 
 fn push_unique_action(actions: &mut Vec<ResourceRepairAction>, action: ResourceRepairAction) {
@@ -1449,6 +1356,65 @@ mod tests {
 
         let snapshot = state.load().unwrap();
         assert_eq!(snapshot.resources[0].lifecycle, ResourceLifecycle::Resolved);
+    }
+
+    #[test]
+    fn upsert_resource_absorbs_resolved_resource_without_patch() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(
+                ValidUrl::parse("https://mirror.example.com/runtime.zip").unwrap(),
+            ),
+            None,
+        );
+
+        state.upsert_resource(&resolved).unwrap();
+
+        let record = state
+            .get_resource_record(&ResourceId::parse("example/runtime").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.lifecycle, ResourceLifecycle::Resolved);
+    }
+
+    #[test]
+    fn upsert_resource_absorbs_resolved_resource_with_patch() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+
+        let resolved = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+        ))
+        .resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(
+                ValidUrl::parse("https://mirror.example.com/runtime.zip").unwrap(),
+            ),
+            None,
+        );
+
+        state
+            .upsert_resource((
+                &resolved,
+                ResourceRecordPatch::install_path(Some(PathBuf::from("/opt/runtime")))
+                    .with_lifecycle(ResourceLifecycle::Installed),
+            ))
+            .unwrap();
+
+        let record = state
+            .get_resource_record(&ResourceId::parse("example/runtime").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.lifecycle, ResourceLifecycle::Installed);
+        assert_eq!(record.install_path, Some(PathBuf::from("/opt/runtime")));
     }
 
     #[test]

@@ -139,6 +139,32 @@ impl Workspace {
         Ok(())
     }
 
+    /// Stage a file using a caller-provided size hint.
+    ///
+    /// Files smaller than `threshold_bytes` are copied directly. Larger files use
+    /// link-or-copy semantics based on `options`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source cannot be read, staging fails, or workspace
+    /// operations fail.
+    pub fn stage_file_with_size_hint(
+        &self,
+        source: impl AsRef<Path>,
+        relative_path: impl AsRef<Path>,
+        source_size_bytes: u64,
+        threshold_bytes: u64,
+        options: hardlink::Options,
+    ) -> Result<()> {
+        let source = source.as_ref();
+        if source_size_bytes < threshold_bytes {
+            let _ = self.copy_file(source, relative_path)?;
+        } else {
+            self.link_or_copy_file(source, relative_path, options)?;
+        }
+        Ok(())
+    }
+
     pub fn read(&self, relative_path: impl AsRef<Path>) -> Result<Vec<u8>> {
         let path = self.resolve(relative_path)?;
         rw::atomic_read(path)
@@ -331,6 +357,25 @@ mod tests {
         let workspace = Workspace::new(dir.path().join("staging"), &destination).unwrap();
         workspace
             .stage_file_by_size(&source, "bin/tool.bin", 1024, hardlink::Options::new())
+            .unwrap();
+        workspace.commit().unwrap();
+
+        assert_eq!(
+            std::fs::read(destination.join("bin/tool.bin")).unwrap(),
+            b"data"
+        );
+    }
+
+    #[test]
+    fn test_workspace_stage_file_with_size_hint_prefers_copy_under_threshold() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        let destination = dir.path().join("dest");
+        std::fs::write(&source, b"data").unwrap();
+
+        let workspace = Workspace::new(dir.path().join("staging"), &destination).unwrap();
+        workspace
+            .stage_file_with_size_hint(&source, "bin/tool.bin", 4, 1024, hardlink::Options::new())
             .unwrap();
         workspace.commit().unwrap();
 

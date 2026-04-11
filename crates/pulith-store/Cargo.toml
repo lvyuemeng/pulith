@@ -11,6 +11,8 @@ keywords = ["artifact", "store", "provenance", "metadata"]
 categories = ["filesystem", "data-structures"]
 
 [dependencies]
+pulith-archive = { path = "../pulith-archive", version = "0.2.0" }
+pulith-fetch = { path = "../pulith-fetch", version = "0.2.0" }
 pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
 pulith-resource = { path = "../pulith-resource", version = "0.1.0" }
 
@@ -18,3 +20,10 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "register"
+harness = false
