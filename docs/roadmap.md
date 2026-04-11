@@ -17,7 +17,8 @@ Block status:
 - [x] Block O completed
 - [x] Block P completed
 - [x] Block Q completed (workflow adaptation + boundary hardening)
-- [ ] Block R active (Phase-1 functional blockers)
+- [x] Block R completed (Phase-1 functional blockers)
+- [ ] Block S active (trust + reproducibility foundation)
 
 ---
 
@@ -60,7 +61,7 @@ Status: completed.
 
 ---
 
-## Block R (Active)
+## Block R (Completed)
 
 Theme: close Phase-1 functional blockers from design inventory.
 
@@ -70,7 +71,7 @@ Execution checklist:
 - [x] complete HTTP transport contract in `pulith-fetch` (resume offset, explicit retry policy, progress surface)
 - [x] expand archive formats in `pulith-archive` (`tar.xz`, `tar.zst`) with path-traversal/escape fixtures
 - [x] add tracing baseline across fetch/install hot paths
-- [ ] add real URL end-to-end integration path (`fetch->verify->extract->install->activate->inspect`)
+- [x] add real URL end-to-end integration path (`fetch->verify->extract->install->activate->inspect`)
 
 Exit criteria:
 
@@ -95,6 +96,12 @@ Latest evidence update:
 - `crates/pulith-archive/src/extract.rs` tests now include malicious tar.xz/tar.zst fixtures for relative escape, absolute path, and symlink escape rejection
 - `crates/pulith-fetch/src/fetch/fetcher.rs` now has tracing instrumentation on `head`, `fetch_with_receipt`, retry attempt path, and source-try path
 - `crates/pulith-install/src/lib.rs` now has tracing instrumentation on `stage`, `commit`, `activate`, and rollback hot paths
+- `examples/runtime-manager/src/main.rs` now includes `install-remote-archive` as real URL fetch->extract->store->install->activate->inspect path
+- `crates/pulith-install/tests/workspace_pipeline.rs` now includes an opt-in ignored integration test (`real_url_end_to_end_pipeline_path`) gated by `PULITH_E2E_ARCHIVE_URL`
+
+---
+
+Status: completed.
 
 ---
 
@@ -135,6 +142,24 @@ Latest evidence update:
 1. stream-hash verification tightening in `pulith-verify`
 2. `pulith-lock` crate (deterministic lock file + lock diff)
 3. state/store drift + repair plan hardening evidence
+
+---
+
+## Block S (Active)
+
+Theme: trust + reproducibility foundation.
+
+Execution checklist:
+
+- [ ] tighten stream-hash verification pipeline behavior in `pulith-verify`
+- [ ] introduce `pulith-lock` crate with deterministic serialization and lock diff
+- [ ] harden state/store drift + repair evidence for lifecycle recovery guarantees
+
+Exit criteria:
+
+- lock and verification contracts are documented and test-backed
+- drift/repair behavior is explicit, deterministic, and evidence-linked
+- no manager policy leakage into core semantic/workflow crates
 
 ---
 

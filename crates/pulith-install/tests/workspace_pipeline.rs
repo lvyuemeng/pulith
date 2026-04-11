@@ -72,6 +72,96 @@ fn install_input_from_fetched_archive_extract(
     InstallInput::ExtractedArtifact(extracted)
 }
 
+#[tokio::test]
+#[ignore = "requires network and PULITH_E2E_ARCHIVE_URL"]
+async fn real_url_end_to_end_pipeline_path() {
+    let Some(url) = std::env::var("PULITH_E2E_ARCHIVE_URL").ok() else {
+        return;
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = StoreReady::initialize(StoreRoots::new(
+        temp.path().join("store/artifacts"),
+        temp.path().join("store/extracts"),
+        temp.path().join("store/metadata"),
+    ))
+    .unwrap();
+    let state = StateReady::initialize(temp.path().join("state/state.json")).unwrap();
+
+    let version = std::env::var("PULITH_E2E_ARCHIVE_VERSION").unwrap_or_else(|_| "1.0.0".into());
+    let resource = RequestedResource::new(
+        ResourceSpec::new(
+            ResourceId::parse("example/runtime-e2e").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse(&url).unwrap()),
+        )
+        .version(pulith_resource::VersionSelector::exact(&version).unwrap()),
+    )
+    .resolve(
+        ResolvedVersion::new(&version).unwrap(),
+        ResolvedLocator::Url(ValidUrl::parse(&url).unwrap()),
+        None,
+    );
+
+    let fetcher = Fetcher::new(
+        ReqwestClient::new().unwrap(),
+        temp.path().join("fetch-workspace"),
+    );
+    let fetched = fetcher
+        .fetch_with_receipt(
+            &url,
+            &temp.path().join("downloads/archive.bin"),
+            pulith_fetch::FetchOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let extract_root = temp.path().join("extract-root");
+    fs::create_dir_all(&extract_root).unwrap();
+    let report = extract_from_reader(
+        fs::File::open(&fetched.destination).unwrap(),
+        &extract_root,
+        &ExtractOptions::default(),
+    )
+    .unwrap();
+
+    let key = StoreKey::NamedVersion {
+        id: ResourceId::parse("example/runtime-e2e").unwrap(),
+        version: ResolvedVersion::new(&version).unwrap(),
+    };
+    let install_input =
+        install_input_from_fetched_archive_extract(&store, &key, &fetched, &extract_root, &report);
+
+    let receipt = PlannedInstall::new(
+        InstallReady::new(state.clone()),
+        InstallSpec::new(
+            resource.clone(),
+            install_input,
+            temp.path().join("installs/runtime-e2e"),
+        )
+        .replace_existing()
+        .activation(ActivationTarget {
+            path: temp.path().join("active/runtime-e2e"),
+        }),
+    )
+    .stage()
+    .unwrap()
+    .commit()
+    .unwrap()
+    .activate(&SymlinkActivator)
+    .unwrap()
+    .finish();
+
+    assert!(receipt.install_root.exists());
+
+    let inspection = state
+        .inspect_resource(
+            &ResourceId::parse("example/runtime-e2e").unwrap(),
+            Some(&store),
+        )
+        .unwrap();
+    assert!(inspection.findings.is_empty());
+}
+
 #[test]
 fn install_plan_offline_fallback_boundary_is_explicit() {
     let temp = tempfile::tempdir().unwrap();

@@ -13,7 +13,7 @@ use pulith_install::{
 };
 use pulith_resource::{
     RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
-    VersionSelector,
+    ValidUrl, VersionSelector,
 };
 use pulith_source::SelectionStrategy;
 use pulith_state::{
@@ -48,6 +48,14 @@ fn main() -> Result<()> {
             let workspace_root =
                 PathBuf::from(args.next().ok_or_else(|| missing_arg("workspace root"))?);
             install_local_file(&resource_id, &version, &file_path, &workspace_root)
+        }
+        "install-remote-archive" => {
+            let resource_id = args.next().ok_or_else(|| missing_arg("resource id"))?;
+            let version = args.next().ok_or_else(|| missing_arg("version"))?;
+            let archive_url = args.next().ok_or_else(|| missing_arg("archive url"))?;
+            let workspace_root =
+                PathBuf::from(args.next().ok_or_else(|| missing_arg("workspace root"))?);
+            install_remote_archive(&resource_id, &version, &archive_url, &workspace_root)
         }
         "install-prestaged-store-file" => {
             let resource_id = args.next().ok_or_else(|| missing_arg("resource id"))?;
@@ -252,6 +260,88 @@ fn install_local_file(
     }
     let lifecycle: LifecycleOperationReceipt = receipt.into();
     println!("lifecycle phase: {:?}", lifecycle.phase);
+    Ok(())
+}
+
+fn install_remote_archive(
+    resource_id: &str,
+    version: &str,
+    archive_url: &str,
+    workspace_root: &Path,
+) -> Result<()> {
+    let resource = resolved_remote_resource(resource_id, version, archive_url)?;
+    let file_name = archive_url
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("archive.bin");
+
+    let fetcher = Fetcher::new(
+        ReqwestClient::new()?,
+        workspace_root.join("fetch-workspace"),
+    );
+    let multi = MultiSourceFetcher::new(std::sync::Arc::new(fetcher));
+    let destination =
+        workspace_root
+            .join("downloads")
+            .join(format!("{}-{}", safe_name(resource_id), file_name));
+    let fetched = tokio::runtime::Runtime::new()?.block_on(async {
+        multi
+            .fetch_resolved_resource_with_receipt(
+                &resource,
+                SelectionStrategy::OrderedFallback,
+                &destination,
+                &FetchOptions::default(),
+            )
+            .await
+    })?;
+
+    let extract_root = workspace_root
+        .join("extracted")
+        .join(format!("{}-remote", safe_name(resource_id)));
+    fs::create_dir_all(&extract_root)?;
+    let fetched_file = fs::File::open(&fetched.destination)?;
+    let report = extract_from_reader(fetched_file, &extract_root, &ExtractOptions::default())?;
+
+    let store = init_store(workspace_root)?;
+    let key = pulith_store::StoreKey::NamedVersion {
+        id: ResourceId::parse(resource_id)?,
+        version: ResolvedVersion::new(version)?,
+    };
+    let extracted = store.register_extract(&key, (&fetched, extract_root.as_path(), &report))?;
+    let install_root = workspace_root
+        .join("installs")
+        .join(format!("{}-remote", safe_name(resource_id)));
+    let activation_target = workspace_root
+        .join("active")
+        .join(format!("{}-remote", safe_name(resource_id)));
+
+    let receipt = execute_install_with_plan(
+        InstallReady::new(init_state(workspace_root)?),
+        InstallSpec::new(
+            resource.clone(),
+            InstallInput::ExtractedArtifact(extracted),
+            install_root,
+        )
+        .replace_existing()
+        .activation(ActivationTarget {
+            path: activation_target,
+        }),
+        InstallPlanningRequest {
+            desired_variant: InstallWorkflowVariant::PreStagedStore,
+            required_scope: InstallWritableScope::User,
+            capabilities: InstallCapabilities {
+                rollback_expected: true,
+                ..InstallCapabilities::default()
+            },
+        },
+    )?;
+
+    let inspect_report = init_state(workspace_root)?
+        .inspect_resource(&ResourceId::parse(resource_id)?, Some(&store))?;
+
+    println!("installed: {}", receipt.install_root.display());
+    println!("inspect clean: {}", inspect_report.is_clean());
     Ok(())
 }
 
@@ -607,6 +697,26 @@ fn resolved_local_resource(
     ))
 }
 
+fn resolved_remote_resource(
+    resource_id: &str,
+    version: &str,
+    archive_url: &str,
+) -> Result<pulith_resource::ResolvedResource> {
+    let url = ValidUrl::parse(archive_url)?;
+    Ok(RequestedResource::new(
+        ResourceSpec::new(
+            ResourceId::parse(resource_id)?,
+            ResourceLocator::Url(url.clone()),
+        )
+        .version(VersionSelector::exact(version)?),
+    )
+    .resolve(
+        ResolvedVersion::new(version)?,
+        ResolvedLocator::Url(url),
+        None,
+    ))
+}
+
 fn safe_name(value: &str) -> String {
     value
         .chars()
@@ -626,6 +736,7 @@ fn print_usage() {
     println!("commands:");
     println!("  install-local-archive <resource-id> <version> <archive-path> <workspace-root>");
     println!("  install-local-file <resource-id> <version> <file-path> <workspace-root>");
+    println!("  install-remote-archive <resource-id> <version> <archive-url> <workspace-root>");
     println!("  install-prestaged-store-file <resource-id> <version> <file-path> <workspace-root>");
     println!("  install-airgapped-archive <resource-id> <version> <archive-path> <workspace-root>");
     println!(
