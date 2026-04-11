@@ -79,7 +79,11 @@ impl<C: HttpClient> Fetcher<C> {
                     }
 
                     let delay = retry_delay(attempt, options.retry_policy.base_backoff);
-                    tokio::time::sleep(delay).await;
+                    if let Some(provider) = &options.retry_delay_provider {
+                        (provider)(delay).await;
+                    } else {
+                        tokio::time::sleep(delay).await;
+                    }
                     attempt += 1;
                 }
             }
@@ -533,6 +537,61 @@ mod tests {
 
         assert!(matches!(error, Error::MaxRetriesExceeded { count: 2 }));
         assert_eq!(stream_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_retries_can_use_custom_delay_provider() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct AlwaysFailingHttpClient;
+
+        impl HttpClient for AlwaysFailingHttpClient {
+            type Error = MockError;
+
+            async fn stream(
+                &self,
+                _url: &str,
+                _headers: &[(String, String)],
+            ) -> std::result::Result<
+                BoxStream<'static, std::result::Result<Bytes, Self::Error>>,
+                Self::Error,
+            > {
+                Err(MockError("stream always fails".to_string()))
+            }
+
+            async fn head(&self, _url: &str) -> std::result::Result<Option<u64>, Self::Error> {
+                Ok(Some(9))
+            }
+        }
+
+        let delay_calls = Arc::new(AtomicU32::new(0));
+        let delay_calls_for_provider = Arc::clone(&delay_calls);
+
+        let temp = tempfile::tempdir().unwrap();
+        let fetcher = Fetcher::new(AlwaysFailingHttpClient, temp.path());
+        let options = FetchOptions::default()
+            .retry_policy(crate::RetryPolicy {
+                max_retries: 2,
+                base_backoff: std::time::Duration::from_millis(1),
+            })
+            .retry_delay_provider(Arc::new(move |_delay| {
+                let delay_calls_for_provider = Arc::clone(&delay_calls_for_provider);
+                Box::pin(async move {
+                    delay_calls_for_provider.fetch_add(1, Ordering::SeqCst);
+                })
+            }));
+
+        let error = fetcher
+            .fetch_with_receipt(
+                "http://example.com",
+                &temp.path().join("retry-custom-delay.bin"),
+                options,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::MaxRetriesExceeded { count: 3 }));
+        assert_eq!(delay_calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

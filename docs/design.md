@@ -3,11 +3,11 @@
 ## Vision
 
 Pulith is a mechanism-first Rust crate ecosystem for building resource managers.
-It provides reusable primitives and semantic workflow contracts; it does not embed manager policy.
+It provides composable primitives and semantic workflow contracts, without embedding manager policy.
 
 Design priorities:
 
-- semantic APIs over raw path/string glue
+- semantic APIs over path/string glue
 - explicit effects and typed boundaries
 - composable crates over monolithic framework behavior
 - deterministic, test-backed contracts
@@ -21,9 +21,9 @@ In scope:
 - source planning, fetch, verify, extract, store, install, activate
 - lifecycle persistence, inspection, repair planning, retention planning
 
-Out of scope:
+Out of scope (for core crates):
 
-- dependency graph solving and lock orchestration (for now)
+- dependency graph solving and lock orchestration
 - repository hosting/auth/authz systems
 - hidden ranking/trust/channel/cleanup policy
 
@@ -33,26 +33,29 @@ Out of scope:
 
 Required property: adjacent crates compose through typed method/trait absorption with minimal manual glue.
 
-## Resource Taxonomy Contract
+## Resource Taxonomy and Essential Behaviors
 
-Pulith must support a broad resource spectrum without collapsing semantics into one artifact model:
+Pulith must support diverse resource classes (binaries, runtimes, packages, plugins, config/secret, images, services) without rigid type explosion.
 
-- binaries (single, bundled, sidecar, platform-specific)
-- runtimes/toolchains/SDKs
-- system/language packages
-- plugins (dynamic/script/protocol/asset)
-- configuration/secret/env resources
-- container/rootfs/OCI resources
-- service/daemon resources
+Core rule: design around **essential behaviors**, not one enum per resource class.
 
-Design implication: API boundaries must carry identity, provenance, activation, and lifecycle facts without assuming one install shape.
+Essential behavior axes:
+
+- materialization shape: single file, extracted tree, layered/object set
+- activation model: none, path target, shim resolution, service registration, environment projection
+- mutation scope: install root only vs install root + external extension steps
+- provenance requirement: source/verifier continuity and explainability
+- integrity model: hash/signature/attestation requirements
+- lifecycle requirement: replace/rollback/uninstall/repair expectations
+
+Implication: a runtime, SDK, plugin, or service can share core pipeline primitives while varying by behavior configuration and extension steps.
 
 ## Crate Roles
 
 - Primitive: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`
-- Semantic: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`
+- Semantic: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`, `pulith-lock`
 - Workflow: `pulith-install`
-- Adapter/examples: `pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
+- Adapter/examples: `examples/pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
 
 ## API Unification Strategy
 
@@ -61,7 +64,7 @@ Pulith standardizes on **method + trait pipeline composition**.
 Rules:
 
 - prefer trait absorption (`Into*Registration`, `Into*Input`) over free conversion helpers
-- prefer crate-owned methods for semantic composition (for example provenance, report shaping)
+- prefer crate-owned methods for semantic composition (provenance/report shaping)
 - keep one canonical boundary path per crate role; remove compatibility aliases after migration
 - keep policy out of helpers; helpers convert facts only
 
@@ -90,9 +93,7 @@ Install lifecycle envelope types:
 - `LifecycleOperationDetails`
 - `LifecycleOperationReceipt`
 
-This keeps receipts composable and audit-friendly while preserving phase-specific detail records.
-
-## Installation Variant Contract (Block Q)
+## Installation Variant Contract
 
 First-class variants:
 
@@ -109,18 +110,42 @@ Variant requirements:
 - preview/read-only planning where feasible
 - provenance + receipt continuity across transitions
 - caller-declared fallback choreography (no hidden downgrade)
-- non-filesystem side effects (registry/service/env) are modeled as caller extension steps around install pipeline, not rigid core enums
+- non-filesystem side effects (registry/service/env) modeled as caller extension stages around core install flow
+
+## Crate Boundary Checklist (Normative)
+
+Any new feature must satisfy:
+
+- no policy in primitives (`pulith-fetch` takes `RetryPolicy`; does not choose strategy)
+- no hidden side effects (mutating functions are explicit in API flow and receipts)
+- error boundaries use source-wrapping; avoid re-enumerating deep leaf variants upstream
+- async hot paths are instrumented (`#[tracing::instrument]`) with useful fields
+- core filesystem mutation uses `pulith-fs` atomic/workspace primitives
+- archive extraction uses path-contained safety model (no unsafe unpack semantics)
+- progress/event surfaces are opt-in
+- state mutation paths remain recoverable and explicit
+
+## Efficiency and Adaptability Decisions
+
+Pulith optimizes for explicit correctness first, then performance through bounded mechanisms:
+
+- retry and backoff are explicit policy inputs
+- copy/link thresholds are explicit and benchmark-driven
+- extraction limits are explicit (entry/byte caps)
+- fetch/extract/install boundaries keep deterministic, inspectable receipts
+
+Initial stabilization decisions are recorded in `docs/design/stabilization.md`.
 
 ## Cross-Crate Invariants
 
 - provenance continuity: installed bytes remain explainable
-- explicit mutation scope: each crate mutates only its own contract boundary
-- deterministic retries for stage/inspect/plan operations
-- explicit fallback/downgrade reasons (typed, visible)
+- explicit mutation scope: each crate mutates only its contract boundary
+- deterministic retries/plans/inspections
+- explicit typed fallback and limitation reasons
 
 Extension invariant:
 
-- `pulith-install` remains filesystem/install-root focused; external side-effect orchestration composes as caller-owned pipeline stages
+- `pulith-install` remains install-root focused; external side-effect orchestration composes as caller-owned pipeline stages
 
 ## Security and Integrity Baseline
 
@@ -139,22 +164,16 @@ Extension invariant:
 
 - API gate: boundary changes require updated example + integration test
 - composition gate: runtime example must show reduced manual glue
-- reliability gate: each mutation-path feature includes negative-path coverage
-- performance gate: touched hot paths must run benchmark or strict validation
+- reliability gate: mutation-path changes include negative-path coverage
+- performance gate: hot-path changes run benchmark or strict validation
 - policy gate: no hidden strategy logic in primitives/semantics/workflow crates
-
-## Current Open Design Decisions
-
-- lock model introduction (`pulith-lock`) and scope (single-resource vs graph lock)
-- fetch transport expansion (HTTP baseline, then S3/OCI/git/ssh)
-- archive format expansion (`tar.xz`, `tar.zst`) with safety fixtures
-- state backend evolution (JSON/SQLite abstraction)
-- shim resolution hot-path and project-context activation semantics
 
 ## References
 
 - `docs/roadmap.md`
 - `docs/AGENT.md`
 - `docs/design/install.md`
+- `docs/design/lock.md`
+- `docs/design/stabilization.md`
 - `docs/design/store.md`
 - `docs/design/state.md`

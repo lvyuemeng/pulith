@@ -56,6 +56,12 @@ This flow is the baseline Pulith fetch contract:
 - progress callbacks through explicit caller-provided hooks
 - typed `FetchReceipt` handoff for higher workflow layers
 
+Runtime coupling boundary:
+
+- retry waiting behavior can be injected through `FetchOptions::retry_delay_provider(...)`
+- default delay behavior remains available when no provider is supplied
+- public fetch contracts avoid runtime-handle coupling
+
 Advanced retry/resume behavior outside this baseline should be treated as maturing and must not be interpreted as a stronger reliability contract than current tests document.
 
 ## Advanced Fetchers

@@ -95,6 +95,13 @@ where
 }
 ```
 
+Verification tightening for reproducibility:
+
+- `VerifiedReader` tracks processed byte count
+- `finish_with_constraints(expected, expected_bytes)` verifies digest and optional exact stream length
+- `verify_stream(...)` consumes a reader end-to-end and returns a `VerificationReceipt`
+- mismatched stream length produces `VerifyError::SizeMismatch`
+
 ### DigestHasher
 
 ```rust

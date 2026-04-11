@@ -15,7 +15,7 @@ pulith-archive = { path = "../pulith-archive", version = "0.2.0" }
 pulith-fetch = { path = "../pulith-fetch", version = "0.2.0" }
 pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
 pulith-resource = { path = "../pulith-resource", version = "0.1.0" }
-pulith-shim = { path = "../pulith-shim-bin/pulith-shim", version = "0.1.0" }
+pulith-shim = { path = "../pulith-shim", version = "0.1.0" }
 pulith-state = { path = "../pulith-state", version = "0.1.0" }
 pulith-store = { path = "../pulith-store", version = "0.1.0" }
 

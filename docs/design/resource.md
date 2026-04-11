@@ -13,7 +13,7 @@ It does not fetch, store, or install anything. It only describes:
 - how a version is selected
 - what verification is required
 - what trust policy should apply
-- how the artifact should be materialized
+- the resource behavior contract (materialization, activation, mutation scope, provenance, lifecycle)
 
 ## Design Rules
 
@@ -32,6 +32,11 @@ It does not fetch, store, or install anything. It only describes:
 - `VerificationRequirement`
 - `TrustPolicy`
 - `MaterializationSpec`
+- `ActivationModel`
+- `MutationScope`
+- `ProvenanceRequirement`
+- `LifecycleRequirements`
+- `ResourceBehaviorContract`
 - `RequestedResource`
 - `ResolvedResource`
 
@@ -59,3 +64,17 @@ This is intentionally lightweight:
 - `ResolvedResource`
 
 This keeps compile-time ordering available for higher layers without forcing persistence or transport layers to mirror the same model.
+
+## Behavior Axis Contract
+
+`ResourceSpec` carries a behavior-axis contract that can be read through `behavior_contract()`.
+
+The contract is explicit and composable:
+
+- materialization shape stays in `MaterializationSpec`
+- activation model is typed (`ActivationModel`)
+- mutation scope is typed (`MutationScope`)
+- provenance continuity expectation is typed (`ProvenanceRequirement`)
+- lifecycle expectations are explicit booleans (`LifecycleRequirements`)
+
+This keeps taxonomy flexible (runtime, plugin, service, SDK) while preserving deterministic behavior boundaries.

@@ -66,9 +66,9 @@ pulith/
 Crate roles should remain narrow and composable:
 
 - **Primitive**: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`
-- **Semantic**: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`
+- **Semantic**: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`, `pulith-lock`
 - **Workflow**: `pulith-install`
-- **Adapter/example**: `pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
+- **Adapter/example**: `examples/pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
 
 Module guidance:
 

@@ -66,11 +66,12 @@ Semantic and workflow crates:
 - `pulith-source` - source definitions and planning
 - `pulith-store` - artifact and extracted-tree storage
 - `pulith-state` - persistent lifecycle state, inspection, repair, retention planning
+- `pulith-lock` - deterministic lock model and lock diff
 - `pulith-install` - typed install and activation workflow
 
 Examples and adapters:
 
-- `pulith-backend-example` - thin adapter-first backend example
+- `examples/pulith-backend-example/` - thin adapter-first backend example
 - `examples/runtime-manager/` - partially practical multi-crate integration example
 
 Each crate has its own `README.md` with basic usage and main APIs.

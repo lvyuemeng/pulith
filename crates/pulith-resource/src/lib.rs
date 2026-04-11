@@ -376,6 +376,88 @@ impl Default for MaterializationSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActivationModel {
+    /// No activation step is expected after install.
+    None,
+    /// Activation writes or links to a path target.
+    PathTarget,
+    /// Activation resolves commands through shims.
+    ShimResolution,
+    /// Activation registers service manager state.
+    ServiceRegistration,
+    /// Activation projects environment configuration.
+    EnvironmentProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MutationScope {
+    /// Core workflow mutates install-root paths only.
+    InstallRootOnly,
+    /// Core install-root mutation plus explicit caller extension steps.
+    InstallRootWithExtensions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProvenanceRequirement {
+    /// Source continuity is required.
+    SourceOnly,
+    /// Source and verification continuity are both required.
+    SourceAndVerification,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LifecycleRequirements {
+    /// Replace-in-place operations are expected.
+    pub replace: bool,
+    /// Rollback behavior is expected.
+    pub rollback: bool,
+    /// Uninstall behavior is expected.
+    pub uninstall: bool,
+    /// Repair behavior is expected.
+    pub repair: bool,
+}
+
+impl LifecycleRequirements {
+    /// Sets whether replace behavior is required.
+    pub fn replace(mut self, enabled: bool) -> Self {
+        self.replace = enabled;
+        self
+    }
+
+    /// Sets whether rollback behavior is required.
+    pub fn rollback(mut self, enabled: bool) -> Self {
+        self.rollback = enabled;
+        self
+    }
+
+    /// Sets whether uninstall behavior is required.
+    pub fn uninstall(mut self, enabled: bool) -> Self {
+        self.uninstall = enabled;
+        self
+    }
+
+    /// Sets whether repair behavior is required.
+    pub fn repair(mut self, enabled: bool) -> Self {
+        self.repair = enabled;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceBehaviorContract {
+    /// Materialization behavior axis.
+    pub materialization: MaterializationSpec,
+    /// Activation behavior axis.
+    pub activation: ActivationModel,
+    /// Mutation scope behavior axis.
+    pub mutation_scope: MutationScope,
+    /// Provenance continuity behavior axis.
+    pub provenance: ProvenanceRequirement,
+    /// Lifecycle behavior axis.
+    pub lifecycle: LifecycleRequirements,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactDescriptor {
     pub digest: Option<ValidDigest>,
     pub file_name: Option<String>,
@@ -390,6 +472,10 @@ pub struct ResourceSpec {
     pub verification: VerificationRequirement,
     pub trust: TrustPolicy,
     pub materialization: MaterializationSpec,
+    pub activation: ActivationModel,
+    pub mutation_scope: MutationScope,
+    pub provenance: ProvenanceRequirement,
+    pub lifecycle: LifecycleRequirements,
     pub labels: Labels,
     pub metadata: Metadata,
 }
@@ -403,6 +489,10 @@ impl ResourceSpec {
             verification: VerificationRequirement::None,
             trust: TrustPolicy::default(),
             materialization: MaterializationSpec::default(),
+            activation: ActivationModel::None,
+            mutation_scope: MutationScope::InstallRootOnly,
+            provenance: ProvenanceRequirement::SourceOnly,
+            lifecycle: LifecycleRequirements::default(),
             labels: Labels::new(),
             metadata: Metadata::new(),
         }
@@ -426,6 +516,37 @@ impl ResourceSpec {
     pub fn materialization(mut self, materialization: MaterializationSpec) -> Self {
         self.materialization = materialization;
         self
+    }
+
+    pub fn activation_model(mut self, activation: ActivationModel) -> Self {
+        self.activation = activation;
+        self
+    }
+
+    pub fn mutation_scope(mut self, mutation_scope: MutationScope) -> Self {
+        self.mutation_scope = mutation_scope;
+        self
+    }
+
+    pub fn provenance_requirement(mut self, provenance: ProvenanceRequirement) -> Self {
+        self.provenance = provenance;
+        self
+    }
+
+    pub fn lifecycle_requirements(mut self, lifecycle: LifecycleRequirements) -> Self {
+        self.lifecycle = lifecycle;
+        self
+    }
+
+    /// Returns the explicit behavior contract for this resource specification.
+    pub fn behavior_contract(&self) -> ResourceBehaviorContract {
+        ResourceBehaviorContract {
+            materialization: self.materialization.clone(),
+            activation: self.activation.clone(),
+            mutation_scope: self.mutation_scope.clone(),
+            provenance: self.provenance.clone(),
+            lifecycle: self.lifecycle.clone(),
+        }
     }
 }
 
@@ -517,6 +638,11 @@ impl<S> Resource<S> {
         Ok(parsed_versions
             .into_iter()
             .find_map(|(candidate, version)| (&version == selected).then_some(candidate)))
+    }
+
+    /// Returns the explicit behavior contract for this resource.
+    pub fn behavior_contract(&self) -> ResourceBehaviorContract {
+        self.spec.behavior_contract()
     }
 }
 
@@ -874,5 +1000,76 @@ mod tests {
         );
 
         assert_eq!(resolved.trust_decision(), TrustDecision::Trusted);
+    }
+
+    #[test]
+    fn resource_behavior_contract_has_explicit_defaults() {
+        let spec = ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip").unwrap()),
+        );
+
+        let contract = spec.behavior_contract();
+        assert_eq!(contract.activation, ActivationModel::None);
+        assert_eq!(contract.mutation_scope, MutationScope::InstallRootOnly);
+        assert_eq!(contract.provenance, ProvenanceRequirement::SourceOnly);
+        assert_eq!(contract.lifecycle, LifecycleRequirements::default());
+    }
+
+    #[test]
+    fn resource_behavior_contract_can_be_specialized_by_axis() {
+        let lifecycle = LifecycleRequirements::default()
+            .replace(true)
+            .rollback(true)
+            .repair(true)
+            .uninstall(true);
+        let spec = ResourceSpec::new(
+            ResourceId::parse("example/service").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/service.tar.zst").unwrap()),
+        )
+        .materialization(MaterializationSpec {
+            form: ArtifactForm::Archive,
+            unpack: UnpackPolicy::Extract {
+                strip_components: 1,
+            },
+        })
+        .activation_model(ActivationModel::ServiceRegistration)
+        .mutation_scope(MutationScope::InstallRootWithExtensions)
+        .provenance_requirement(ProvenanceRequirement::SourceAndVerification)
+        .lifecycle_requirements(lifecycle.clone());
+
+        let contract = spec.behavior_contract();
+        assert_eq!(contract.materialization.form, ArtifactForm::Archive);
+        assert_eq!(contract.activation, ActivationModel::ServiceRegistration);
+        assert_eq!(
+            contract.mutation_scope,
+            MutationScope::InstallRootWithExtensions
+        );
+        assert_eq!(
+            contract.provenance,
+            ProvenanceRequirement::SourceAndVerification
+        );
+        assert_eq!(contract.lifecycle, lifecycle);
+    }
+
+    #[test]
+    fn requested_and_resolved_resource_share_behavior_contract() {
+        let requested = RequestedResource::new(
+            ResourceSpec::new(
+                ResourceId::parse("example/tool").unwrap(),
+                ResourceLocator::Url(ValidUrl::parse("https://example.com/tool.zip").unwrap()),
+            )
+            .activation_model(ActivationModel::ShimResolution)
+            .mutation_scope(MutationScope::InstallRootWithExtensions),
+        );
+        let expected = requested.behavior_contract();
+
+        let resolved = requested.resolve(
+            ResolvedVersion::new("1.0.0").unwrap(),
+            ResolvedLocator::Url(ValidUrl::parse("https://example.com/tool.zip").unwrap()),
+            None,
+        );
+
+        assert_eq!(resolved.behavior_contract(), expected);
     }
 }

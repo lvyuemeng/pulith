@@ -7,13 +7,28 @@ use crate::{Hasher, Result, VerifyError};
 pub struct VerifiedReader<R, H> {
     reader: R,
     hasher: H,
+    bytes_processed: u64,
 }
 
 impl<R, H> VerifiedReader<R, H> {
     /// Create a new verified reader.
     pub fn new(reader: R, hasher: H) -> Self {
-        Self { reader, hasher }
+        Self {
+            reader,
+            hasher,
+            bytes_processed: 0,
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationReceipt {
+    /// Expected digest bytes supplied by the caller.
+    pub expected_digest: Vec<u8>,
+    /// Actual digest bytes computed from the stream.
+    pub actual_digest: Vec<u8>,
+    /// Number of bytes consumed from the wrapped reader.
+    pub bytes_processed: u64,
 }
 
 impl<R: Read, H: Hasher> VerifiedReader<R, H> {
@@ -23,23 +38,81 @@ impl<R: Read, H: Hasher> VerifiedReader<R, H> {
         let n = self.reader.read(buf)?;
         if n > 0 {
             self.hasher.update(&buf[..n]);
+            self.bytes_processed += n as u64;
         }
         Ok(n)
+    }
+
+    pub fn bytes_processed(&self) -> u64 {
+        self.bytes_processed
     }
 
     /// Finalize verification against expected hash.
     /// Returns error on mismatch.
     pub fn finish(self, expected: &[u8]) -> Result<()> {
+        self.finish_with_constraints(expected, None)?;
+        Ok(())
+    }
+
+    /// Finalize verification with optional stream length enforcement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::HashMismatch`] when digest verification fails.
+    /// Returns [`VerifyError::SizeMismatch`] when `expected_bytes` is provided
+    /// and differs from the consumed stream length.
+    pub fn finish_with_constraints(
+        self,
+        expected: &[u8],
+        expected_bytes: Option<u64>,
+    ) -> Result<VerificationReceipt> {
         let actual = self.hasher.finalize();
-        if actual == expected {
-            Ok(())
-        } else {
-            Err(VerifyError::HashMismatch {
+        if actual != expected {
+            return Err(VerifyError::HashMismatch {
                 expected: expected.to_vec(),
                 actual,
-            })
+            });
+        }
+
+        if let Some(expected_bytes) = expected_bytes
+            && self.bytes_processed != expected_bytes
+        {
+            return Err(VerifyError::SizeMismatch {
+                expected: expected_bytes,
+                actual: self.bytes_processed,
+            });
+        }
+
+        Ok(VerificationReceipt {
+            expected_digest: expected.to_vec(),
+            actual_digest: actual,
+            bytes_processed: self.bytes_processed,
+        })
+    }
+}
+
+/// Verifies an entire stream by reading it to EOF.
+///
+/// # Errors
+///
+/// Returns any I/O error from the wrapped reader.
+/// Returns [`VerifyError::HashMismatch`] or [`VerifyError::SizeMismatch`]
+/// when verification constraints fail.
+pub fn verify_stream<R: Read, H: Hasher>(
+    reader: R,
+    hasher: H,
+    expected: &[u8],
+    expected_bytes: Option<u64>,
+) -> Result<VerificationReceipt> {
+    let mut verified = VerifiedReader::new(reader, hasher);
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = verified.read(&mut buffer)?;
+        if read == 0 {
+            break;
         }
     }
+    verified.finish_with_constraints(expected, expected_bytes)
 }
 
 #[cfg(test)]
@@ -83,7 +156,10 @@ mod tests {
         verified.read(&mut buffer).unwrap();
 
         // Test that verification succeeds with the computed hash
-        verified.finish(&expected).unwrap();
+        let receipt = verified
+            .finish_with_constraints(&expected, Some(data.len() as u64))
+            .unwrap();
+        assert_eq!(receipt.bytes_processed, data.len() as u64);
     }
 
     #[cfg(feature = "sha256")]
@@ -108,5 +184,50 @@ mod tests {
         } else {
             panic!("Expected HashMismatch error");
         }
+    }
+
+    #[cfg(feature = "sha256")]
+    #[test]
+    fn test_verified_reader_size_mismatch() {
+        let data = b"test data";
+
+        let mut expected_hasher = Sha256Hasher::new();
+        expected_hasher.update(data);
+        let expected = expected_hasher.finalize();
+
+        let reader = Cursor::new(data);
+        let hasher = Sha256Hasher::new();
+        let mut verified = VerifiedReader::new(reader, hasher);
+
+        let mut buffer = [0; 32];
+        verified.read(&mut buffer).unwrap();
+
+        let result = verified.finish_with_constraints(&expected, Some((data.len() as u64) + 1));
+        assert!(matches!(
+            result,
+            Err(VerifyError::SizeMismatch {
+                expected,
+                actual
+            }) if expected == (data.len() as u64) + 1 && actual == data.len() as u64
+        ));
+    }
+
+    #[cfg(feature = "sha256")]
+    #[test]
+    fn test_verify_stream_consumes_full_reader() {
+        let data = b"stream verify content";
+        let mut expected_hasher = Sha256Hasher::new();
+        expected_hasher.update(data);
+        let expected = expected_hasher.finalize();
+
+        let receipt = verify_stream(
+            Cursor::new(data),
+            Sha256Hasher::new(),
+            &expected,
+            Some(data.len() as u64),
+        )
+        .unwrap();
+
+        assert_eq!(receipt.bytes_processed, data.len() as u64);
     }
 }

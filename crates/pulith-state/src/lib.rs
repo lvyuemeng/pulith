@@ -1834,6 +1834,80 @@ mod tests {
     }
 
     #[test]
+    fn resource_repair_plan_actions_are_deterministic() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+        let id = ResourceId::parse("example/runtime").unwrap();
+        let key = StoreKey::logical("runtime").unwrap();
+
+        state
+            .ensure_resource_record(id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id,
+                ResourceRecordPatch::artifact_key(Some(key))
+                    .with_install_path(Some(temp.path().join("missing-install")))
+                    .with_lifecycle(ResourceLifecycle::Installed),
+            )
+            .unwrap();
+        state
+            .record_activation(&id, temp.path().join("active/runtime"))
+            .unwrap();
+
+        let first = state.plan_resource_state_repair(&id, Some(&store)).unwrap();
+        let second = state.plan_resource_state_repair(&id, Some(&store)).unwrap();
+
+        assert_eq!(first.actions, second.actions);
+        assert_eq!(first.inspection.findings, second.inspection.findings);
+    }
+
+    #[test]
+    fn applying_resource_repair_plan_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("store/artifacts"),
+            temp.path().join("store/extracts"),
+            temp.path().join("store/metadata"),
+        ))
+        .unwrap();
+        let id = ResourceId::parse("example/runtime").unwrap();
+        let key = StoreKey::logical("runtime").unwrap();
+
+        state
+            .ensure_resource_record(id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .patch_resource_record(
+                &id,
+                ResourceRecordPatch::artifact_key(Some(key))
+                    .with_install_path(Some(temp.path().join("missing-install")))
+                    .with_lifecycle(ResourceLifecycle::Installed),
+            )
+            .unwrap();
+        state
+            .record_activation(&id, temp.path().join("active/runtime"))
+            .unwrap();
+
+        let plan = state.plan_resource_state_repair(&id, Some(&store)).unwrap();
+        let first_apply = state.apply_resource_state_repair(&plan).unwrap();
+        let second_apply = state.apply_resource_state_repair(&plan).unwrap();
+
+        assert_eq!(first_apply, second_apply);
+        let record = state.get_resource_record(&id).unwrap().unwrap();
+        assert_eq!(record.install_path, None);
+        assert_eq!(record.artifact_key, None);
+        assert!(state.list_activation_records(&id).unwrap().is_empty());
+    }
+
+    #[test]
     fn resource_inspection_reports_activation_target_conflicts() {
         let temp = tempfile::tempdir().unwrap();
         let state = StateReady::initialize(temp.path().join("state.json")).unwrap();

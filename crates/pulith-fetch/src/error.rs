@@ -56,6 +56,9 @@ impl From<pulith_verify::VerifyError> for Error {
                     actual: hex::encode(actual),
                 }
             }
+            pulith_verify::VerifyError::SizeMismatch { expected, actual } => Error::InvalidState(
+                format!("verified stream length mismatch: expected {expected} bytes, got {actual}"),
+            ),
             pulith_verify::VerifyError::Io(e) => Error::Network(e.to_string()),
             pulith_verify::VerifyError::HexDecode(e) => Error::Network(e.to_string()),
         }
@@ -181,6 +184,22 @@ mod tests {
         match error {
             Error::Network(msg) => assert!(msg.contains("access denied")),
             _ => panic!("Expected Network error"),
+        }
+    }
+
+    #[test]
+    fn test_from_verify_error_size_mismatch() {
+        let verify_err = pulith_verify::VerifyError::SizeMismatch {
+            expected: 100,
+            actual: 98,
+        };
+        let error: Error = verify_err.into();
+        match error {
+            Error::InvalidState(msg) => {
+                assert!(msg.contains("expected 100 bytes"));
+                assert!(msg.contains("got 98"));
+            }
+            _ => panic!("Expected InvalidState error"),
         }
     }
 

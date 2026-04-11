@@ -15,6 +15,15 @@ pub enum VerifyError {
         actual: Vec<u8>,
     },
 
+    /// Processed stream length did not match expectation
+    #[error("stream length mismatch: expected {expected} bytes, got {actual}")]
+    SizeMismatch {
+        /// Expected number of bytes to be processed
+        expected: u64,
+        /// Actual number of bytes processed
+        actual: u64,
+    },
+
     /// I/O error during verification process
     #[error("I/O error during verification: {0}")]
     Io(#[from] io::Error),

@@ -18,7 +18,8 @@ Block status:
 - [x] Block P completed
 - [x] Block Q completed (workflow adaptation + boundary hardening)
 - [x] Block R completed (Phase-1 functional blockers)
-- [ ] Block S active (trust + reproducibility foundation)
+- [x] Block S completed (trust + reproducibility foundation)
+- [ ] Block T active (stabilization and publish hardening)
 
 ---
 
@@ -139,27 +140,84 @@ Status: completed.
 
 ### Wave 3 (trust + reproducibility foundation)
 
-1. stream-hash verification tightening in `pulith-verify`
-2. `pulith-lock` crate (deterministic lock file + lock diff)
-3. state/store drift + repair plan hardening evidence
+1. resource taxonomy -> essential behavior contract formalization
+2. stream-hash verification tightening in `pulith-verify`
+3. `pulith-lock` crate (deterministic lock file + lock diff)
+4. state/store drift + repair plan hardening evidence
+5. stabilization decision log (dispatch, runtime, resolution, state backend, plugin protocol)
 
 ---
 
-## Block S (Active)
+## Block S (Completed)
 
 Theme: trust + reproducibility foundation.
 
 Execution checklist:
 
-- [ ] tighten stream-hash verification pipeline behavior in `pulith-verify`
-- [ ] introduce `pulith-lock` crate with deterministic serialization and lock diff
-- [ ] harden state/store drift + repair evidence for lifecycle recovery guarantees
+- [x] formalize resource behavior axis contract (materialization, activation, mutation scope, provenance, lifecycle) in crate-level APIs/tests
+- [x] tighten stream-hash verification pipeline behavior in `pulith-verify`
+- [x] introduce `pulith-lock` crate with deterministic serialization and lock diff
+- [x] harden state/store drift + repair evidence for lifecycle recovery guarantees
+- [x] decide and document open stabilization decisions (dispatch strategy, runtime coupling, resolution scope, state backend, plugin protocol)
 
 Exit criteria:
 
 - lock and verification contracts are documented and test-backed
 - drift/repair behavior is explicit, deterministic, and evidence-linked
 - no manager policy leakage into core semantic/workflow crates
+- resource taxonomy maps to essential behaviors without rigid type explosion
+- open stabilization decisions are recorded with explicit initial choices and compatibility notes
+
+Evidence targets:
+
+- `docs/design.md`
+- `docs/design/*.md`
+- `crates/pulith-verify/`
+- `crates/pulith-lock/` (new)
+- `crates/pulith-state/`
+
+Latest evidence update (in progress):
+
+- `crates/pulith-resource/src/lib.rs` adds explicit behavior-axis types (`ActivationModel`, `MutationScope`, `ProvenanceRequirement`, `LifecycleRequirements`) and `ResourceBehaviorContract`
+- `crates/pulith-resource/src/lib.rs` extends `ResourceSpec` with behavior-axis fields and builders while keeping materialization semantics explicit
+- `crates/pulith-resource/src/lib.rs` tests now assert default behavior contract, axis specialization, and requested->resolved contract continuity
+- `crates/pulith-verify/src/reader.rs` now tracks streamed byte count and exposes `finish_with_constraints(...)` plus `verify_stream(...)` for digest+length verification
+- `crates/pulith-verify/src/error.rs` introduces `VerifyError::SizeMismatch` to surface deterministic stream-length failures
+- `crates/pulith-fetch/src/config/fetch_options.rs` adds runtime-agnostic retry delay injection (`RetryDelayProvider`) so retry waiting can be decoupled from any specific runtime in public contracts
+- `crates/pulith-lock/src/lib.rs` improves lock quality and efficiency by removing duplicated resource identity from entries (`LockedResource` keyed by map id), pre-sizing diff buffers, and adding deterministic diff-empty coverage
+- `crates/pulith-state/src/lib.rs` tests now assert repair-plan determinism and idempotent repair-apply behavior for lifecycle recovery guarantees
+- `docs/design/stabilization.md` records initial decisions for dispatch strategy, runtime coupling, resolution scope, state backend, and plugin protocol
+
+---
+
+Status: completed.
+
+---
+
+## Block T (Active)
+
+Theme: stabilization and publish hardening.
+
+Execution checklist:
+
+- [ ] introduce optional runtime adapter surface for fetch internals beyond retry delay (task/concurrency boundaries) without changing semantic contracts
+- [ ] harden `pulith-lock` contract with validation and cross-crate integration touchpoints (`pulith-state`/`pulith-store` evidence path)
+- [ ] add benchmark evidence notes for lock diff and repair-plan scale behavior under `docs/benchmarks/`
+- [ ] align publish/readiness docs and crate metadata for new crate/layout moves (`pulith-lock`, `examples/pulith-backend-example`, top-level `pulith-shim`)
+
+Exit criteria:
+
+- runtime coupling remains non-invasive and explicit across touched boundaries
+- lock model behavior is documented, deterministic, and benchmark-evidenced
+- release/readiness docs are synchronized with workspace structure
+
+Evidence targets:
+
+- `crates/pulith-fetch/`
+- `crates/pulith-lock/`
+- `crates/pulith-state/`
+- `docs/benchmarks/`
+- `docs/publish/*.md`
 
 ---
 
@@ -184,7 +242,7 @@ Validation routine for change windows:
 
 Public-target crates:
 
-- `pulith-fs`, `pulith-version`, `pulith-resource`, `pulith-source`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-store`, `pulith-state`, `pulith-install`, `pulith-platform`, `pulith-shim`
+- `pulith-fs`, `pulith-version`, `pulith-resource`, `pulith-source`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-store`, `pulith-state`, `pulith-lock`, `pulith-install`, `pulith-platform`, `pulith-shim`
 
 Internal/non-publish crates:
 

@@ -1,10 +1,14 @@
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::progress::Progress;
 
 pub type ProgressCallback = Arc<dyn Fn(&Progress) + Send + Sync>;
+pub type RetryDelayFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+pub type RetryDelayProvider = Arc<dyn Fn(Duration) -> RetryDelayFuture + Send + Sync>;
 
 /// Explicit retry behavior for transient transfer failures.
 ///
@@ -123,6 +127,11 @@ pub struct FetchOptions {
     ///
     /// Default: None
     pub on_progress: Option<ProgressCallback>,
+
+    /// Optional runtime delay provider for retry backoff sleeping.
+    ///
+    /// When absent, fetcher uses the crate default async sleep mechanism.
+    pub retry_delay_provider: Option<RetryDelayProvider>,
 }
 
 impl fmt::Debug for FetchOptions {
@@ -134,6 +143,7 @@ impl fmt::Debug for FetchOptions {
             .field("resume_offset", &self.resume_offset)
             .field("headers", &self.headers)
             .field("on_progress", &"{ ... }")
+            .field("retry_delay_provider", &"{ ... }")
             .finish()
     }
 }
@@ -147,6 +157,7 @@ impl Default for FetchOptions {
             resume_offset: None,
             headers: Arc::new([]),
             on_progress: None,
+            retry_delay_provider: None,
         }
     }
 }
@@ -287,6 +298,13 @@ impl FetchOptions {
         self.on_progress = Some(on_progress);
         self
     }
+
+    #[must_use]
+    /// Set an async retry-delay provider for runtime-agnostic backoff handling.
+    pub fn retry_delay_provider(mut self, provider: RetryDelayProvider) -> Self {
+        self.retry_delay_provider = Some(provider);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -321,6 +339,7 @@ mod tests {
         assert_eq!(options.resume_offset, None);
         assert!(options.headers.is_empty());
         assert!(options.on_progress.is_none());
+        assert!(options.retry_delay_provider.is_none());
     }
 
     #[test]
@@ -448,6 +467,7 @@ mod tests {
             Duration::from_millis(500)
         );
         assert_eq!(options.headers.len(), 1);
+        assert!(options.retry_delay_provider.is_none());
 
         // Test with headers() replacing
         let options2 = FetchOptions::default()
@@ -463,6 +483,14 @@ mod tests {
             Duration::from_millis(500)
         );
         assert_eq!(options2.headers.len(), 1);
+        assert!(options2.retry_delay_provider.is_none());
+    }
+
+    #[test]
+    fn test_fetch_options_retry_delay_provider() {
+        let options =
+            FetchOptions::default().retry_delay_provider(Arc::new(|_| Box::pin(async {})));
+        assert!(options.retry_delay_provider.is_some());
     }
 
     #[test]

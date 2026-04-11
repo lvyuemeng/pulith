@@ -46,7 +46,7 @@
 
 pub use self::error::{Result, VerifyError};
 pub use self::hasher::{DigestHasher, Hasher};
-pub use self::reader::VerifiedReader;
+pub use self::reader::{VerificationReceipt, VerifiedReader, verify_stream};
 
 #[cfg(feature = "sha256")]
 pub use self::hasher::Sha256Hasher;
