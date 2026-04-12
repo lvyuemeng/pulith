@@ -68,7 +68,7 @@ Crate roles should remain narrow and composable:
 - **Primitive**: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`
 - **Semantic**: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`, `pulith-lock`
 - **Workflow**: `pulith-install`
-- **Adapter/example**: `examples/pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
+- **Adapter/example**: `examples/pulith-backend-example`, `examples/runtime-manager`
 
 Module guidance:
 
@@ -177,7 +177,7 @@ Pulith is in active hardening. Publishing should be deliberate and checklist-dri
 - Publish only crates intended for external consumption.
 - Mark internal-only crates/examples/binaries with `publish = false` when not meant for crates.io.
 - Keep crate metadata complete (`description`, `license`, `repository`, `readme`, categories/keywords as appropriate).
-- Current internal/non-publish examples include `runtime-manager-example`, `pulith-shim-bin`, and `pulith-backend-example`.
+- Current internal/non-publish examples include `runtime-manager-example` and `pulith-backend-example`.
 
 ### Pre-publish checklist
 

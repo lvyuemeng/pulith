@@ -4,7 +4,9 @@
 //! with dependency resolution and concurrency control.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -83,6 +85,8 @@ pub struct BatchFetcher<C: HttpClient> {
     fetcher: Arc<Fetcher<C>>,
     _workspace_root: PathBuf,
 }
+
+type JobFuture = Pin<Box<dyn Future<Output = (String, BatchResult)> + Send>>;
 
 impl<C: HttpClient + 'static> BatchFetcher<C> {
     /// Create a new batch fetcher.
@@ -236,7 +240,7 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
         options: BatchOptions,
     ) -> Result<Vec<BatchResult>> {
         let semaphore = Arc::new(Semaphore::new(options.max_concurrent));
-        let mut futures = FuturesUnordered::new();
+        let mut futures: FuturesUnordered<JobFuture> = FuturesUnordered::new();
         let mut results = Vec::new();
         let mut job_results = HashMap::new();
         let mut pending_jobs = jobs.into_iter().enumerate().collect::<Vec<_>>();
@@ -260,23 +264,32 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
                     let semaphore = Arc::clone(&semaphore);
                     let _fail_fast = options.fail_fast;
 
-                    let future = tokio::spawn(async move {
-                        let _permit = semaphore.acquire().await.unwrap();
+                    let future: JobFuture = Box::pin(async move {
+                        let permit = semaphore.acquire().await;
                         let start = std::time::Instant::now();
 
-                        let result = match Self::execute_single_job(&fetcher, &job).await {
-                            Ok(path) => BatchResult {
-                                id: job.id.clone(),
-                                success: true,
-                                path: Some(path),
-                                error: None,
-                                duration_ms: start.elapsed().as_millis() as u64,
+                        let result = match permit {
+                            Ok(_permit) => match Self::execute_single_job(&fetcher, &job).await {
+                                Ok(path) => BatchResult {
+                                    id: job.id.clone(),
+                                    success: true,
+                                    path: Some(path),
+                                    error: None,
+                                    duration_ms: start.elapsed().as_millis() as u64,
+                                },
+                                Err(e) => BatchResult {
+                                    id: job.id.clone(),
+                                    success: false,
+                                    path: None,
+                                    error: Some(e.to_string()),
+                                    duration_ms: start.elapsed().as_millis() as u64,
+                                },
                             },
                             Err(e) => BatchResult {
                                 id: job.id.clone(),
                                 success: false,
                                 path: None,
-                                error: Some(e.to_string()),
+                                error: Some(format!("semaphore acquire error: {e}")),
                                 duration_ms: start.elapsed().as_millis() as u64,
                             },
                         };
@@ -292,8 +305,7 @@ impl<C: HttpClient + 'static> BatchFetcher<C> {
 
             // Wait for at least one job to complete
             if let Some(result) = futures.next().await {
-                let (job_id, job_result): (String, BatchResult) =
-                    result.map_err(|e| Error::Network(format!("Task join error: {}", e)))?;
+                let (job_id, job_result): (String, BatchResult) = result;
 
                 job_results.insert(job_id.clone(), job_result.clone());
                 results.push(job_result.clone());

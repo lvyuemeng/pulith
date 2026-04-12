@@ -366,7 +366,8 @@ mod tests {
         ResourceSpec, ValidUrl,
     };
     use pulith_source::{
-        HttpAssetSource, LocalSource, SelectionStrategy, SourceDefinition, SourceSet, SourceSpec,
+        HttpAssetSource, LocalSource, RemoteSource, SelectionStrategy, SourceDefinition, SourceSet,
+        SourceSpec,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -573,14 +574,14 @@ mod tests {
 
         let planned = SourceSpec::new(
             SourceSet::new(vec![
-                SourceDefinition::HttpAsset(HttpAssetSource {
+                SourceDefinition::Remote(RemoteSource::HttpAsset(HttpAssetSource {
                     url: ValidUrl::parse("https://example.com/file").unwrap(),
                     file_name: None,
-                }),
-                SourceDefinition::HttpAsset(HttpAssetSource {
+                })),
+                SourceDefinition::Remote(RemoteSource::HttpAsset(HttpAssetSource {
                     url: ValidUrl::parse("https://mirror.example.com/file").unwrap(),
                     file_name: None,
-                }),
+                })),
             ])
             .unwrap(),
         )
@@ -607,10 +608,12 @@ mod tests {
         let multi_fetcher = MultiSourceFetcher::new(fetcher);
 
         let spec = SourceSpec::new(
-            SourceSet::new(vec![SourceDefinition::HttpAsset(HttpAssetSource {
-                url: ValidUrl::parse("https://example.com/file").unwrap(),
-                file_name: None,
-            })])
+            SourceSet::new(vec![SourceDefinition::Remote(RemoteSource::HttpAsset(
+                HttpAssetSource {
+                    url: ValidUrl::parse("https://example.com/file").unwrap(),
+                    file_name: None,
+                },
+            ))])
             .unwrap(),
         );
 

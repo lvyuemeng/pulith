@@ -58,7 +58,6 @@ Primitive crates:
 - `pulith-archive` - archive extraction with sanitization
 - `pulith-fetch` - transfer execution primitives
 - `pulith-shim` - shim resolution primitives
-- `pulith-shim-bin` - thin shim-binary helper/template
 
 Semantic and workflow crates:
 

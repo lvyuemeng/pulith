@@ -12,7 +12,7 @@ Public crates:
 
 Internal/non-publish crates:
 
-- `pulith-backend-example`, `pulith-shim-bin`, `runtime-manager-example`
+- `pulith-backend-example`, `runtime-manager-example`
 
 ## Stages
 

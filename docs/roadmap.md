@@ -19,7 +19,11 @@ Block status:
 - [x] Block Q completed (workflow adaptation + boundary hardening)
 - [x] Block R completed (Phase-1 functional blockers)
 - [x] Block S completed (trust + reproducibility foundation)
-- [ ] Block T active (stabilization and publish hardening)
+- [x] Block T completed (stabilization and publish hardening)
+- [x] Block U completed (serialization backend decoupling)
+- [x] Block V completed (algorithmic scaling + ergonomic consolidation)
+- [x] Block W completed (scaling guarantees + parity hardening)
+- [x] Block X completed (typed workflow contracts + source normalization)
 
 ---
 
@@ -146,6 +150,34 @@ Status: completed.
 4. state/store drift + repair plan hardening evidence
 5. stabilization decision log (dispatch, runtime, resolution, state backend, plugin protocol)
 
+### Wave 4 (serialization backend decoupling, design-first)
+
+1. define codec/backend abstraction for structured persistence boundaries (state/lock/store-facing data)
+2. avoid repeated direct `serde_json` coupling across crates by introducing a single backend contract and adapter policy at composition edges
+3. document deterministic encoding guarantees, schema-versioning expectations, and migration rules
+4. add conformance tests so backend implementations (json baseline, future binary/sqlite adapters) preserve contract semantics
+
+### Wave 5 (algorithmic scaling + ergonomic consolidation)
+
+1. remove O(n^2)-like ownership/reference scans from state/store hot paths by introducing deterministic indexes/maps
+2. consolidate isolated helper logic into crate-owned methods where it improves boundary clarity and testability
+3. reduce type/clone boilerplate in state/store/resource mutation/planning paths while preserving explicit contracts
+4. benchmark scaling after each change window and document regressions/threshold notes
+
+### Wave 6 (scaling guarantees + parity hardening)
+
+1. add cross-backend parity tests for lock/state/store persistence semantics
+2. prototype reusable ownership/reference indexes for repeated inspection/planning loops
+3. define benchmark guardrail notes for growth envelopes and alert conditions
+4. finalize migration/fallback compatibility windows for backend evolution
+
+### Wave 7 (typed workflow contracts + source normalization)
+
+1. remove remaining bool-driven workflow capability/disposition APIs in `pulith-install`
+2. reduce install workspace/staging leakage by keeping staging machinery internal and typed at receipt/plan boundaries
+3. normalize overlapping remote source families in `pulith-source` behind shared remote-source vocabulary
+4. continue replacing parse/format helper functions with `FromStr`/`Display` + crate-owned methods where string boundaries are first-class
+
 ---
 
 ## Block S (Completed)
@@ -187,6 +219,7 @@ Latest evidence update (in progress):
 - `crates/pulith-lock/src/lib.rs` improves lock quality and efficiency by removing duplicated resource identity from entries (`LockedResource` keyed by map id), pre-sizing diff buffers, and adding deterministic diff-empty coverage
 - `crates/pulith-state/src/lib.rs` tests now assert repair-plan determinism and idempotent repair-apply behavior for lifecycle recovery guarantees
 - `docs/design/stabilization.md` records initial decisions for dispatch strategy, runtime coupling, resolution scope, state backend, and plugin protocol
+- `docs/design.md`, `docs/AGENT.md`, `docs/publish/overview.md`, and `README.md` now reflect adapter/example scope without `pulith-shim-bin` after crate removal
 
 ---
 
@@ -194,16 +227,17 @@ Status: completed.
 
 ---
 
-## Block T (Active)
+## Block T (Completed)
 
 Theme: stabilization and publish hardening.
 
 Execution checklist:
 
-- [ ] introduce optional runtime adapter surface for fetch internals beyond retry delay (task/concurrency boundaries) without changing semantic contracts
-- [ ] harden `pulith-lock` contract with validation and cross-crate integration touchpoints (`pulith-state`/`pulith-store` evidence path)
-- [ ] add benchmark evidence notes for lock diff and repair-plan scale behavior under `docs/benchmarks/`
-- [ ] align publish/readiness docs and crate metadata for new crate/layout moves (`pulith-lock`, `examples/pulith-backend-example`, top-level `pulith-shim`)
+- [x] introduce optional runtime adapter surface for fetch internals beyond retry delay (task/concurrency boundaries) without changing semantic contracts
+- [x] harden `pulith-lock` contract with validation and cross-crate integration touchpoints (`pulith-state`/`pulith-store` evidence path)
+- [x] add benchmark evidence notes for lock diff and repair-plan scale behavior under `docs/benchmarks/`
+- [x] align publish/readiness docs and crate metadata for new crate/layout moves (`pulith-lock`, `examples/pulith-backend-example`, top-level `pulith-shim`)
+- [x] write serialization-backend architecture note and crate-boundary adoption plan to prepare Block U execution
 
 Exit criteria:
 
@@ -218,6 +252,182 @@ Evidence targets:
 - `crates/pulith-state/`
 - `docs/benchmarks/`
 - `docs/publish/*.md`
+
+Latest evidence update (in progress):
+
+- removed `crates/pulith-shim-bin/` as redundant adapter template; shim boundary remains in `crates/pulith-shim/` and docs now point to direct example integration
+- `crates/pulith-lock/src/lib.rs` now includes explicit lock validation (`validate`, `from_json_validated`) with typed `LockError` and schema/empty-field tests
+- `docs/roadmap.md`, `docs/design.md`, `docs/AGENT.md`, `docs/publish/overview.md`, and `README.md` are synchronized with current crate/example layout
+- `docs/design/serialization.md` now defines the design-first serialization backend abstraction, determinism requirements, and crate-by-crate adoption plan for Block U
+- `crates/pulith-fetch/src/fetch/batch.rs` now removes runtime task-spawn coupling (`tokio::spawn`) from batch concurrency path and handles semaphore acquisition errors explicitly (no `unwrap` in library path)
+- `crates/pulith-state/src/lib.rs` now exposes `export_lock_file()` to bridge resolved state facts into `pulith-lock` deterministically, with integration tests for resolved/unresolved record behavior
+- `docs/benchmarks/block-t-2026-04.md` records lock-diff and repair-plan scale benchmark runs with command lines, environment notes, and baseline medians
+
+---
+
+Status: completed.
+
+---
+
+## Block U (Completed)
+
+Theme: serialization backend decoupling and persistence portability.
+
+Execution checklist:
+
+- [x] define a serialization backend contract crate (encode/decode traits + deterministic behavior requirements)
+- [x] keep JSON as baseline adapter while removing repeated direct `serde_json` usage from semantic/workflow crates where a backend trait can be consumed
+- [x] wire state/lock/store boundaries to backend contract with explicit schema/version checks
+- [x] add compatibility tests for round-trip, deterministic ordering, and cross-backend semantic parity
+- [x] document migration and fallback behavior (no hidden format switching)
+
+Exit criteria:
+
+- serialization behavior is mechanism-first and backend-agnostic at crate boundaries
+- deterministic persistence guarantees are test-backed and format-independent
+- direct format dependencies are concentrated in adapter layer(s), not repeated across semantic/workflow crates
+
+Evidence targets:
+
+- `docs/design.md`
+- `docs/design/*.md`
+- `crates/pulith-state/`
+- `crates/pulith-lock/`
+- `crates/pulith-store/`
+
+Latest evidence update (in progress):
+
+- `crates/pulith-serde-backend/src/lib.rs` introduces the first backend contract (`TextCodec`) with JSON baseline adapter (`JsonTextCodec`) and deterministic round-trip/ordering tests
+- `crates/pulith-lock/src/lib.rs` now consumes `pulith-serde-backend` instead of direct `serde_json` APIs at the lock semantic boundary
+- `crates/pulith-state/src/lib.rs` and `crates/pulith-store/src/lib.rs` now route persistence encode/decode through `pulith-serde-backend` helpers while keeping JSON as baseline adapter
+- `crates/pulith-state/src/lib.rs` adds explicit `StateSnapshot` schema-version validation at load boundary
+- `crates/pulith-store/src/lib.rs` adds explicit `StoreMetadataRecord` schema-version validation in metadata decode path
+- `crates/pulith-serde-backend/src/lib.rs` now includes compact-json adapter parity tests and cross-codec semantic decode checks
+- `crates/pulith-lock/src/lib.rs`, `crates/pulith-state/src/lib.rs`, and `crates/pulith-store/src/lib.rs` add compact-json compatibility tests to validate cross-codec payload parity at crate boundaries
+- `docs/design/serialization.md` now records migration/fallback windows with explicit no-silent-fallback contract
+
+---
+
+Status: completed.
+
+---
+
+## Block V (Completed)
+
+Theme: algorithmic scaling + ergonomic consolidation.
+
+Execution checklist:
+
+- [x] replace activation ownership O(n^2)-style scans in `pulith-state` with deterministic grouped indexing
+- [x] replace store-key reference/protected-key linear search accumulation with keyed grouping in `pulith-state`
+- [x] merge isolated metadata decoding helper into `StoreReady` method boundary in `pulith-store`
+- [x] reduce boilerplate by moving locator string conversion into `ResolvedLocator` method in `pulith-resource`
+- [x] run and record post-optimization scaling benchmark evidence for updated paths
+
+Exit criteria:
+
+- hotspot paths avoid repeated full-scan loops where deterministic indexing is available
+- boundary methods are crate-owned and reduce helper sprawl
+- behavior and contracts remain deterministic, test-backed, and policy-free
+
+Evidence targets:
+
+- `crates/pulith-state/src/lib.rs`
+- `crates/pulith-store/src/lib.rs`
+- `crates/pulith-resource/src/lib.rs`
+- `docs/benchmarks/`
+
+Latest evidence update:
+
+- ownership and store-key planning paths in `pulith-state` now use grouped deterministic maps instead of repeated search loops
+- `StoreReady::decode_metadata_file(...)` in `pulith-store` absorbs prior isolated decode helper into crate-owned boundary method
+- `ResolvedLocator::as_string()` in `pulith-resource` removes cross-crate locator string helper duplication
+- `docs/benchmarks/block-v-2026-04.md` records post-optimization scaling runs for ownership and repair-plan benchmarks
+
+---
+
+Status: completed.
+
+---
+
+## Block W (Completed)
+
+Theme: scaling guarantees + parity hardening.
+
+Execution checklist:
+
+- [x] add cross-backend parity tests covering lock/state/store snapshot semantics
+- [x] prototype optional reusable activation/store indexes for repeated inspect/ownership planning loops
+- [x] define benchmark guardrail notes (expected growth envelopes and alert conditions)
+- [x] finalize migration/fallback compatibility note for serialization backend evolution
+
+Exit criteria:
+
+- backend parity is test-backed beyond single JSON adapter path
+- repeated planning paths have documented scaling strategy and evidence
+- migration windows and fallback behavior are explicit and non-hidden
+
+Evidence targets:
+
+- `crates/pulith-serde-backend/`
+- `crates/pulith-state/`
+- `crates/pulith-store/`
+- `docs/benchmarks/`
+- `docs/design/serialization.md`
+
+Latest evidence update:
+
+- `crates/pulith-serde-backend/src/lib.rs` adds compact codec parity validation and cross-codec semantic checks
+- `crates/pulith-lock/src/lib.rs`, `crates/pulith-state/src/lib.rs`, and `crates/pulith-store/src/lib.rs` include cross-codec compatibility tests for persisted boundaries
+- `crates/pulith-state/src/lib.rs` adds optional reusable `StateAnalysisIndex` for repeated inspection/ownership/reference flows
+- `docs/benchmarks/block-w-2026-04.md` defines guardrail expectations and alert conditions for scaling/parity regressions
+- `docs/design/serialization.md` documents explicit migration/fallback windows with typed-error no-silent-fallback behavior
+- `crates/pulith-state/benches/ownership_report.rs` now benchmarks direct vs indexed ownership-report paths; indexed path shows substantially lower repeated-call latency in current baseline
+
+---
+
+Status: completed.
+
+---
+
+## Block X (Completed)
+
+Theme: typed workflow contracts + source normalization.
+
+Execution checklist:
+
+- [x] replace bool-driven install capability/disposition surfaces with typed enums where touched (`InstallCapabilities`, `UninstallOptions`, plan proceed check)
+- [x] add `FromStr`/`Display`-style parsing/formatting contracts for first-class string boundary types in `pulith-resource`
+- [x] group remote source families under shared remote-source vocabulary in `pulith-source`
+- [x] reduce install workspace/staging API leakage at boundary types and receipts
+- [x] reduce option-heavy/clone-heavy workflow shapes in install/source/store with more typed transitions and crate-owned methods
+
+Exit criteria:
+
+- install planning/uninstall contracts are typed and easier to reason about than raw booleans
+- source planning model reduces overlapping remote family concepts without losing expressiveness
+- parse/format boundaries use traits consistently where ergonomic and stable
+
+Evidence targets:
+
+- `crates/pulith-install/src/lib.rs`
+- `crates/pulith-source/src/lib.rs`
+- `crates/pulith-resource/src/lib.rs`
+- `crates/pulith-store/src/lib.rs`
+- `docs/design.md`
+
+Latest evidence update:
+
+- `crates/pulith-install/src/lib.rs` now uses typed capability/disposition enums instead of bool fields for planning and uninstall surfaces, and `InstallPlanReport` computes proceed state via method
+- `crates/pulith-resource/src/lib.rs` now exposes `Display`/`FromStr` for `ResourceId` and `ValidUrl`
+- `crates/pulith-source/src/lib.rs` now groups direct URL/mirror/git families under `RemoteSource` and introduces `SourcePath` with `Display`/`FromStr`
+- `crates/pulith-store/src/lib.rs` continues helper-to-method consolidation through `StoreProvenance` crate-owned metadata shaping
+- `crates/pulith-install/src/lib.rs` now hides raw `Workspace` staging behind internal `StagingArea` methods, removing free workspace helper leakage from install flow internals
+- `crates/pulith-install/src/lib.rs` now serializes typed `ResourceStateSnapshot` backup payloads through `pulith-serde-backend`, removing bespoke option-heavy backup payload shape and direct JSON glue
+
+---
+
+Status: completed.
 
 ---
 
@@ -247,7 +457,6 @@ Public-target crates:
 Internal/non-publish crates:
 
 - `pulith-backend-example`
-- `pulith-shim-bin`
 - `runtime-manager-example`
 
 ## Release Readiness

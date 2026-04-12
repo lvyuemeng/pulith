@@ -20,6 +20,7 @@ It does not perform dependency solving or hidden resolution policy.
 - lock serialization is deterministic via sorted key spaces
 - lock diff is explicit (`added`, `removed`, `changed`) and key-addressed by resource id
 - lock behavior is policy-free (callers decide how to react to diff output)
+- lock serialization uses backend contract adapters (`pulith-serde-backend`) instead of hard-coding JSON APIs at semantic boundary
 
 ## Non-goals
 

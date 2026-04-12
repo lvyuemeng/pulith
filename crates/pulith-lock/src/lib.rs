@@ -2,11 +2,29 @@
 
 use std::collections::BTreeMap;
 
+use pulith_serde_backend::{CodecError, JsonTextCodec, TextCodec};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub type Metadata = BTreeMap<String, String>;
 
 pub const LOCK_SCHEMA_VERSION: u32 = 1;
+
+pub type Result<T> = std::result::Result<T, LockError>;
+
+#[derive(Debug, Error)]
+pub enum LockError {
+    #[error("serialization backend error: {0}")]
+    Codec(#[from] CodecError),
+    #[error("unsupported lock schema version: expected {expected}, got {actual}")]
+    UnsupportedSchemaVersion { expected: u32, actual: u32 },
+    #[error("resource key must not be empty")]
+    EmptyResourceKey,
+    #[error("resource version must not be empty")]
+    EmptyVersion,
+    #[error("resource source must not be empty")]
+    EmptySource,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedResource {
@@ -59,12 +77,49 @@ impl LockFile {
         self.resources.insert(resource.into(), locked);
     }
 
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string_pretty(self)
+    pub fn to_json(&self) -> Result<String> {
+        self.to_text_with(&JsonTextCodec)
     }
 
-    pub fn from_json(data: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(data)
+    pub fn from_json(data: &str) -> Result<Self> {
+        Self::from_text_with(&JsonTextCodec, data)
+    }
+
+    pub fn to_text_with<C: TextCodec>(&self, codec: &C) -> Result<String> {
+        Ok(codec.encode_pretty(self)?)
+    }
+
+    pub fn from_text_with<C: TextCodec>(codec: &C, data: &str) -> Result<Self> {
+        Ok(codec.decode_str(data)?)
+    }
+
+    pub fn from_json_validated(data: &str) -> Result<Self> {
+        let lock = Self::from_json(data)?;
+        lock.validate()?;
+        Ok(lock)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != LOCK_SCHEMA_VERSION {
+            return Err(LockError::UnsupportedSchemaVersion {
+                expected: LOCK_SCHEMA_VERSION,
+                actual: self.schema_version,
+            });
+        }
+
+        for (resource, locked) in &self.resources {
+            if resource.is_empty() {
+                return Err(LockError::EmptyResourceKey);
+            }
+            if locked.version.is_empty() {
+                return Err(LockError::EmptyVersion);
+            }
+            if locked.source.is_empty() {
+                return Err(LockError::EmptySource);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn diff(&self, target: &Self) -> LockDiff {
@@ -124,6 +179,7 @@ impl LockDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulith_serde_backend::CompactJsonTextCodec;
 
     #[test]
     fn lock_json_is_deterministic_by_resource_key_order() {
@@ -155,6 +211,7 @@ mod tests {
 
         let json = lock.to_json().unwrap();
         let parsed = LockFile::from_json(&json).unwrap();
+        parsed.validate().unwrap();
 
         assert_eq!(parsed, lock);
     }
@@ -202,5 +259,50 @@ mod tests {
 
         let diff = lock.diff(&lock);
         assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn lock_validate_rejects_wrong_schema() {
+        let lock = LockFile {
+            schema_version: 2,
+            ..LockFile::default()
+        };
+        assert!(matches!(
+            lock.validate(),
+            Err(LockError::UnsupportedSchemaVersion {
+                expected,
+                actual
+            }) if expected == LOCK_SCHEMA_VERSION && actual == 2
+        ));
+    }
+
+    #[test]
+    fn lock_validate_rejects_empty_fields() {
+        let mut lock = LockFile::default();
+        lock.resources.insert(
+            String::new(),
+            LockedResource::new("1.0.0", "https://example.com"),
+        );
+
+        assert!(matches!(lock.validate(), Err(LockError::EmptyResourceKey)));
+    }
+
+    #[test]
+    fn lock_codec_roundtrip_preserves_semantic_parity() {
+        let mut lock = LockFile::default();
+        lock.upsert(
+            "example/runtime",
+            LockedResource::new("1.0.0", "https://example.com/runtime").digest("sha256:abc"),
+        );
+
+        let pretty = lock.to_json().unwrap();
+        let compact = lock.to_text_with(&CompactJsonTextCodec).unwrap();
+
+        let pretty_decoded = LockFile::from_json(&pretty).unwrap();
+        let compact_decoded = LockFile::from_text_with(&CompactJsonTextCodec, &compact).unwrap();
+        let cross_decoded = LockFile::from_json(&compact).unwrap();
+
+        assert_eq!(pretty_decoded, compact_decoded);
+        assert_eq!(pretty_decoded, cross_decoded);
     }
 }

@@ -1,7 +1,9 @@
 //! Composable resource description types for Pulith.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use pulith_version::{
     SelectionPolicy, VersionKind, VersionPreference, VersionRequirement, select_preferred,
@@ -92,6 +94,23 @@ impl ResourceId {
     }
 }
 
+impl fmt::Display for ResourceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.authority {
+            Some(authority) => write!(f, "{authority}/{}", self.name),
+            None => f.write_str(&self.name),
+        }
+    }
+}
+
+impl FromStr for ResourceId {
+    type Err = ResourceError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Self::parse(s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ValidUrl(Url);
@@ -105,6 +124,20 @@ impl ValidUrl {
 
     pub fn as_url(&self) -> &Url {
         &self.0
+    }
+}
+
+impl fmt::Display for ValidUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_url().as_str())
+    }
+}
+
+impl FromStr for ValidUrl {
+    type Err = ResourceError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Self::parse(s)
     }
 }
 
@@ -208,6 +241,15 @@ impl ResourceLocator {
 pub enum ResolvedLocator {
     Url(ValidUrl),
     LocalPath(PathBuf),
+}
+
+impl ResolvedLocator {
+    pub fn as_string(&self) -> String {
+        match self {
+            Self::Url(url) => url.as_url().to_string(),
+            Self::LocalPath(path) => path.display().to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

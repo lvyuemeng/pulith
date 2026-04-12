@@ -8,5 +8,13 @@ repository = "https://github.com/anomalyco/pulith"
 publish = false
 
 [dependencies]
+pulith-serde-backend = { path = "../pulith-serde-backend", version = "0.1.0" }
 serde.workspace = true
-serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "lock_diff"
+harness = false

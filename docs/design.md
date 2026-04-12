@@ -52,10 +52,10 @@ Implication: a runtime, SDK, plugin, or service can share core pipeline primitiv
 
 ## Crate Roles
 
-- Primitive: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`
+- Primitive: `pulith-platform`, `pulith-version`, `pulith-fs`, `pulith-verify`, `pulith-archive`, `pulith-fetch`, `pulith-shim`, `pulith-serde-backend`
 - Semantic: `pulith-resource`, `pulith-source`, `pulith-store`, `pulith-state`, `pulith-lock`
 - Workflow: `pulith-install`
-- Adapter/examples: `examples/pulith-backend-example`, `pulith-shim-bin`, `examples/runtime-manager`
+- Adapter/examples: `examples/pulith-backend-example`, `examples/runtime-manager`
 
 ## API Unification Strategy
 
@@ -76,9 +76,13 @@ Applied boundary model:
 - `pulith-install`
   - input API is materialized and transport-agnostic (`StagedFile`, `StoredArtifact`, `ExtractedArtifact`, `ExtractedTree`)
   - fetch/archive receipts do not cross install boundary
+  - planning/uninstall capability surfaces should prefer typed dispositions/capability enums over bare booleans
+  - internal workspace/staging machinery should not leak as external composition vocabulary
 - `pulith-state`
   - single inspection model (`ResourceInspectionReport` + `ResourceInspectionFinding`)
   - no dual legacy/new shape drift
+- `pulith-source`
+  - remote-source families should converge on shared composition vocabulary instead of overlapping top-level type trees
 
 ## Lifecycle Receipt Model
 
@@ -143,6 +147,13 @@ Initial stabilization decisions are recorded in `docs/design/stabilization.md`.
 - deterministic retries/plans/inspections
 - explicit typed fallback and limitation reasons
 
+Current design pressure points to resolve next:
+
+- `pulith-install` should continue reducing receipt/state duplication by preferring typed lifecycle/state payload reuse over bespoke backup/report structs
+- `pulith-source` still has overlapping remote source families (direct URL, mirror, git) that need a more unified remote-source model
+- option-heavy record/config shapes should continue moving toward typed state transitions, capability enums, and crate-owned helper methods
+- parsing/formatting contracts should prefer `FromStr`/`Display` where string boundaries are part of normal composition
+
 Extension invariant:
 
 - `pulith-install` remains install-root focused; external side-effect orchestration composes as caller-owned pipeline stages
@@ -174,6 +185,7 @@ Extension invariant:
 - `docs/AGENT.md`
 - `docs/design/install.md`
 - `docs/design/lock.md`
+- `docs/design/serialization.md`
 - `docs/design/stabilization.md`
 - `docs/design/store.md`
 - `docs/design/state.md`

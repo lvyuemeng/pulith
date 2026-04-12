@@ -17,7 +17,7 @@ TripleResolver::new(a, b, c)              // Chain three resolvers
 ## Shim Binary
 
 ```rust
-// pulith-shim-bin provides generic shim template
+// Example binary integration on top of pulith-shim
 fn main() {
     let args = env::args().collect();
     let resolver = MyResolver::new();

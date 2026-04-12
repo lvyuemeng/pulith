@@ -1,6 +1,8 @@
 //! Composable source abstractions and planning for Pulith.
 
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use pulith_resource::{RequestedResource, ResolvedResource, ResourceLocator, ValidUrl};
 use serde::{Deserialize, Serialize};
@@ -25,17 +27,43 @@ pub struct HttpAssetSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePath(String);
+
+impl SourcePath {
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        ensure_non_empty_string(&value, SourceError::EmptyPath)?;
+        Ok(Self(value))
+    }
+}
+
+impl fmt::Display for SourcePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for SourcePath {
+    type Err = SourceError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MirrorSource {
     pub mirrors: Vec<ValidUrl>,
-    pub path: String,
+    pub path: SourcePath,
 }
 
 impl MirrorSource {
     pub fn new(mirrors: Vec<ValidUrl>, path: impl Into<String>) -> Result<Self> {
-        let path = path.into();
         ensure_non_empty_slice(&mirrors, SourceError::EmptyMirrorSet)?;
-        ensure_non_empty_string(&path, SourceError::EmptyPath)?;
-        Ok(Self { mirrors, path })
+        Ok(Self {
+            mirrors,
+            path: SourcePath::new(path)?,
+        })
     }
 }
 
@@ -52,11 +80,51 @@ pub struct GitSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SourceDefinition {
+pub enum RemoteSource {
     HttpAsset(HttpAssetSource),
     Mirror(MirrorSource),
-    Local(LocalSource),
     Git(GitSource),
+}
+
+impl RemoteSource {
+    pub fn resolved_candidates(&self) -> Vec<ResolvedSourceCandidate> {
+        match self {
+            Self::HttpAsset(source) => vec![ResolvedSourceCandidate::Url(source.url.clone())],
+            Self::Mirror(source) => source
+                .mirrors
+                .iter()
+                .map(|base| {
+                    let joined = base
+                        .as_url()
+                        .join(&source.path.to_string())
+                        .expect("validated mirror path");
+                    ResolvedSourceCandidate::Url(
+                        ValidUrl::parse(joined.as_str()).expect("joined mirror URL"),
+                    )
+                })
+                .collect(),
+            Self::Git(source) => vec![ResolvedSourceCandidate::Git {
+                url: source.url.clone(),
+                rev: source.rev.clone(),
+                subpath: source.subpath.clone(),
+            }],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceDefinition {
+    Remote(RemoteSource),
+    Local(LocalSource),
+}
+
+impl SourceDefinition {
+    pub fn resolved_candidates(&self) -> Vec<ResolvedSourceCandidate> {
+        match self {
+            Self::Remote(remote) => remote.resolved_candidates(),
+            Self::Local(source) => vec![ResolvedSourceCandidate::LocalPath(source.path.clone())],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,26 +244,7 @@ pub enum ResolvedSourceCandidate {
 
 impl ResolvedSourceCandidate {
     fn from_definition(definition: &SourceDefinition) -> Vec<Self> {
-        match definition {
-            SourceDefinition::HttpAsset(source) => vec![Self::Url(source.url.clone())],
-            SourceDefinition::Mirror(source) => source
-                .mirrors
-                .iter()
-                .map(|base| {
-                    let joined = base
-                        .as_url()
-                        .join(&source.path)
-                        .expect("validated mirror path");
-                    Self::Url(ValidUrl::parse(joined.as_str()).expect("joined mirror URL"))
-                })
-                .collect(),
-            SourceDefinition::Local(source) => vec![Self::LocalPath(source.path.clone())],
-            SourceDefinition::Git(source) => vec![Self::Git {
-                url: source.url.clone(),
-                rev: source.rev.clone(),
-                subpath: source.subpath.clone(),
-            }],
-        }
+        definition.resolved_candidates()
     }
 }
 
@@ -230,10 +279,10 @@ fn planned_sources(set: SourceSet, strategy: SelectionStrategy) -> PlannedSource
 }
 
 fn http_asset(url: ValidUrl) -> SourceDefinition {
-    SourceDefinition::HttpAsset(HttpAssetSource {
+    SourceDefinition::Remote(RemoteSource::HttpAsset(HttpAssetSource {
         url,
         file_name: None,
-    })
+    }))
 }
 
 fn ensure_non_empty_slice<T>(values: &[T], error: SourceError) -> Result<()> {
@@ -362,9 +411,9 @@ mod tests {
             ValidUrl::parse("https://mirror-a.example.com/").unwrap(),
             ValidUrl::parse("https://mirror-b.example.com/").unwrap(),
         ];
-        let set = SourceSet::new(vec![SourceDefinition::Mirror(
+        let set = SourceSet::new(vec![SourceDefinition::Remote(RemoteSource::Mirror(
             MirrorSource::new(mirrors, "downloads/tool.tar.gz").unwrap(),
-        )])
+        ))])
         .unwrap();
         let planned = SourceSpec::new(set).plan(SelectionStrategy::Race);
         assert_eq!(planned.candidates().len(), 2);
@@ -382,10 +431,10 @@ mod tests {
             None,
         );
 
-        let definition = SourceDefinition::HttpAsset(HttpAssetSource {
+        let definition = SourceDefinition::Remote(RemoteSource::HttpAsset(HttpAssetSource {
             url: ValidUrl::parse("https://example.com/tool.zip").unwrap(),
             file_name: Some("tool.zip".to_string()),
-        });
+        }));
 
         let expanded = PassthroughAdapter.expand(&resource, &definition).unwrap();
         assert_eq!(expanded.entries().len(), 1);

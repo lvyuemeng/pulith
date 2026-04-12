@@ -61,6 +61,7 @@ Runtime coupling boundary:
 - retry waiting behavior can be injected through `FetchOptions::retry_delay_provider(...)`
 - default delay behavior remains available when no provider is supplied
 - public fetch contracts avoid runtime-handle coupling
+- batch concurrency path avoids runtime-specific task spawn APIs in core execution flow
 
 Advanced retry/resume behavior outside this baseline should be treated as maturing and must not be interpreted as a stronger reliability contract than current tests document.
 

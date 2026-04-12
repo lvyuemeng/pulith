@@ -1,17 +1,21 @@
 //! Transaction-backed persistent state for Pulith resources.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pulith_fs::{Transaction, atomic_write};
+use pulith_lock::{LockFile, LockedResource};
 use pulith_resource::{
     Metadata, ResolvedLocator, ResolvedResource, ResolvedVersion, ResourceId, VersionSelector,
 };
+use pulith_serde_backend::{CodecError, JsonTextCodec, decode_slice, encode_pretty_vec};
 use pulith_store::{StoreKey, StoreMetadataRecord, StoreReady};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, StateError>;
+pub const STATE_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
 pub struct ResourceUpsert<'a> {
     pub resource: &'a ResolvedResource,
@@ -49,7 +53,11 @@ pub enum StateError {
     #[error(transparent)]
     Store(#[from] pulith_store::StoreError),
     #[error(transparent)]
-    Serde(#[from] serde_json::Error),
+    Lock(#[from] pulith_lock::LockError),
+    #[error(transparent)]
+    Codec(#[from] CodecError),
+    #[error("unsupported state snapshot schema version: expected {expected}, got {actual}")]
+    UnsupportedSnapshotSchemaVersion { expected: u32, actual: u32 },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +126,37 @@ pub struct StateReady {
     path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateAnalysisIndex {
+    snapshot: StateSnapshot,
+    activation_owners: HashMap<PathBuf, Vec<ResourceId>>,
+    store_references: Vec<StoreKeyReference>,
+}
+
+impl StateAnalysisIndex {
+    pub fn snapshot(&self) -> &StateSnapshot {
+        &self.snapshot
+    }
+
+    pub fn activation_owners(&self) -> &HashMap<PathBuf, Vec<ResourceId>> {
+        &self.activation_owners
+    }
+
+    pub fn store_references(&self) -> &[StoreKeyReference] {
+        &self.store_references
+    }
+
+    fn from_snapshot(snapshot: StateSnapshot) -> Self {
+        let activation_owners = activation_owner_index(&snapshot.activations);
+        let store_references = store_key_references(&snapshot.resources);
+        Self {
+            snapshot,
+            activation_owners,
+            store_references,
+        }
+    }
+}
+
 impl StateReady {
     pub fn initialize(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
@@ -125,7 +164,7 @@ impl StateReady {
             std::fs::create_dir_all(parent)?;
         }
         if !path.exists() {
-            let initial = serde_json::to_vec_pretty(&StateSnapshot::default())?;
+            let initial = encode_pretty_vec(&JsonTextCodec, &StateSnapshot::default())?;
             atomic_write(&path, &initial, Default::default())?;
         }
         Ok(Self { path })
@@ -144,6 +183,27 @@ impl StateReady {
     pub fn save(&self, snapshot: &StateSnapshot) -> Result<()> {
         let tx = Transaction::open(&self.path)?;
         save_to_transaction(&tx, snapshot)
+    }
+
+    pub fn export_lock_file(&self) -> Result<LockFile> {
+        let snapshot = self.load()?;
+        let mut lock = LockFile::default();
+
+        for record in snapshot.resources {
+            let (Some(resolved_version), Some(locator)) = (record.resolved_version, record.locator)
+            else {
+                continue;
+            };
+
+            lock.upsert(
+                record.id.as_string(),
+                LockedResource::new(resolved_version.as_str(), locator.as_string())
+                    .metadata(record.metadata),
+            );
+        }
+
+        lock.validate()?;
+        Ok(lock)
     }
 
     pub fn update<F>(&self, update: F) -> Result<StateSnapshot>
@@ -188,6 +248,24 @@ impl StateReady {
         ))
     }
 
+    pub fn build_analysis_index(&self) -> Result<StateAnalysisIndex> {
+        Ok(StateAnalysisIndex::from_snapshot(self.load()?))
+    }
+
+    pub fn inspect_resource_with_index(
+        &self,
+        id: &ResourceId,
+        store: Option<&StoreReady>,
+        index: &StateAnalysisIndex,
+    ) -> ResourceInspectionReport {
+        let snapshot = capture_resource_state_from_snapshot(&index.snapshot, id);
+        ResourceInspectionReport::from_snapshot_with_owner_index(
+            snapshot,
+            index.activation_owners(),
+            store,
+        )
+    }
+
     pub fn list_activation_conflicts(&self) -> Result<Vec<ActivationOwnershipConflict>> {
         let report = self.activation_ownership_report()?;
         Ok(report
@@ -208,9 +286,23 @@ impl StateReady {
         ))
     }
 
+    pub fn activation_ownership_report_with_index(
+        &self,
+        index: &StateAnalysisIndex,
+    ) -> ActivationOwnershipReport {
+        ActivationOwnershipReport::from_owner_index(index.activation_owners())
+    }
+
     pub fn list_store_references(&self) -> Result<Vec<StoreKeyReference>> {
         let snapshot = self.load()?;
         Ok(store_key_references(&snapshot.resources))
+    }
+
+    pub fn list_store_references_with_index(
+        &self,
+        index: &StateAnalysisIndex,
+    ) -> Vec<StoreKeyReference> {
+        index.store_references().to_vec()
     }
 
     pub fn protected_store_keys(&self, policy: StoreRetentionPolicy) -> Result<Vec<StoreKey>> {
@@ -520,10 +612,38 @@ impl StateReady {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateSnapshot {
+    #[serde(default = "default_state_snapshot_schema_version")]
+    pub schema_version: u32,
     pub resources: Vec<ResourceRecord>,
     pub activations: Vec<ActivationRecord>,
+}
+
+impl Default for StateSnapshot {
+    fn default() -> Self {
+        Self {
+            schema_version: STATE_SNAPSHOT_SCHEMA_VERSION,
+            resources: Vec::new(),
+            activations: Vec::new(),
+        }
+    }
+}
+
+impl StateSnapshot {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != STATE_SNAPSHOT_SCHEMA_VERSION {
+            return Err(StateError::UnsupportedSnapshotSchemaVersion {
+                expected: STATE_SNAPSHOT_SCHEMA_VERSION,
+                actual: self.schema_version,
+            });
+        }
+        Ok(())
+    }
+}
+
+fn default_state_snapshot_schema_version() -> u32 {
+    STATE_SNAPSHOT_SCHEMA_VERSION
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,7 +655,7 @@ pub struct ResourceStateSnapshot {
 
 fn collect_resource_inspection_findings(
     snapshot: &ResourceStateSnapshot,
-    all_activations: &[ActivationRecord],
+    activation_owners: &HashMap<PathBuf, Vec<ResourceId>>,
     store: Option<&StoreReady>,
 ) -> Vec<ResourceInspectionFinding> {
     let mut findings = Vec::new();
@@ -580,8 +700,16 @@ fn collect_resource_inspection_findings(
             });
         }
 
-        let conflicting_owners =
-            conflicting_activation_owners(&snapshot.resource, &activation.target, all_activations);
+        let conflicting_owners = activation_owners
+            .get(&activation.target)
+            .map(|owners| {
+                owners
+                    .iter()
+                    .filter(|owner| *owner != &snapshot.resource)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         if !conflicting_owners.is_empty() {
             findings.push(ResourceInspectionFinding::ActivationTargetConflict {
                 resource: snapshot.resource.clone(),
@@ -749,8 +877,18 @@ impl ResourceInspectionReport {
         all_activations: &[ActivationRecord],
         store: Option<&StoreReady>,
     ) -> Self {
-        let mut findings = collect_resource_inspection_findings(&snapshot, all_activations, store);
-        findings.sort_by_key(ResourceInspectionFinding::sort_key);
+        let owner_index = activation_owner_index(all_activations);
+        Self::from_snapshot_with_owner_index(snapshot, &owner_index, store)
+    }
+
+    pub fn from_snapshot_with_owner_index(
+        snapshot: ResourceStateSnapshot,
+        activation_owners: &HashMap<PathBuf, Vec<ResourceId>>,
+        store: Option<&StoreReady>,
+    ) -> Self {
+        let mut findings =
+            collect_resource_inspection_findings(&snapshot, activation_owners, store);
+        findings.sort_by_cached_key(ResourceInspectionFinding::sort_key);
         let summary = ResourceInspectionSummary::from_findings(&findings);
 
         Self {
@@ -915,8 +1053,13 @@ pub struct ActivationOwnershipReport {
 
 impl ActivationOwnershipReport {
     pub fn from_activations(activations: &[ActivationRecord]) -> Self {
-        let mut entries = activation_ownership_entries(activations);
-        entries.sort_by_key(|entry| {
+        let owner_index = activation_owner_index(activations);
+        Self::from_owner_index(&owner_index)
+    }
+
+    pub fn from_owner_index(owner_index: &HashMap<PathBuf, Vec<ResourceId>>) -> Self {
+        let mut entries = activation_ownership_entries_from_index(owner_index);
+        entries.sort_by_cached_key(|entry| {
             (
                 entry.severity,
                 entry.target.display().to_string(),
@@ -1009,54 +1152,40 @@ fn capture_resource_state_from_snapshot(
     }
 }
 
-fn conflicting_activation_owners(
-    resource: &ResourceId,
-    target: &Path,
-    activations: &[ActivationRecord],
-) -> Vec<ResourceId> {
-    let mut owners = Vec::new();
+fn activation_owner_index(activations: &[ActivationRecord]) -> HashMap<PathBuf, Vec<ResourceId>> {
+    let mut grouped: HashMap<PathBuf, Vec<ResourceId>> = HashMap::new();
     for activation in activations {
-        if activation.target == target
-            && &activation.id != resource
-            && !owners.contains(&activation.id)
-        {
-            owners.push(activation.id.clone());
-        }
+        grouped
+            .entry(activation.target.clone())
+            .or_default()
+            .push(activation.id.clone());
     }
-    owners.sort_by_key(ResourceId::as_string);
-    owners
-}
 
-fn activation_ownership_entries(activations: &[ActivationRecord]) -> Vec<ActivationOwnershipEntry> {
-    let mut entries = Vec::new();
-
-    for activation in activations {
-        if entries
-            .iter()
-            .any(|entry: &ActivationOwnershipEntry| entry.target == activation.target)
-        {
-            continue;
-        }
-
-        let mut owners = activations
-            .iter()
-            .filter(|other| other.target == activation.target)
-            .map(|other| other.id.clone())
-            .collect::<Vec<_>>();
+    for owners in grouped.values_mut() {
         owners.sort_by_key(ResourceId::as_string);
         owners.dedup();
+    }
 
+    grouped
+}
+
+fn activation_ownership_entries_from_index(
+    owner_index: &HashMap<PathBuf, Vec<ResourceId>>,
+) -> Vec<ActivationOwnershipEntry> {
+    let mut entries = Vec::new();
+
+    for (target, owners) in owner_index {
         if owners.len() <= 1 {
             continue;
         }
 
         entries.push(ActivationOwnershipEntry {
-            target: activation.target.clone(),
+            target: target.to_path_buf(),
             owners: owners.clone(),
             severity: OwnershipSeverity::Warning,
             reasons: vec![OwnershipReason::SharedActivationTarget {
-                target: activation.target.clone(),
-                owners,
+                target: target.to_path_buf(),
+                owners: owners.clone(),
             }],
         });
     }
@@ -1065,27 +1194,24 @@ fn activation_ownership_entries(activations: &[ActivationRecord]) -> Vec<Activat
 }
 
 fn store_key_references(records: &[ResourceRecord]) -> Vec<StoreKeyReference> {
-    let mut references: Vec<StoreKeyReference> = Vec::new();
+    let mut grouped: HashMap<String, StoreKeyReference> = HashMap::new();
 
     for record in records {
         let Some(key) = &record.artifact_key else {
             continue;
         };
 
-        if let Some(existing) = references
-            .iter_mut()
-            .find(|reference| reference.key == *key)
-        {
-            if !existing.owners.contains(&record.id) {
-                existing.owners.push(record.id.clone());
-            }
-        } else {
-            references.push(StoreKeyReference {
+        grouped
+            .entry(key.relative_name())
+            .or_insert_with(|| StoreKeyReference {
                 key: key.clone(),
-                owners: vec![record.id.clone()],
-            });
-        }
+                owners: Vec::new(),
+            })
+            .owners
+            .push(record.id.clone());
     }
+
+    let mut references = grouped.into_values().collect::<Vec<_>>();
 
     for reference in &mut references {
         reference.owners.sort_by_key(ResourceId::as_string);
@@ -1102,7 +1228,7 @@ fn store_key_references_for_retention(
 ) -> Vec<StoreKeyReference> {
     let filtered = records
         .iter()
-        .filter(|record| retention_matches(record.lifecycle.clone(), policy))
+        .filter(|record| retention_matches(&record.lifecycle, policy))
         .cloned()
         .collect::<Vec<_>>();
     store_key_references(&filtered)
@@ -1112,14 +1238,14 @@ fn protected_store_keys_with_reasons(
     records: &[ResourceRecord],
     policy: StoreRetentionPolicy,
 ) -> Vec<ProtectedStoreKey> {
-    let mut entries = Vec::<ProtectedStoreKey>::new();
+    let mut grouped: HashMap<String, ProtectedStoreKey> = HashMap::new();
 
     for record in records {
         let Some(key) = &record.artifact_key else {
             continue;
         };
 
-        if !retention_matches(record.lifecycle.clone(), policy) {
+        if !retention_matches(&record.lifecycle, policy) {
             continue;
         }
 
@@ -1128,15 +1254,17 @@ fn protected_store_keys_with_reasons(
             owner: record.id.clone(),
             lifecycle: record.lifecycle.clone(),
         };
-        if let Some(existing) = entries.iter_mut().find(|entry| entry.key == *key) {
-            existing.reasons.push(reason);
-        } else {
-            entries.push(ProtectedStoreKey {
+        grouped
+            .entry(key.relative_name())
+            .or_insert_with(|| ProtectedStoreKey {
                 key: key.clone(),
-                reasons: vec![reason],
-            });
-        }
+                reasons: Vec::new(),
+            })
+            .reasons
+            .push(reason);
     }
+
+    let mut entries = grouped.into_values().collect::<Vec<_>>();
 
     for entry in &mut entries {
         entry.reasons.sort_by_key(OwnershipReason::sort_key);
@@ -1189,7 +1317,7 @@ fn removable_metadata_reasons(
     reasons
 }
 
-fn retention_matches(lifecycle: ResourceLifecycle, policy: StoreRetentionPolicy) -> bool {
+fn retention_matches(lifecycle: &ResourceLifecycle, policy: StoreRetentionPolicy) -> bool {
     match policy {
         StoreRetentionPolicy::AllReferenced => true,
         StoreRetentionPolicy::InstalledAndActive => matches!(
@@ -1198,7 +1326,7 @@ fn retention_matches(lifecycle: ResourceLifecycle, policy: StoreRetentionPolicy)
                 | ResourceLifecycle::Registered
                 | ResourceLifecycle::Active
         ),
-        StoreRetentionPolicy::ActiveOnly => lifecycle == ResourceLifecycle::Active,
+        StoreRetentionPolicy::ActiveOnly => lifecycle == &ResourceLifecycle::Active,
     }
 }
 
@@ -1284,11 +1412,13 @@ fn load_from_transaction(tx: &Transaction) -> Result<StateSnapshot> {
     if bytes.is_empty() {
         return Ok(StateSnapshot::default());
     }
-    Ok(serde_json::from_slice(&bytes)?)
+    let snapshot: StateSnapshot = decode_slice(&JsonTextCodec, &bytes)?;
+    snapshot.validate()?;
+    Ok(snapshot)
 }
 
 fn save_to_transaction(tx: &Transaction, snapshot: &StateSnapshot) -> Result<()> {
-    let encoded = serde_json::to_vec_pretty(snapshot)?;
+    let encoded = encode_pretty_vec(&JsonTextCodec, snapshot)?;
     tx.write(&encoded)?;
     Ok(())
 }
@@ -1297,6 +1427,7 @@ fn save_to_transaction(tx: &Transaction, snapshot: &StateSnapshot) -> Result<()>
 mod tests {
     use super::*;
     use pulith_resource::{RequestedResource, ResourceLocator, ResourceSpec, ValidUrl};
+    use pulith_serde_backend::CompactJsonTextCodec;
     use pulith_store::StoreRoots;
 
     #[test]
@@ -1304,7 +1435,82 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
         let snapshot = state.load().unwrap();
+        assert_eq!(snapshot.schema_version, STATE_SNAPSHOT_SCHEMA_VERSION);
         assert!(snapshot.resources.is_empty());
+    }
+
+    #[test]
+    fn state_rejects_unsupported_snapshot_schema_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("state.json");
+        let invalid = StateSnapshot {
+            schema_version: STATE_SNAPSHOT_SCHEMA_VERSION + 1,
+            resources: Vec::new(),
+            activations: Vec::new(),
+        };
+        let bytes = encode_pretty_vec(&JsonTextCodec, &invalid).unwrap();
+        atomic_write(&state_path, &bytes, Default::default()).unwrap();
+
+        let state = StateReady::initialize(state_path).unwrap();
+        assert!(matches!(
+            state.load(),
+            Err(StateError::UnsupportedSnapshotSchemaVersion {
+                expected,
+                actual
+            }) if expected == STATE_SNAPSHOT_SCHEMA_VERSION && actual == STATE_SNAPSHOT_SCHEMA_VERSION + 1
+        ));
+    }
+
+    #[test]
+    fn state_load_accepts_compact_json_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("state.json");
+        let snapshot = StateSnapshot::default();
+        let bytes = encode_pretty_vec(&CompactJsonTextCodec, &snapshot).unwrap();
+        atomic_write(&state_path, &bytes, Default::default()).unwrap();
+
+        let state = StateReady::initialize(state_path).unwrap();
+        let loaded = state.load().unwrap();
+        assert_eq!(loaded.schema_version, STATE_SNAPSHOT_SCHEMA_VERSION);
+        assert_eq!(loaded.resources.len(), 0);
+    }
+
+    #[test]
+    fn state_can_export_lock_file_from_resolved_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+
+        let requested = RequestedResource::new(ResourceSpec::new(
+            ResourceId::parse("example/runtime").unwrap(),
+            ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.tgz").unwrap()),
+        ));
+        let resolved = requested.resolve(
+            ResolvedVersion::new("1.2.3").unwrap(),
+            ResolvedLocator::Url(ValidUrl::parse("https://example.com/runtime.tgz").unwrap()),
+            None,
+        );
+        state.upsert_resource(&resolved).unwrap();
+
+        let lock = state.export_lock_file().unwrap();
+        assert_eq!(lock.resources.len(), 1);
+
+        let entry = lock.resources.get("example/runtime").unwrap();
+        assert_eq!(entry.version, "1.2.3");
+        assert_eq!(entry.source, "https://example.com/runtime.tgz");
+    }
+
+    #[test]
+    fn state_export_lock_skips_unresolved_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let id = ResourceId::parse("example/unresolved").unwrap();
+
+        state
+            .ensure_resource_record(id.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+
+        let lock = state.export_lock_file().unwrap();
+        assert!(!lock.resources.contains_key(&id.as_string()));
     }
 
     #[test]
@@ -2339,5 +2545,39 @@ mod tests {
         let after = state.load().unwrap();
 
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn analysis_index_matches_direct_reports() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateReady::initialize(temp.path().join("state.json")).unwrap();
+        let id_a = ResourceId::parse("example/runtime-a").unwrap();
+        let id_b = ResourceId::parse("example/runtime-b").unwrap();
+
+        state
+            .ensure_resource_record(id_a.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+        state
+            .ensure_resource_record(id_b.clone(), VersionSelector::alias("lts").unwrap())
+            .unwrap();
+
+        let shared_target = temp.path().join("active/shared");
+        state
+            .record_activation(&id_a, shared_target.clone())
+            .unwrap();
+        state.record_activation(&id_b, shared_target).unwrap();
+
+        let direct_ownership = state.activation_ownership_report().unwrap();
+        let direct_refs = state.list_store_references().unwrap();
+        let index = state.build_analysis_index().unwrap();
+
+        let indexed_ownership = state.activation_ownership_report_with_index(&index);
+        let indexed_refs = state.list_store_references_with_index(&index);
+        let indexed_inspection = state.inspect_resource_with_index(&id_a, None, &index);
+        let direct_inspection = state.inspect_resource(&id_a, None).unwrap();
+
+        assert_eq!(indexed_ownership, direct_ownership);
+        assert_eq!(indexed_refs, direct_refs);
+        assert_eq!(indexed_inspection, direct_inspection);
     }
 }

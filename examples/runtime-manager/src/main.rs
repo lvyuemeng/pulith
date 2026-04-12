@@ -7,9 +7,10 @@ use pulith_archive::{ExtractOptions, extract_from_reader};
 use pulith_backend_example::managed_binary;
 use pulith_fetch::{FetchOptions, Fetcher, MultiSourceFetcher, ReqwestClient};
 use pulith_install::{
-    ActivationReceipt, ActivationRequest, ActivationTarget, Activator, InstallCapabilities,
-    InstallInput, InstallPlanningRequest, InstallReady, InstallSpec, InstallWorkflowVariant,
-    InstallWritableScope, LifecycleOperationReceipt, PlannedInstall,
+    ActivationReceipt, ActivationRequest, ActivationSupport, ActivationTarget, Activator,
+    ConnectivityMode, InstallCapabilities, InstallInput, InstallPlanningRequest, InstallReady,
+    InstallSpec, InstallWorkflowVariant, InstallWritableScope, LifecycleOperationReceipt,
+    PlannedInstall, RollbackSupport,
 };
 use pulith_resource::{
     RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator, ResourceSpec,
@@ -177,7 +178,7 @@ fn install_local_archive(
             desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
             required_scope: InstallWritableScope::User,
             capabilities: InstallCapabilities {
-                rollback_expected: true,
+                rollback: RollbackSupport::Expected,
                 ..InstallCapabilities::default()
             },
         },
@@ -331,7 +332,7 @@ fn install_remote_archive(
             desired_variant: InstallWorkflowVariant::PreStagedStore,
             required_scope: InstallWritableScope::User,
             capabilities: InstallCapabilities {
-                rollback_expected: true,
+                rollback: RollbackSupport::Expected,
                 ..InstallCapabilities::default()
             },
         },
@@ -373,7 +374,7 @@ fn install_prestaged_store_file(
             desired_variant: InstallWorkflowVariant::PreStagedStore,
             required_scope: InstallWritableScope::User,
             capabilities: InstallCapabilities {
-                rollback_expected: true,
+                rollback: RollbackSupport::Expected,
                 ..InstallCapabilities::default()
             },
         },
@@ -414,9 +415,9 @@ fn install_airgapped_archive(
             desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
             required_scope: InstallWritableScope::User,
             capabilities: InstallCapabilities {
-                offline: true,
-                rollback_expected: true,
-                activation_available: false,
+                connectivity: ConnectivityMode::Offline,
+                rollback: RollbackSupport::Expected,
+                activation: ActivationSupport::Unavailable,
                 ..InstallCapabilities::default()
             },
         },
@@ -479,13 +480,15 @@ fn execute_install_with_plan(
     let plan = spec.plan(plan_request);
     println!(
         "plan: desired={:?} actual={:?} proceed={}",
-        plan.desired_variant, plan.actual_variant, plan.can_proceed
+        plan.desired_variant,
+        plan.actual_variant,
+        plan.can_proceed()
     );
     for limitation in &plan.limitations {
         println!("plan limitation: {limitation:?}");
     }
 
-    if !plan.can_proceed {
+    if !plan.can_proceed() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "install plan has blocking limitations",

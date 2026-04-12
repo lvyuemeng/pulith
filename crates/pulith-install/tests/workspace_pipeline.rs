@@ -5,15 +5,16 @@ use std::path::Path;
 use pulith_archive::{ArchiveReport, ExtractOptions, extract_from_reader};
 use pulith_fetch::{Fetcher, MultiSourceFetcher, ReqwestClient};
 use pulith_install::{
-    ActivationReceipt, ActivationRequest, ActivationTarget, Activator, InstallCapabilities,
-    InstallInput, InstallPlanLimitation, InstallPlanningRequest, InstallReady, InstallSpec,
-    InstallWorkflowVariant, InstallWritableScope, PlannedInstall, ShimCommand, ShimCopyActivator,
-    SymlinkActivator,
+    ActivationReceipt, ActivationRequest, ActivationSupport, ActivationTarget, Activator,
+    InstallCapabilities, InstallInput, InstallPlanLimitation, InstallPlanningRequest, InstallReady,
+    InstallSpec, InstallWorkflowVariant, InstallWritableScope, PlannedInstall, ShimCommand,
+    ShimCopyActivator, SymlinkActivator, UninstallDisposition,
 };
 use pulith_resource::{
     Metadata, RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator,
     ResourceSpec, ValidUrl,
 };
+use pulith_serde_backend::{JsonTextCodec, decode_slice};
 use pulith_source::PlannedSources;
 use pulith_state::{
     OwnershipReason, OwnershipSeverity, ResourceInspectionFinding, ResourceLifecycle,
@@ -179,7 +180,7 @@ fn install_plan_offline_fallback_boundary_is_explicit() {
         capabilities: InstallCapabilities::default(),
     });
 
-    assert!(!plan.can_proceed);
+    assert!(!plan.can_proceed());
     assert!(
         plan.limitations
             .contains(&InstallPlanLimitation::OfflineCapabilityRequired)
@@ -204,12 +205,12 @@ fn install_plan_activation_unavailable_boundary_is_explicit() {
         desired_variant: InstallWorkflowVariant::DirectLocalArtifact,
         required_scope: InstallWritableScope::User,
         capabilities: InstallCapabilities {
-            activation_available: false,
+            activation: ActivationSupport::Unavailable,
             ..InstallCapabilities::default()
         },
     });
 
-    assert!(!plan.can_proceed);
+    assert!(!plan.can_proceed());
     assert!(
         plan.limitations
             .contains(&InstallPlanLimitation::ActivationUnavailable)
@@ -245,10 +246,10 @@ fn partial_uninstall_repair_boundary_is_explicit() {
         .uninstall_resource(
             &id,
             pulith_install::UninstallOptions {
-                remove_install_root: true,
-                remove_activation_targets: false,
-                remove_state_record: false,
-                remove_activation_records: false,
+                install_root: UninstallDisposition::Remove,
+                activation_targets: UninstallDisposition::Keep,
+                state_record: UninstallDisposition::Keep,
+                activation_records: UninstallDisposition::Keep,
             },
         )
         .unwrap();
@@ -341,7 +342,7 @@ fn local_source_fetch_store_install_activate_pipeline() {
 
     let metadata_path = store.metadata_path(&key);
     let metadata_record: StoreMetadataRecord =
-        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        decode_slice(&JsonTextCodec, &fs::read(&metadata_path).unwrap()).unwrap();
     let provenance = metadata_record.provenance.unwrap();
     assert_eq!(
         provenance.origin.as_deref(),
@@ -911,8 +912,11 @@ fn archive_extract_store_install_pipeline() {
     let key = StoreKey::logical("runtime-extract").unwrap();
     let install_input = install_input_from_archive_extract(&store, &key, &extract_root, &report);
 
-    let metadata_record: StoreMetadataRecord =
-        serde_json::from_slice(&fs::read(store.metadata_path(&key)).unwrap()).unwrap();
+    let metadata_record: StoreMetadataRecord = decode_slice(
+        &JsonTextCodec,
+        &fs::read(store.metadata_path(&key)).unwrap(),
+    )
+    .unwrap();
     let provenance = metadata_record.provenance.unwrap();
     assert_eq!(provenance.origin, None);
     assert_eq!(
@@ -1001,8 +1005,11 @@ fn local_archive_fetch_extract_store_install_pipeline() {
 
     assert!(receipt.install_root.join("bin/tool.exe").exists());
 
-    let metadata_record: StoreMetadataRecord =
-        serde_json::from_slice(&fs::read(store.metadata_path(&key)).unwrap()).unwrap();
+    let metadata_record: StoreMetadataRecord = decode_slice(
+        &JsonTextCodec,
+        &fs::read(store.metadata_path(&key)).unwrap(),
+    )
+    .unwrap();
     let provenance = metadata_record.provenance.unwrap();
     assert_eq!(
         provenance

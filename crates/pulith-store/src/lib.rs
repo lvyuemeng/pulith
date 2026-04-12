@@ -10,10 +10,12 @@ use pulith_fs::{
     copy_dir_all,
 };
 use pulith_resource::{Metadata, ResolvedResource, ResolvedVersion, ResourceId, ValidDigest};
+use pulith_serde_backend::{JsonTextCodec, decode_slice, encode_pretty_vec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, StoreError>;
+pub const STORE_METADATA_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
 pub struct ArtifactRegistration {
@@ -150,6 +152,8 @@ pub enum StoreError {
     MissingFileName(PathBuf),
     #[error("invalid metadata file name for key {0}")]
     InvalidMetadataFileName(String),
+    #[error("unsupported store metadata schema version: expected {expected}, got {actual}")]
+    UnsupportedMetadataSchemaVersion { expected: u32, actual: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,7 +278,7 @@ impl StoreReady {
             if !entry.file_type()?.is_file() {
                 continue;
             }
-            let record = load_metadata_file(&entry.path())?;
+            let record = Self::decode_metadata_file(&entry.path())?;
             records.push(record);
         }
         Ok(records)
@@ -463,12 +467,13 @@ impl StoreReady {
         provenance: Option<&StoreProvenance>,
     ) -> Result<()> {
         let record = StoreMetadataRecord {
+            schema_version: STORE_METADATA_SCHEMA_VERSION,
             key: key.clone(),
             kind,
             provenance: provenance.cloned(),
             updated_at_unix: now_unix(),
         };
-        let bytes = serde_json::to_vec_pretty(&record).map_err(|error| {
+        let bytes = encode_pretty_vec(&JsonTextCodec, &record).map_err(|error| {
             StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
         })?;
         atomic_write(self.metadata_path(key), &bytes, Default::default())?;
@@ -486,7 +491,17 @@ impl StoreReady {
         if !path.exists() {
             return Ok(None);
         }
-        Ok(Some(load_metadata_file(&path)?))
+        Ok(Some(Self::decode_metadata_file(&path)?))
+    }
+
+    fn decode_metadata_file(path: &Path) -> Result<StoreMetadataRecord> {
+        let bytes = std::fs::read(path)?;
+        let record: StoreMetadataRecord =
+            decode_slice(&JsonTextCodec, &bytes).map_err(|error| {
+                StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            })?;
+        record.validate()?;
+        Ok(record)
     }
 
     fn lookup_stored(&self, key: &StoreKey, kind: StoredKind) -> Option<StoredEntry> {
@@ -521,13 +536,6 @@ fn stage_artifact_file(workspace: &Workspace, source: &Path, relative_path: Path
         HardlinkOrCopyOptions::new().fallback(FallBack::Copy),
     )?;
     Ok(())
-}
-
-fn load_metadata_file(path: &Path) -> Result<StoreMetadataRecord> {
-    let content = std::fs::read_to_string(path)?;
-    serde_json::from_str(&content).map_err(|error| {
-        StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -585,10 +593,7 @@ impl StoreProvenance {
             FetchSource::LocalPath(path) => Some(path.to_string_lossy().into_owned()),
         };
 
-        let mut metadata = Metadata::new();
-        if let Some(sha256_hex) = &receipt.sha256_hex {
-            metadata.insert("fetch.sha256".to_string(), sha256_hex.clone());
-        }
+        let metadata = Self::fetch_metadata(receipt);
 
         Self { origin, metadata }
     }
@@ -596,42 +601,42 @@ impl StoreProvenance {
     pub fn from_archive_report(report: &ArchiveReport) -> Self {
         Self {
             origin: None,
-            metadata: archive_metadata(report),
+            metadata: Self::archive_metadata(report),
         }
     }
 
     pub fn from_fetched_archive_extraction(receipt: &FetchReceipt, report: &ArchiveReport) -> Self {
         let mut metadata = Metadata::new();
-        metadata.extend(fetch_metadata(receipt));
-        metadata.extend(archive_metadata(report));
+        metadata.extend(Self::fetch_metadata(receipt));
+        metadata.extend(Self::archive_metadata(report));
 
         Self {
             origin: Self::from_fetch_receipt(receipt).origin,
             metadata,
         }
     }
-}
 
-fn fetch_metadata(receipt: &FetchReceipt) -> Metadata {
-    let mut metadata = Metadata::new();
-    if let Some(sha256_hex) = &receipt.sha256_hex {
-        metadata.insert("fetch.sha256".to_string(), sha256_hex.clone());
+    fn fetch_metadata(receipt: &FetchReceipt) -> Metadata {
+        let mut metadata = Metadata::new();
+        if let Some(sha256_hex) = &receipt.sha256_hex {
+            metadata.insert("fetch.sha256".to_string(), sha256_hex.clone());
+        }
+        metadata
     }
-    metadata
-}
 
-fn archive_metadata(report: &ArchiveReport) -> Metadata {
-    Metadata::from([
-        ("archive.format".to_string(), format!("{:?}", report.format)),
-        (
-            "archive.entry_count".to_string(),
-            report.entry_count.to_string(),
-        ),
-        (
-            "archive.total_bytes".to_string(),
-            report.total_bytes.to_string(),
-        ),
-    ])
+    fn archive_metadata(report: &ArchiveReport) -> Metadata {
+        Metadata::from([
+            ("archive.format".to_string(), format!("{:?}", report.format)),
+            (
+                "archive.entry_count".to_string(),
+                report.entry_count.to_string(),
+            ),
+            (
+                "archive.total_bytes".to_string(),
+                report.total_bytes.to_string(),
+            ),
+        ])
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -642,10 +647,28 @@ pub enum StoredKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreMetadataRecord {
+    #[serde(default = "default_store_metadata_schema_version")]
+    pub schema_version: u32,
     pub key: StoreKey,
     pub kind: StoredKind,
     pub provenance: Option<StoreProvenance>,
     pub updated_at_unix: u64,
+}
+
+impl StoreMetadataRecord {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != STORE_METADATA_SCHEMA_VERSION {
+            return Err(StoreError::UnsupportedMetadataSchemaVersion {
+                expected: STORE_METADATA_SCHEMA_VERSION,
+                actual: self.schema_version,
+            });
+        }
+        Ok(())
+    }
+}
+
+fn default_store_metadata_schema_version() -> u32 {
+    STORE_METADATA_SCHEMA_VERSION
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -717,6 +740,7 @@ mod tests {
     use pulith_resource::{
         RequestedResource, ResolvedLocator, ResourceLocator, ResourceSpec, ValidUrl,
     };
+    use pulith_serde_backend::CompactJsonTextCodec;
 
     #[test]
     fn store_provenance_from_fetch_receipt_translates_source_and_digest() {
@@ -1200,5 +1224,63 @@ mod tests {
         assert_eq!(report.removed_metadata, 0);
         assert_eq!(report.protected_metadata, 1);
         assert!(store.has_metadata(&protected_key));
+    }
+
+    #[test]
+    fn store_rejects_unsupported_metadata_schema_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let key = StoreKey::logical("invalid-schema").unwrap();
+        let path = store.metadata_path(&key);
+        let invalid = StoreMetadataRecord {
+            schema_version: STORE_METADATA_SCHEMA_VERSION + 1,
+            key,
+            kind: StoredKind::Artifact,
+            provenance: None,
+            updated_at_unix: 0,
+        };
+        let bytes = encode_pretty_vec(&JsonTextCodec, &invalid).unwrap();
+        atomic_write(path, &bytes, Default::default()).unwrap();
+
+        assert!(matches!(
+            store.list_metadata(),
+            Err(StoreError::UnsupportedMetadataSchemaVersion {
+                expected,
+                actual
+            }) if expected == STORE_METADATA_SCHEMA_VERSION && actual == STORE_METADATA_SCHEMA_VERSION + 1
+        ));
+    }
+
+    #[test]
+    fn store_list_metadata_accepts_compact_json_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StoreReady::initialize(StoreRoots::new(
+            temp.path().join("artifacts"),
+            temp.path().join("extracts"),
+            temp.path().join("metadata"),
+        ))
+        .unwrap();
+
+        let key = StoreKey::logical("compact-json").unwrap();
+        let path = store.metadata_path(&key);
+        let record = StoreMetadataRecord {
+            schema_version: STORE_METADATA_SCHEMA_VERSION,
+            key: key.clone(),
+            kind: StoredKind::Artifact,
+            provenance: None,
+            updated_at_unix: 1,
+        };
+        let bytes = encode_pretty_vec(&CompactJsonTextCodec, &record).unwrap();
+        atomic_write(path, &bytes, Default::default()).unwrap();
+
+        let listed = store.list_metadata().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].key, key);
     }
 }

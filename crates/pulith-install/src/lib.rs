@@ -12,9 +12,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use pulith_fs::{FallBack, HardlinkOrCopyOptions, Workspace, atomic_symlink, copy_dir_all};
 use pulith_resource::{Metadata, ResolvedResource};
+use pulith_serde_backend::{CodecError, JsonTextCodec, decode_slice, encode_pretty_vec};
 use pulith_shim::TargetResolver;
 use pulith_state::{
-    ActivationRecord, ResourceLifecycle, ResourceRecord, ResourceRecordPatch,
+    ActivationRecord, ResourceLifecycle, ResourceRecordPatch,
     ResourceStateSnapshot, StateReady,
 };
 use pulith_store::{ExtractedArtifact, StoreKey, StoredArtifact};
@@ -34,7 +35,7 @@ pub enum InstallError {
     #[error(transparent)]
     State(#[from] pulith_state::StateError),
     #[error(transparent)]
-    Serde(#[from] serde_json::Error),
+    Codec(#[from] CodecError),
     #[error(transparent)]
     Store(#[from] pulith_store::StoreError),
     #[error(transparent)]
@@ -114,19 +115,11 @@ impl InstallReady {
         std::fs::create_dir_all(&backup_root)?;
         copy_dir_all(&install_root, &install_snapshot)?;
 
-        let snapshot = self.state.load()?;
-        let payload = BackupState {
-            resource: snapshot
-                .resources
-                .into_iter()
-                .find(|record| &record.id == id),
-            activations: snapshot
-                .activations
-                .into_iter()
-                .filter(|record| &record.id == id)
-                .collect(),
-        };
-        std::fs::write(&state_snapshot, serde_json::to_vec_pretty(&payload)?)?;
+        let payload = self.state.capture_resource_state(id)?;
+        std::fs::write(
+            &state_snapshot,
+            encode_pretty_vec(&JsonTextCodec, &payload)?,
+        )?;
 
         Ok(BackupReceipt {
             resource: id.clone(),
@@ -148,15 +141,9 @@ impl InstallReady {
         }
         copy_dir_all(&backup.install_snapshot, &backup.install_root)?;
 
-        let payload: BackupState = serde_json::from_slice(&std::fs::read(&backup.state_snapshot)?)?;
-        self.state.remove_resource_record(&backup.resource)?;
-        self.state.remove_activation_records(&backup.resource)?;
-        if let Some(record) = payload.resource {
-            self.state.upsert_resource_record(record)?;
-        }
-        for activation in payload.activations {
-            self.state.append_activation(activation)?;
-        }
+        let payload: ResourceStateSnapshot =
+            decode_slice(&JsonTextCodec, &std::fs::read(&backup.state_snapshot)?)?;
+        self.state.restore_resource_state(&payload)?;
 
         Ok(RestoreReceipt {
             resource: backup.resource.clone(),
@@ -178,7 +165,7 @@ impl InstallReady {
         let activations = self.state.list_activation_records(id)?;
 
         let mut removed_activation_targets = Vec::new();
-        if options.remove_activation_targets {
+        if options.activation_targets.removes() {
             for activation in &activations {
                 if path_entry_exists(&activation.target) {
                     remove_existing_target(&activation.target)?;
@@ -188,7 +175,7 @@ impl InstallReady {
         }
 
         let mut removed_install_root = false;
-        if options.remove_install_root
+        if options.install_root.removes()
             && let Some(install_root) = record.as_ref().and_then(|item| item.install_path.as_ref())
             && path_entry_exists(install_root)
         {
@@ -197,13 +184,13 @@ impl InstallReady {
         }
 
         let mut removed_activation_records = 0;
-        if options.remove_activation_records {
+        if options.activation_records.removes() {
             removed_activation_records = activations.len();
             self.state.remove_activation_records(id)?;
         }
 
         let mut removed_state_record = false;
-        if options.remove_state_record && record.is_some() {
+        if options.state_record.removes() && record.is_some() {
             self.state.remove_resource_record(id)?;
             removed_state_record = true;
         }
@@ -237,20 +224,32 @@ pub struct RestoreReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UninstallOptions {
-    pub remove_install_root: bool,
-    pub remove_activation_targets: bool,
-    pub remove_state_record: bool,
-    pub remove_activation_records: bool,
+    pub install_root: UninstallDisposition,
+    pub activation_targets: UninstallDisposition,
+    pub state_record: UninstallDisposition,
+    pub activation_records: UninstallDisposition,
 }
 
 impl Default for UninstallOptions {
     fn default() -> Self {
         Self {
-            remove_install_root: true,
-            remove_activation_targets: true,
-            remove_state_record: true,
-            remove_activation_records: true,
+            install_root: UninstallDisposition::Remove,
+            activation_targets: UninstallDisposition::Remove,
+            state_record: UninstallDisposition::Remove,
+            activation_records: UninstallDisposition::Remove,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UninstallDisposition {
+    Keep,
+    Remove,
+}
+
+impl UninstallDisposition {
+    pub fn removes(self) -> bool {
+        matches!(self, Self::Remove)
     }
 }
 
@@ -261,12 +260,6 @@ pub struct UninstallReceipt {
     pub removed_activation_targets: Vec<PathBuf>,
     pub removed_state_record: bool,
     pub removed_activation_records: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct BackupState {
-    resource: Option<ResourceRecord>,
-    activations: Vec<ActivationRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,21 +370,39 @@ pub enum InstallWritableScope {
     System,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectivityMode {
+    Online,
+    Offline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActivationSupport {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RollbackSupport {
+    NotExpected,
+    Expected,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallCapabilities {
-    pub offline: bool,
-    pub activation_available: bool,
+    pub connectivity: ConnectivityMode,
+    pub activation: ActivationSupport,
     pub writable_scope: InstallWritableScope,
-    pub rollback_expected: bool,
+    pub rollback: RollbackSupport,
 }
 
 impl Default for InstallCapabilities {
     fn default() -> Self {
         Self {
-            offline: false,
-            activation_available: true,
+            connectivity: ConnectivityMode::Online,
+            activation: ActivationSupport::Available,
             writable_scope: InstallWritableScope::User,
-            rollback_expected: false,
+            rollback: RollbackSupport::NotExpected,
         }
     }
 }
@@ -428,7 +439,12 @@ pub struct InstallPlanReport {
     pub activation_target: Option<PathBuf>,
     pub install_root: PathBuf,
     pub limitations: Vec<InstallPlanLimitation>,
-    pub can_proceed: bool,
+}
+
+impl InstallPlanReport {
+    pub fn can_proceed(&self) -> bool {
+        self.limitations.is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -536,13 +552,13 @@ impl InstallInput {
         }
     }
 
-    fn stage_into(&self, workspace: &Workspace) -> Result<()> {
+    fn stage_into(&self, staging: &StagingArea) -> Result<()> {
         match self {
             Self::StagedFile { source, file_name } => {
                 if !source.exists() {
                     return Err(InstallError::MissingStoredArtifact(source.clone()));
                 }
-                stage_workspace_file(workspace, source, Path::new(file_name))?;
+                staging.stage_file(source, Path::new(file_name))?;
             }
             Self::ExtractedArtifact(artifact) => {
                 if !artifact.path.exists() {
@@ -550,13 +566,13 @@ impl InstallInput {
                         artifact.path.clone(),
                     ));
                 }
-                copy_directory_into_workspace(workspace, &artifact.path, Path::new(""))?;
+                staging.copy_directory(&artifact.path, Path::new(""))?;
             }
             Self::ExtractedTree { root, .. } => {
                 if !root.exists() {
                     return Err(InstallError::MissingExtractedArtifact(root.clone()));
                 }
-                copy_directory_into_workspace(workspace, root, Path::new(""))?;
+                staging.copy_directory(root, Path::new(""))?;
             }
             Self::StoredArtifact {
                 artifact,
@@ -568,7 +584,7 @@ impl InstallInput {
                 if !artifact.path.exists() {
                     return Err(InstallError::MissingStoredArtifact(artifact.path.clone()));
                 }
-                stage_workspace_file(workspace, &artifact.path, Path::new(file_name))?;
+                staging.stage_file(&artifact.path, Path::new(file_name))?;
             }
         }
 
@@ -636,12 +652,17 @@ impl InstallSpec {
             });
         }
 
-        if self.activation.is_some() && !request.capabilities.activation_available {
+        if self.activation.is_some()
+            && matches!(
+                request.capabilities.activation,
+                ActivationSupport::Unavailable
+            )
+        {
             limitations.push(InstallPlanLimitation::ActivationUnavailable);
         }
 
         if request.desired_variant == InstallWorkflowVariant::AirGappedMirrorCache
-            && !request.capabilities.offline
+            && !matches!(request.capabilities.connectivity, ConnectivityMode::Offline)
         {
             limitations.push(InstallPlanLimitation::OfflineCapabilityRequired);
         }
@@ -653,7 +674,9 @@ impl InstallSpec {
             });
         }
 
-        if request.capabilities.rollback_expected && self.mode == InstallMode::CreateOnly {
+        if matches!(request.capabilities.rollback, RollbackSupport::Expected)
+            && self.mode == InstallMode::CreateOnly
+        {
             limitations.push(InstallPlanLimitation::RollbackExpectationWithoutReplaceOrUpgrade);
         }
 
@@ -665,7 +688,6 @@ impl InstallSpec {
             required_scope: request.required_scope,
             activation_target: self.activation.as_ref().map(|item| item.path.clone()),
             install_root: self.install_root.clone(),
-            can_proceed: limitations.is_empty(),
             limitations,
         }
     }
@@ -676,7 +698,68 @@ pub struct Planned;
 
 pub struct Staged {
     _temp_dir: tempfile::TempDir,
+    staging: StagingArea,
+}
+
+struct StagingArea {
     workspace: Workspace,
+}
+
+impl StagingArea {
+    fn new(staging_root: PathBuf, install_root: PathBuf) -> Result<Self> {
+        Ok(Self {
+            workspace: Workspace::new(staging_root, install_root)?,
+        })
+    }
+
+    fn commit(self) -> Result<()> {
+        self.workspace.commit()?;
+        Ok(())
+    }
+
+    fn stage_file(&self, source: &Path, relative_path: &Path) -> Result<()> {
+        self.workspace.stage_file_by_size(
+            source,
+            relative_path,
+            INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
+            default_link_options(),
+        )?;
+        Ok(())
+    }
+
+    fn stage_file_with_size_hint(
+        &self,
+        source: &Path,
+        relative_path: &Path,
+        source_size_bytes: u64,
+    ) -> Result<()> {
+        self.workspace.stage_file_with_size_hint(
+            source,
+            relative_path,
+            source_size_bytes,
+            INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
+            default_link_options(),
+        )?;
+        Ok(())
+    }
+
+    fn copy_directory(&self, source: &Path, relative: &Path) -> Result<()> {
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let relative_path = relative.join(name);
+            let metadata = entry.metadata()?;
+            let file_type = metadata.file_type();
+            if file_type.is_dir() {
+                self.workspace.create_dir_all(&relative_path)?;
+                self.copy_directory(&path, &relative_path)?;
+            } else {
+                self.stage_file_with_size_hint(&path, &relative_path, metadata.len())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct Installed {
@@ -724,16 +807,16 @@ impl PlannedInstall {
     pub fn stage(self) -> Result<StagedInstall> {
         self.spec.resource.validate_version_selection()?;
         let temp = tempfile::tempdir()?;
-        let workspace =
-            Workspace::new(temp.path().join("staging"), self.spec.install_root.clone())?;
-        self.spec.input.stage_into(&workspace)?;
+        let staging =
+            StagingArea::new(temp.path().join("staging"), self.spec.install_root.clone())?;
+        self.spec.input.stage_into(&staging)?;
 
         Ok(InstallFlow {
             ready: self.ready,
             spec: self.spec,
             state: Staged {
                 _temp_dir: temp,
-                workspace,
+                staging,
             },
         })
     }
@@ -747,11 +830,11 @@ impl StagedInstall {
             std::fs::create_dir_all(parent)?;
         }
         let rollback = self.prepare_rollback_state()?;
-        if let Err(error) = self.state.workspace.commit() {
+        if let Err(error) = self.state.staging.commit() {
             if let Some(rollback) = rollback.as_ref() {
                 restore_backup(&rollback.backup_path, &install_root)?;
             }
-            return Err(error.into());
+            return Err(error);
         }
 
         let lifecycle = lifecycle_for_post_commit(&self.spec, rollback.as_ref());
@@ -1244,54 +1327,6 @@ fn default_link_options() -> HardlinkOrCopyOptions {
     HardlinkOrCopyOptions::new().fallback(FallBack::Copy)
 }
 
-fn stage_workspace_file(workspace: &Workspace, source: &Path, relative_path: &Path) -> Result<()> {
-    workspace.stage_file_by_size(
-        source,
-        relative_path,
-        INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
-        default_link_options(),
-    )?;
-    Ok(())
-}
-
-fn stage_workspace_file_with_size_hint(
-    workspace: &Workspace,
-    source: &Path,
-    relative_path: &Path,
-    source_size_bytes: u64,
-) -> Result<()> {
-    workspace.stage_file_with_size_hint(
-        source,
-        relative_path,
-        source_size_bytes,
-        INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
-        default_link_options(),
-    )?;
-    Ok(())
-}
-
-fn copy_directory_into_workspace(
-    workspace: &Workspace,
-    source: &Path,
-    relative: &Path,
-) -> Result<()> {
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let relative_path = relative.join(name);
-        let metadata = entry.metadata()?;
-        let file_type = metadata.file_type();
-        if file_type.is_dir() {
-            workspace.create_dir_all(&relative_path)?;
-            copy_directory_into_workspace(workspace, &path, &relative_path)?;
-        } else {
-            stage_workspace_file_with_size_hint(workspace, &path, &relative_path, metadata.len())?;
-        }
-    }
-    Ok(())
-}
-
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1339,7 +1374,7 @@ mod tests {
         RequestedResource, ResolvedLocator, ResolvedVersion, ResourceId, ResourceLocator,
         ResourceSpec, ValidUrl,
     };
-    use pulith_state::StateSnapshot;
+    use pulith_state::{ResourceRecord, StateSnapshot};
 
     #[derive(Debug, Default)]
     struct FileActivator;
@@ -1539,7 +1574,7 @@ mod tests {
             capabilities: InstallCapabilities::default(),
         });
 
-        assert!(!plan.can_proceed);
+        assert!(!plan.can_proceed());
         assert!(
             plan.limitations
                 .iter()
@@ -1567,12 +1602,12 @@ mod tests {
             desired_variant: InstallWorkflowVariant::DirectLocalArtifact,
             required_scope: InstallWritableScope::User,
             capabilities: InstallCapabilities {
-                activation_available: false,
+                activation: ActivationSupport::Unavailable,
                 ..InstallCapabilities::default()
             },
         });
 
-        assert!(!plan.can_proceed);
+        assert!(!plan.can_proceed());
         assert!(
             plan.limitations
                 .contains(&InstallPlanLimitation::ActivationUnavailable)
@@ -1597,14 +1632,14 @@ mod tests {
             desired_variant: InstallWorkflowVariant::AirGappedMirrorCache,
             required_scope: InstallWritableScope::System,
             capabilities: InstallCapabilities {
-                offline: false,
+                connectivity: ConnectivityMode::Online,
                 writable_scope: InstallWritableScope::User,
-                rollback_expected: true,
+                rollback: RollbackSupport::Expected,
                 ..InstallCapabilities::default()
             },
         });
 
-        assert!(!plan.can_proceed);
+        assert!(!plan.can_proceed());
         assert!(
             plan.limitations
                 .contains(&InstallPlanLimitation::OfflineCapabilityRequired)
@@ -2389,10 +2424,10 @@ mod tests {
             .uninstall_resource(
                 &id,
                 UninstallOptions {
-                    remove_install_root: true,
-                    remove_activation_targets: false,
-                    remove_state_record: false,
-                    remove_activation_records: false,
+                    install_root: UninstallDisposition::Remove,
+                    activation_targets: UninstallDisposition::Keep,
+                    state_record: UninstallDisposition::Keep,
+                    activation_records: UninstallDisposition::Keep,
                 },
             )
             .unwrap();

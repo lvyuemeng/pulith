@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use pulith_resource::{Metadata, ResourceId, VersionSelector};
-use pulith_state::{ResourceLifecycle, ResourceRecord, StateReady, StateSnapshot};
+use pulith_state::{
+    ResourceLifecycle, ResourceRecord, STATE_SNAPSHOT_SCHEMA_VERSION, StateReady, StateSnapshot,
+};
 
 fn seed_snapshot(resource_count: usize) -> StateSnapshot {
     let resources = (0..resource_count)
@@ -19,6 +21,7 @@ fn seed_snapshot(resource_count: usize) -> StateSnapshot {
         .collect();
 
     StateSnapshot {
+        schema_version: STATE_SNAPSHOT_SCHEMA_VERSION,
         resources,
         activations: vec![],
     }

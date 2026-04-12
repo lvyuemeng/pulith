@@ -1498,12 +1498,12 @@ dependencies = [
  "pulith-fetch",
  "pulith-fs",
  "pulith-resource",
+ "pulith-serde-backend",
  "pulith-shim",
  "pulith-source",
  "pulith-state",
  "pulith-store",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -1515,8 +1515,10 @@ dependencies = [
 name = "pulith-lock"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "pulith-serde-backend",
  "serde",
- "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1542,18 +1544,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "pulith-shim"
+name = "pulith-serde-backend"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "pulith-shim-bin"
+name = "pulith-shim"
 version = "0.1.0"
 dependencies = [
- "pulith-shim",
- "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -1572,10 +1574,11 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "pulith-fs",
+ "pulith-lock",
  "pulith-resource",
+ "pulith-serde-backend",
  "pulith-store",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -1589,8 +1592,8 @@ dependencies = [
  "pulith-fetch",
  "pulith-fs",
  "pulith-resource",
+ "pulith-serde-backend",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
