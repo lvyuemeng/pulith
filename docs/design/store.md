@@ -47,5 +47,14 @@ Creation ensures required directories exist before callers can write artifacts o
 - store orphan inspection also composes with state-driven metadata retention planning so callers can build cleanup plans without re-deriving protection sets by hand
 - store prune planning remains storage-focused while allowing `pulith-state` to attach explicit ownership/retention reasons for inspect-first cleanup previews
 - hardlink-or-copy artifact import to reduce unnecessary copying on the same filesystem
+- metadata persistence now routes through `pulith-serde-backend` with explicit schema-version validation at decode boundaries
+- provenance metadata shaping is crate-owned through `StoreProvenance` constructors instead of free helper sprawl
+
+## How To Use It
+
+- initialize once with `StoreRoots` and `StoreReady::initialize(...)`
+- register artifacts or extracts with typed `StoreKey` values
+- prefer `register_*` APIs when provenance should be captured from fetch/archive receipts
+- use metadata listing/orphan inspection/prune planning for explicit cleanup previews rather than blind deletion
 
 Future policies like retention and pruning stay outside the core type model until they are better understood.

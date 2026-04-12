@@ -1,21 +1,30 @@
 # pulith-state
 
-Transaction-backed persistent lifecycle state.
+Transaction-backed lifecycle persistence, inspection, repair planning, and retention planning.
 
-## Role
+## What This Crate Owns
 
-`pulith-state` owns lifecycle facts, inspection, repair planning, and retention planning.
+`pulith-state` stores lifecycle facts and exposes deterministic read/plan/apply surfaces.
 
-It should persist facts and expose semantic operations, not absorb install orchestration policy.
+It owns:
 
-## Main APIs
+- persistent resource and activation records
+- typed per-resource snapshots
+- inspection reports
+- repair plans
+- retention/ownership planning helpers
+- optional reusable analysis index for repeated report generation
+
+## Main Types
 
 - `StateReady`
 - `StateSnapshot`
+- `ResourceStateSnapshot`
 - `ResourceRecord`
 - `ResourceRecordPatch`
-- `ResourceLifecycle`
-- inspection / repair / retention helpers
+- `ResourceInspectionReport`
+- `ResourceStateRepairPlan`
+- `StateAnalysisIndex`
 
 ## Basic Usage
 
@@ -25,19 +34,51 @@ use pulith_state::{ResourceLifecycle, ResourceRecordPatch, StateReady};
 
 let state = StateReady::initialize("state.json")?;
 let id = ResourceId::parse("example/runtime")?;
+
 state.ensure_resource_record(id.clone(), VersionSelector::alias("stable")?)?;
-state.patch_resource_record(&id, ResourceRecordPatch::lifecycle(ResourceLifecycle::Resolved))?;
+state.patch_resource_record(
+    &id,
+    ResourceRecordPatch::lifecycle(ResourceLifecycle::Resolved),
+)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-## How To Use It
+## Inspect and Repair
 
-Use this crate to:
+```rust
+# use pulith_resource::ResourceId;
+# use pulith_state::StateReady;
+# let state = StateReady::initialize("state.json")?;
+# let id = ResourceId::parse("example/runtime")?;
+let report = state.inspect_resource(&id, None)?;
+if !report.is_clean() {
+    let plan = state.plan_resource_state_repair(&id, None)?;
+    let _applied = state.apply_resource_state_repair(&plan)?;
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
-- persist lifecycle state
-- inspect drift
-- plan or apply state repair
-- inspect ownership/conflicts
-- derive retention-aware cleanup plans
+## Repeated Analysis
 
-See `docs/design/state.md`.
+For repeated ownership/inspection/reference calls, build a reusable analysis index:
+
+```rust
+# use pulith_resource::ResourceId;
+# use pulith_state::StateReady;
+# let state = StateReady::initialize("state.json")?;
+# let id = ResourceId::parse("example/runtime")?;
+let index = state.build_analysis_index()?;
+let report = state.inspect_resource_with_index(&id, None, &index);
+let ownership = state.activation_ownership_report_with_index(&index);
+# let _ = (report, ownership);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+## Schema Boundary
+
+State snapshots carry explicit schema versions and validate on decode/load boundaries.
+
+## See Also
+
+- `docs/design/state.md`
+- `docs/design/serialization.md`

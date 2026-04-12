@@ -46,6 +46,16 @@ It guarantees the backing file exists and can be used through `pulith-fs::Transa
 - canonical activation ownership reports provide inspect-only conflict entries with stable severity/reason fields
 - reasoned retention plans expose explicit protected/removable metadata reasoning so cleanup decisions stay explainable and policy-light
 - composable ownership + retention planning remains non-mutating and suitable for inspect/preview workflows
+- reusable `StateAnalysisIndex` allows repeated ownership/reference/inspection workflows to amortize index-building cost
+- state snapshots now carry explicit schema versions and validate at load boundaries
+
+## How To Use It
+
+- initialize with `StateReady::initialize(...)`
+- persist/update facts with `ensure_*`, `patch_*`, and `upsert_*` methods
+- use `inspect_resource(...)` and ownership/retention report methods for non-mutating analysis
+- use `build_analysis_index()` when repeated analysis is expected in one process cycle
+- use `capture_resource_state(...)` / `restore_resource_state(...)` when higher layers need typed per-resource recovery payloads
 
 ## Contracts
 

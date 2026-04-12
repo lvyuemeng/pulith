@@ -1,46 +1,64 @@
 # pulith-resource
 
-Semantic resource description types.
+Semantic resource identity, locator, version, trust, and behavior-contract types.
 
-## Role
+## What This Crate Owns
 
-`pulith-resource` defines what a managed thing is.
+`pulith-resource` defines what a managed thing is before any fetch/store/install step happens.
 
 It owns:
 
-- resource identity
-- locators
-- version selectors
-- trust/provenance-facing metadata types
+- `ResourceId`
+- `ResourceLocator`
+- `VersionSelector`
+- trust and verification requirements
+- typed behavior contract axes
 
-## Main APIs
+## Main Types
 
 - `ResourceId`
+- `ValidUrl`
 - `ResourceSpec`
 - `RequestedResource`
 - `ResolvedResource`
-- `VersionSelector`
-- `ValidUrl`
+- `MaterializationSpec`
+- `ActivationModel`
+- `MutationScope`
+- `ProvenanceRequirement`
+- `LifecycleRequirements`
 
 ## Basic Usage
 
 ```rust
-use pulith_resource::{RequestedResource, ResourceId, ResourceLocator, ResourceSpec, VersionSelector, ValidUrl};
+use pulith_resource::{
+    ActivationModel, LifecycleRequirements, MutationScope, RequestedResource, ResourceId,
+    ResourceLocator, ResourceSpec, ValidUrl, VersionSelector,
+};
 
 let requested = RequestedResource::new(
     ResourceSpec::new(
         ResourceId::parse("example/runtime")?,
         ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip")?),
     )
-    .version(VersionSelector::alias("stable")?),
+    .version(VersionSelector::alias("stable")?)
+    .activation_model(ActivationModel::PathTarget)
+    .mutation_scope(MutationScope::InstallRootOnly)
+    .lifecycle_requirements(LifecycleRequirements::default().replace(true).rollback(true)),
 );
+# let _ = requested;
 # Ok::<(), pulith_resource::ResourceError>(())
 ```
 
-## How To Use It
+## Parsing and Formatting
 
-Most composed flows begin here.
+First-class string boundary types support trait-based ergonomics:
 
-Use this crate to define the semantic identity and version intent that later crates will preserve across planning, storage, install, and state.
+- `ResourceId: FromStr + Display`
+- `ValidUrl: FromStr + Display`
 
-See `docs/design/resource.md`.
+That means callers can parse or render them without ad hoc helper glue.
+
+## See Also
+
+- `docs/design/resource.md`
+- `crates/pulith-source/README.md`

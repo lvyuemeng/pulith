@@ -15,8 +15,7 @@ use pulith_resource::{Metadata, ResolvedResource};
 use pulith_serde_backend::{CodecError, JsonTextCodec, decode_slice, encode_pretty_vec};
 use pulith_shim::TargetResolver;
 use pulith_state::{
-    ActivationRecord, ResourceLifecycle, ResourceRecordPatch,
-    ResourceStateSnapshot, StateReady,
+    ActivationRecord, ResourceLifecycle, ResourceRecordPatch, ResourceStateSnapshot, StateReady,
 };
 use pulith_store::{ExtractedArtifact, StoreKey, StoredArtifact};
 use serde::{Deserialize, Serialize};
@@ -731,12 +730,11 @@ impl StagingArea {
         &self,
         source: &Path,
         relative_path: &Path,
-        source_size_bytes: u64,
+        _source_size_bytes: u64,
     ) -> Result<()> {
-        self.workspace.stage_file_with_size_hint(
+        self.workspace.stage_file_by_size(
             source,
             relative_path,
-            source_size_bytes,
             INSTALL_STAGE_COPY_ONLY_THRESHOLD_BYTES,
             default_link_options(),
         )?;

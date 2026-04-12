@@ -46,6 +46,13 @@ It does not fetch, store, or install anything. It only describes:
 
 They are checked once at construction and then reused across crates without repeated ad hoc validation.
 
+How to use it:
+
+- parse `ResourceId` / `ValidUrl` through `FromStr` or `parse(...)`
+- build `ResourceSpec` first, then wrap in `RequestedResource`
+- resolve into `ResolvedResource` only when version and final locator are known
+- read the resource behavior contract through `behavior_contract()` when install/store/state layers need typed semantics instead of resource-category guesses
+
 ## Trust Policy
 
 `pulith-resource` now includes an optional trust policy description layer.

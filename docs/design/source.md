@@ -18,19 +18,24 @@ It does not fetch data. It describes and expands candidate sources for later lay
 ## Core Types
 
 - `SourceDefinition`
+- `RemoteSource`
 - `SourceSet`
 - `SourceSpec`
 - `PlannedSources`
 - `ResolvedSourceCandidate`
 - `SelectionStrategy`
 - `SourceAdapter`
+- `SourcePath`
 
 ## Supported Source Shapes
 
-- direct HTTP release assets
-- mirror sets
+- normalized remote sources:
+  - direct HTTP release assets
+  - mirror sets
+  - git references
 - local files and directories
-- git references
+
+`RemoteSource` is the shared vocabulary for remote origins so mirror/url/git definitions no longer need to be treated as unrelated top-level families.
 
 ## Planning Model
 
@@ -40,6 +45,13 @@ It does not fetch data. It describes and expands candidate sources for later lay
 - `PlannedSources` for strategy-aware candidate lists
 
 This keeps the ordering explicit without baking transfer or caching behavior into the crate.
+
+How to use it:
+
+- construct `SourceSet` directly when you already know the source family layout
+- use `SourceSpec::from_locator(...)` / `from_requested_resource(...)` / `from_resolved_resource(...)` when entering from resource semantics
+- use `SourcePath` for parseable/renderable mirror subpaths
+- let later layers (`pulith-fetch`) execute candidates, not this crate
 
 Callers can enter that boundary either explicitly (`SourceSpec::...().plan(...)`) or through direct typed helpers such as `PlannedSources::from_locator(...)`, `PlannedSources::from_requested_resource(...)`, and `PlannedSources::from_resolved_resource(...)` when they already know the planning strategy they want.
 

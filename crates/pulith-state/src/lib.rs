@@ -197,7 +197,7 @@ impl StateReady {
 
             lock.upsert(
                 record.id.as_string(),
-                LockedResource::new(resolved_version.as_str(), locator.as_string())
+                LockedResource::new(resolved_version.as_str(), resolved_locator_text(&locator))
                     .metadata(record.metadata),
             );
         }
@@ -644,6 +644,13 @@ impl StateSnapshot {
 
 fn default_state_snapshot_schema_version() -> u32 {
     STATE_SNAPSHOT_SCHEMA_VERSION
+}
+
+fn resolved_locator_text(locator: &ResolvedLocator) -> String {
+    match locator {
+        ResolvedLocator::Url(url) => url.as_url().as_str().to_string(),
+        ResolvedLocator::LocalPath(path) => path.display().to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

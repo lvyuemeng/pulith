@@ -64,10 +64,19 @@ The example composes Pulith crates as a thin integration layer:
 ```bash
 cargo run -p runtime-manager-example -- install-local-archive <resource-id> <version> <archive-path> <workspace-root>
 cargo run -p runtime-manager-example -- install-local-file <resource-id> <version> <file-path> <workspace-root>
+cargo run -p runtime-manager-example -- install-remote-archive <resource-id> <version> <archive-url> <workspace-root>
 cargo run -p runtime-manager-example -- inspect <resource-id> <workspace-root>
 cargo run -p runtime-manager-example -- repair-plan <resource-id> <workspace-root>
 cargo run -p runtime-manager-example -- prune-plan <workspace-root> [all|installed-active|active]
 cargo run -p runtime-manager-example -- reconcile <resource-id> <workspace-root> [all|installed-active|active]
+```
+
+## Example Session
+
+```bash
+cargo run -p runtime-manager-example -- install-local-file example/runtime 1.0.0 ./runtime.bin ./workspace
+cargo run -p runtime-manager-example -- inspect example/runtime ./workspace
+cargo run -p runtime-manager-example -- repair-plan example/runtime ./workspace
 ```
 
 ## Notes

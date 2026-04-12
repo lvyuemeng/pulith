@@ -2,13 +2,23 @@
 
 Use this checklist as the single operational runbook.
 
-## Latest Attempt (2026-04-10 20:19 +08:00)
+## Latest Attempt (2026-04-12 10:38 +08:00)
 
-- reran stage-2 dry-runs with crates.io-direct cargo home (`CARGO_HOME=.tmp/cargo-home`) and all passed
-- attempted real stage-2 publish with default config and it failed due `ustc` replacement not resolving `pulith-version`
-- attempted real stage-2 publish with crates.io-direct cargo home and it failed due missing publish token (`cargo login` required)
-- blocker class: publish environment mismatch (mirror replacement vs crates.io-direct auth)
-- next executable step: run stage-2 publish in crates.io-direct environment with valid token
+- published `pulith-serde-backend 0.1.0`
+- published `pulith-lock 0.1.0`
+- published `pulith-source 0.1.0`
+- published `pulith-archive 0.2.0`
+- published `pulith-verify 0.2.0`
+- published `pulith-fetch 0.2.0`
+- published `pulith-store 0.1.0`
+- published `pulith-state 0.1.0`
+- published `pulith-install 0.1.0`
+- corrected publish-readiness gaps discovered during verification:
+  - made `pulith-serde-backend` and `pulith-lock` publishable
+  - updated `pulith-fetch` to depend on `pulith-verify 0.2.0`
+  - removed `pulith-install` reliance on unpublished `pulith-fs` staging API for crates.io verification
+- current blocker class: none for listed public crates in current release wave
+- next executable step: commit manifest/docs updates and maintain next-version readiness matrix from this new baseline
 
 ## Stage 1 Gate Clearance
 
@@ -30,14 +40,17 @@ Use this checklist as the single operational runbook.
 - [x] run `cargo publish -p pulith-resource --dry-run --registry crates-io`
 - [x] run `cargo publish -p pulith-platform --dry-run --registry crates-io`
 - [x] run `cargo publish -p pulith-archive --dry-run --registry crates-io`
-- [ ] publish in order: `pulith-resource` `0.1.0` -> `pulith-platform` `0.1.0` -> `pulith-archive` `0.2.0` (blocked by environment/auth setup)
+- [x] publish in order: `pulith-resource` `0.1.0` -> `pulith-platform` `0.1.0` -> `pulith-archive` `0.2.0`
 
-## Stage 3-5 Progression
+## Stage 3-6 Progression
 
-- [ ] repeat clean-worktree dry-run gate per stage from `docs/publish/readiness-matrix.md`
-- [ ] publish stage crates only after prior stage is published
+- [x] stage 3 dry-run gate: `pulith-serde-backend`, `pulith-source`
+- [x] stage 4 dry-run gate: `pulith-fetch`, `pulith-lock`, `pulith-store`
+- [x] stage 5 dry-run gate: `pulith-state`
+- [x] stage 6 dry-run gate: `pulith-install`
+- [x] publish stage crates only after prior stage is published
 
 ## Evidence Update Rules
 
-- [ ] update `docs/publish/readiness-matrix.md` immediately after each dry-run/publish event
-- [ ] keep this checklist synchronized with the active blocker and next executable step
+- [x] update `docs/publish/readiness-matrix.md` immediately after each dry-run/publish event
+- [x] keep this checklist synchronized with the active blocker and next executable step

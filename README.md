@@ -1,189 +1,157 @@
 # pulith
 
-Pulith is a Rust crate ecosystem for building resource managers.
+Pulith is a Rust crate ecosystem for building resource managers with typed, composable workflow contracts.
 
-It is for tools that need to work with external resources safely and consistently: choose versions, plan sources, fetch bytes, verify content, store artifacts, extract archives, install binaries, activate commands, persist lifecycle state, inspect drift, and plan repair or cleanup.
+It is designed for tools that need to:
 
-## What Problem It Solves
+- describe resources semantically
+- plan source candidates and mirrors
+- fetch and verify bytes explicitly
+- extract archives safely
+- register artifacts with provenance
+- install and activate content predictably
+- persist lifecycle state, inspect drift, and plan repair/cleanup
 
-Many real tools keep rebuilding the same layers:
+## Published Crates
 
-- version parsing and preference selection
-- source planning and mirror handling
-- content verification
-- atomic filesystem updates
-- artifact storage and extraction
-- install and activation flow
-- persistent state, recovery, and cleanup
-- cross-platform behavior
+Current crates.io wave now includes:
 
-Pulith exists to make those layers reusable without forcing one package format, backend shape, or repository model.
+- `pulith-fs`
+- `pulith-version`
+- `pulith-verify`
+- `pulith-shim`
+- `pulith-resource`
+- `pulith-platform`
+- `pulith-archive`
+- `pulith-serde-backend`
+- `pulith-source`
+- `pulith-fetch`
+- `pulith-lock`
+- `pulith-store`
+- `pulith-state`
+- `pulith-install`
 
-## Design Principles
+Publish status and dependency-order details live in `docs/publish/overview.md`.
 
-Pulith follows a few strong rules:
+## Core Pipeline
 
-- mechanism-first, not framework-first
-- semantic APIs over raw path/string glue
-- explicit effects over hidden orchestration
-- composable crates over one monolithic manager
-- cross-platform behavior treated as a primary constraint
-- lifecycle, provenance, and version intent should remain aligned across crates
+Pulith standardizes on this explicit pipeline:
 
-## How It Works
+`resource -> source plan -> fetch -> verify -> extract/register -> install -> activate -> state`
 
-Pulith is split into small crates that can be used independently or composed into a larger workflow.
+Each crate owns one boundary in that flow. The goal is to reduce glue without hiding policy.
 
-Typical flow:
+## Quick Start
 
-1. define a resource semantically with `pulith-resource`
-2. derive planned sources with `pulith-source`
-3. fetch bytes with `pulith-fetch`
-4. verify content with `pulith-verify`
-5. extract archives with `pulith-archive`
-6. register artifacts or extracted trees in `pulith-store`
-7. install and activate with `pulith-install`
-8. persist, inspect, repair, and retain through `pulith-state`
+### 1. Describe a resource
 
-The crates are designed so that each step stays explicit. Pulith tries to reduce repeated orchestration, not hide policy.
+```rust
+use pulith_resource::{RequestedResource, ResourceId, ResourceLocator, ResourceSpec, ValidUrl, VersionSelector};
 
-## Crate Overview
+let requested = RequestedResource::new(
+    ResourceSpec::new(
+        ResourceId::parse("example/runtime")?,
+        ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip")?),
+    )
+    .version(VersionSelector::alias("stable")?),
+);
+# Ok::<(), pulith_resource::ResourceError>(())
+```
+
+### 2. Plan sources
+
+```rust
+use pulith_source::{PlannedSources, SelectionStrategy};
+
+# use pulith_resource::{ResourceLocator, ValidUrl};
+let planned = PlannedSources::from_locator(
+    &ResourceLocator::Url(ValidUrl::parse("https://example.com/runtime.zip")?),
+    SelectionStrategy::OrderedFallback,
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+### 3. Fetch bytes
+
+```rust
+use pulith_fetch::{Fetcher, MultiSourceFetcher, ReqwestClient};
+use std::sync::Arc;
+
+let fetcher = Fetcher::new(ReqwestClient::new()?, "workspace")?;
+let multi = MultiSourceFetcher::new(Arc::new(fetcher));
+# let _ = multi;
+# Ok::<(), pulith_fetch::Error>(())
+```
+
+### 4. Register in store and install
+
+```rust
+use pulith_install::{InstallReady, InstallSpec, PlannedInstall};
+
+# let ready: InstallReady = todo!();
+# let spec: InstallSpec = todo!();
+let receipt = PlannedInstall::new(ready, spec)
+    .stage()?
+    .commit()?
+    .finish();
+# let _ = receipt;
+# Ok::<(), pulith_install::InstallError>(())
+```
+
+## Crate Guide
 
 Primitive crates:
 
-- `pulith-version` - version parsing, matching, and preference selection
-- `pulith-platform` - OS, arch, shell, env, and directory helpers
+- `pulith-version` - version parsing and selection
+- `pulith-platform` - OS/shell/environment helpers
 - `pulith-fs` - atomic filesystem and workspace primitives
-- `pulith-verify` - streaming verification primitives
-- `pulith-archive` - archive extraction with sanitization
-- `pulith-fetch` - transfer execution primitives
+- `pulith-verify` - streaming verification and hash validation
+- `pulith-archive` - safe archive extraction
+- `pulith-fetch` - transfer execution and receipts
 - `pulith-shim` - shim resolution primitives
+- `pulith-serde-backend` - serialization backend contract and JSON baseline adapter
 
-Semantic and workflow crates:
+Semantic/workflow crates:
 
-- `pulith-resource` - semantic resource description
-- `pulith-source` - source definitions and planning
-- `pulith-store` - artifact and extracted-tree storage
-- `pulith-state` - persistent lifecycle state, inspection, repair, retention planning
-- `pulith-lock` - deterministic lock model and lock diff
-- `pulith-install` - typed install and activation workflow
+- `pulith-resource` - resource identity, locator, version, trust, behavior contract
+- `pulith-source` - normalized remote/local source planning
+- `pulith-lock` - deterministic lock model and diff
+- `pulith-store` - artifact/extract storage and provenance persistence
+- `pulith-state` - lifecycle persistence, inspection, repair, retention planning
+- `pulith-install` - typed install, activation, backup/restore, rollback workflow
 
-Examples and adapters:
+Examples:
 
-- `examples/pulith-backend-example/` - thin adapter-first backend example
-- `examples/runtime-manager/` - partially practical multi-crate integration example
+- `examples/runtime-manager/` - end-to-end integration example
+- `examples/pulith-backend-example/` - thin backend adapter example
 
-Each crate has its own `README.md` with basic usage and main APIs.
+## How To Use Pulith Well
 
-## What You Can Expect As A User
+- keep policy in your top-level manager, not in core crates
+- prefer semantic types (`ResourceId`, `StoreKey`, `InstallInput`) over raw string/path glue
+- use typed plan/report outputs before mutation where available
+- carry provenance and receipts across transitions instead of reconstructing facts later
+- use `FromStr`/`Display` types for normal string boundaries
 
-If you are building a:
+## Docs
 
-- system package manager
-- config manager
-- plugin manager
-- runtime/tool installer
+- design overview: `docs/design.md`
+- roadmap: `docs/roadmap.md`
+- publish status: `docs/publish/overview.md`
+- crate-level design notes: `docs/design/*.md`
 
-Pulith aims to give you:
-
-- predictable fetch/store/install/activate/rollback behavior
-- explicit verification and provenance handling
-- persistent lifecycle state that can be inspected and repaired
-- cross-platform activation behavior that is explicit where semantics differ
-- low-glue composition across crates without adopting a rigid package model
-
-## Practical Example
-
-The best current starting point is:
-
-- `examples/runtime-manager/`
-
-It demonstrates:
-
-- semantic resource definition
-- local archive fetch and extraction
-- store registration with provenance
-- install and activation
-- inspection, repair planning, and prune planning
-
-## Architecture And Roadmap
-
-Design and architecture:
-
-- `docs/design.md`
-
-Detailed crate design notes:
-
-- `docs/design/version.md`
-- `docs/design/platform.md`
-- `docs/design/fs.md`
-- `docs/design/verify.md`
-- `docs/design/archive.md`
-- `docs/design/fetch.md`
-- `docs/design/resource.md`
-- `docs/design/source.md`
-- `docs/design/store.md`
-- `docs/design/state.md`
-- `docs/design/install.md`
-- `docs/design/shim.md`
-
-Current priorities and phased work:
-
-- `docs/roadmap.md`
-
-## Status
-
-- under active development
-- crate boundaries are in place and increasingly validated
-- integration, operational behavior, and contract coverage are still being tightened
-
-## Local Workflow
-
-Pulith uses standard Cargo commands and a `just`-based local workflow.
-
-Install `just`:
-
-```bash
-cargo install just
-```
-
-Common commands:
+## Local Development
 
 ```bash
 just fmt
-just check
 just clippy
 just test
 just doc
-just verify
 just ci
 ```
 
-## Compatibility And CI
-
-The repository checks:
-
-- formatting
-- clippy
-- tests on Linux, macOS, and Windows
-- docs build
-- MSRV on Rust `1.88.0`
-- dependency-policy tooling (`cargo audit`, `cargo tree -d`, `cargo deny`)
-
-## Contributing
-
-Recommended flow:
-
-1. read `docs/design.md` and `docs/roadmap.md`
-2. keep changes composable and policy-light
-3. add or update tests when behavior changes
-4. run `just verify` before opening changes
-5. run `just ci` when touching dependency or CI-related behavior
-
-Project-specific coding guidance lives in `docs/AGENT.md`.
+Project-specific engineering constraints live in `docs/AGENT.md`.
 
 ## License
 
-Licensed under Apache License 2.0.
-
-See [LICENSE](./LICENSE).
+Apache-2.0. See `LICENSE`.

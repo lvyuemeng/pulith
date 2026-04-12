@@ -19,7 +19,7 @@ brotli = ["dep:brotli"]
 pulith-fs = { path = "../pulith-fs", version = "0.1.0" }
 pulith-resource = { path = "../pulith-resource", version = "0.1.0" }
 pulith-source = { path = "../pulith-source", version = "0.1.0" }
-pulith-verify = { path = "../pulith-verify", version = "0.1.0" }
+pulith-verify = { path = "../pulith-verify", version = "0.2.0" }
 
 thiserror.workspace = true
 hex.workspace = true

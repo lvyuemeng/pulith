@@ -75,7 +75,7 @@ Planning dimensions:
 
 - desired workflow variant (`DirectLocalArtifact`, `PreStagedStore`, `AirGappedMirrorCache`, `ScopedInstall`)
 - required writable scope (`User` or `System`)
-- declared capabilities (`offline`, `activation_available`, `writable_scope`, `rollback_expected`)
+- declared capabilities (`ConnectivityMode`, `ActivationSupport`, `InstallWritableScope`, `RollbackSupport`)
 
 Typed limitations are emitted through `InstallPlanLimitation` so fallback boundaries are explicit and machine-readable.
 
@@ -92,13 +92,21 @@ Activation is expressed as a trait:
 
 ## Guarantees / Non-Guarantees
 
+How to use it:
+
+- build `InstallSpec` from materialized semantic input (`InstallInput` or `IntoInstallInput`)
+- call `plan(...)` first when callers need explicit machine-readable limitations
+- drive `PlannedInstall -> StagedInstall -> InstalledInstall -> ActivatedInstall` in order
+- use typed uninstall dispositions (`UninstallDisposition`) when partial cleanup is required
+- use `create_backup(...)` / `restore_backup(...)` when caller-owned workflows need explicit install-root + state snapshot recovery
+
 Guarantees:
 
 - retrying replace/upgrade installs is safe when a rollback snapshot exists; commit/rollback paths restore the previous install root on failure boundaries where a snapshot was captured
 - explicit rollback restores both install content and captured `pulith-state` facts for that resource (resource record + activation history)
 - activation replacement is explicit: existing activation targets are removed before a new link/copy target is written, for both file-like and directory-like targets
 - Windows file symlink privilege failures are surfaced as `InstallError::WindowsFileSymlinkPrivilege` instead of hidden fallback behavior
-- uninstall composition is explicit and scope-controlled: default uninstall removes install root + activation targets + matching state facts, while `UninstallOptions` can preserve selected surfaces
+- uninstall composition is explicit and scope-controlled: default uninstall removes install root + activation targets + matching state facts, while `UninstallOptions` uses typed dispositions to preserve selected surfaces
 
 Non-guarantees:
 
@@ -127,7 +135,7 @@ Non-guarantees:
 - surface Windows file-symlink privilege failures as a dedicated install error so callers can choose an alternate activator policy when needed
 - offer explicit copy-based activators for file targets instead of hiding file-link fallback inside the default link activators
 - provide shim-oriented activation adapters without embedding resolver policy into `pulith-install`
-- provide optional backup/restore helpers for install roots and matching state facts
+- provide optional backup/restore helpers for install roots and matching typed `pulith-state::ResourceStateSnapshot` facts
 - provide composed uninstall helper (`uninstall_resource`) with explicit scope options instead of hidden global cleanup policy
 - provide additive unified lifecycle receipt envelope (`LifecycleOperationReceipt`) with operation context + phase-specific details, while keeping operation-specific receipts available
 - repeated copy-based activation over the same target is covered in workspace integration tests so non-link activation behavior is treated as a first-class contract, not a fallback afterthought
