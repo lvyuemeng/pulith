@@ -36,7 +36,7 @@ chrono = { version = "0.4.44", features = ["serde"] }
 tempfile.workspace = true
 tracing.workspace = true
 
-reqwest = { version = "0.13.2", default-features = false, features = [
+reqwest = { version = "0.13.3", default-features = false, features = [
 	"stream",
 	"native-tls",
 ], optional = true }
